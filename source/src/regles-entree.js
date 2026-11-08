@@ -93,3 +93,39 @@ export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape,
 export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
 // Adresse d'un lien à partager : la langue suit l'interface de celui qui partage
 export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);
+// L'école d'un lien partagé (?ecole=) : son identifiant tel que la base l'écrit (2 à 40 lettres minuscules, chiffres, tirets).
+// ECOLE_MOTIF sert aussi au script des pages d'aperçu des promos (outils/pages-promo.mjs).
+export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
+const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
+export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
+// Adresse d'un lien à partager pour une autre école que l'ENSAM Meknès : elle dit l'école (&ecole=…), que la page d'entrée
+// garde jusqu'à l'inscription, et mène à une page d'aperçu neutre (outils/pages-promo.mjs), qui ne nomme pas l'ENSAM Meknès :
+// la page d'une promo (promo/AAAA/, promo/AAAA/ar/) devient promo/AAAA/e/ ; le site lui-même (sa racine, index.html : une offre,
+// une question, le résumé de la semaine) devient e.html, à côté d'index.html (un service worker d'avant, qui y ouvre l'application
+// gardée, la trouve ainsi dans son dossier). Une autre adresse garde son chemin. Pour l'ENSAM Meknès (ou sans école), rien ne change.
+const pageNeutre = a => (/\/promo\/\d{4}\/(?:ar\/)?$/.test(a) ? a + 'e/' : /\/promo\//.test(a) ? a : a.replace(/\/(?:index\.html)?$/, '/e.html'));
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${pageNeutre(a)}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+
+// Ce que la page d'entrée emporte dans un autre navigateur (lienChrome, appareil.js, qui le réexporte ; l'adresse gardée dans
+// le navigateur d'une application sur iPhone ou iPad, adresseAvecContexte) : la promo d'un lien d'invitation, le code de qui
+// invite (de, 8 caractères : « Invitation de Nadia » et le compte de ses invités), l'école du lien (ecole), le rôle choisi
+// et l'étape (créer un compte, ou se connecter). La page d'entrée les relit en arrivant (lireInvitation, contexteArrivee).
+// Jamais l'email tapé ni l'accord : une adresse ne voyage pas dans un lien (historique, journaux du serveur), et l'accord
+// se donne là où le compte se crée.
+export function contexteEntree(x) {
+  const { promo, de, ecole, role, mode } = x || {}, out = {};
+  if (promoValide(Number(promo))) out.promo = String(Number(promo));
+  if (typeof de === 'string' && /^[a-z0-9]{8}$/.test(de)) out.de = de;
+  if (ecoleValide(ecole)) out.ecole = ecole;
+  if (role === 'etudiant' || role === 'laureat') out.role = role;
+  if (mode === 'inscription' || mode === 'connexion') out.mode = mode;
+  return out;
+}
+// L'adresse (chemin, paramètres, #) avec ce contexte et, en arabe, lang=ar, à la place des leurs ; sans contexte, sans
+// eux. Le reste (la route en #, un autre paramètre) ne change pas.
+export function adresseAvecContexte(adresse, contexte, lang) {
+  const u = new URL(adresse), p = u.searchParams;
+  for (const k of ['promo', 'de', 'ecole', 'role', 'mode', 'lang']) p.delete(k);
+  if (contexte) for (const [k, v] of Object.entries({ ...contexteEntree(contexte), ...(lang === 'ar' ? { lang } : {}) })) p.set(k, v);
+  return u.pathname + u.search + u.hash;
+}

@@ -2,7 +2,7 @@
 // puis l'insertion des diplômés (enquête à 6 et 12 mois) avec le rapport exportable de l'administration.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Bar, Person, injectCSS, toast, EnTetePage, Compteur, Anneau } from './ui.js';
-import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch, filiereCourte } from './logic.js';
+import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch, filiereCourte, adminDuReseau, nomsDuMembre } from './logic.js';
 import { CompanyLogo } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { SuccessFeed } from './growth.js';
@@ -18,16 +18,21 @@ export function DashboardPage(ctx) {
   return html`<${SeasonPage} ctx=${ctx}/>`;
 }
 
-// L'administration : le suivi d'une école à la fois quand le réseau en compte plusieurs (celle que regarde la console,
-// sinon la sienne), avec le choix de l'école en tête de page ; une seule école : tout, comme avant
+// L'administration du réseau : le suivi d'une école à la fois quand le réseau en compte plusieurs (celle que regarde la
+// console, sinon la sienne), avec le choix de l'école en tête de page ; une seule école : tout, comme avant.
+// L'administration d'une autre école : la sienne, toujours (la base ne lui donne qu'elle), nommée en tête de page, sans choix,
+// même avant que la liste des écoles arrive
 function SuiviAdmin({ ctx }) {
   const { ecoles, ecole, changer, nomDe } = useEcoleRegardee(ctx);
-  const plusieurs = ecoles.length > 1;
-  const ici = plusieurs ? ecole || ecoleDe(ctx.me) : '';
+  const sienne = adminDuReseau(ctx.me) ? null : ecoleDe(ctx.me);
+  const plusieurs = !sienne && ecoles.length > 1;
+  const ici = sienne || (plusieurs ? ecole || ecoleDe(ctx.me) : '');
+  const nomSienne = sienne ? nomsDuMembre(ctx.data, ctx.me).nom : '';
   // Changer d'école refait la page (clé) : le choix, recréé, reprend le focus qu'il avait (clavier, lecteur d'écran)
   const choisir = e => { const avait = document.activeElement === e.target; changer(e.target.value); if (avait) requestAnimationFrame(() => document.getElementById('suivi-ecole')?.focus()); };
-  const choix = plusieurs ? html`<label class="season-pick suivi-ecole">École <select id="suivi-ecole" value=${ici} onChange=${choisir}>${ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select></label>` : null;
-  const c = { ...ctx, data: donneesDeLEcole(ctx.data, ici), ecoleSuivi: ici, nomEcoleSuivi: ici ? nomDe(ici) : '', choixEcole: choix };
+  const choix = sienne ? html`<span class="season-pick suivi-ecole" id="suivi-ecole-fixe">École <span translate="no">${nomSienne}</span></span>`
+    : plusieurs ? html`<label class="season-pick suivi-ecole">École <select id="suivi-ecole" value=${ici} onChange=${choisir}>${ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select></label>` : null;
+  const c = { ...ctx, data: donneesDeLEcole(ctx.data, ici), ecoleSuivi: ici, nomEcoleSuivi: sienne ? nomSienne : ici ? nomDe(ici) : '', choixEcole: choix };
   return ctx.sub === 'insertion' ? html`<${InsertionPage} key=${'ins-' + ici} ctx=${c}/>` : html`<${SeasonPage} key=${'sp-' + ici} ctx=${c}/>`;
 }
 
@@ -527,6 +532,8 @@ injectCSS('dashboard-insertion', `
 .suivi-picks { min-width: 0; max-width: 100%; }
 .suivi-ecole { min-width: 0; max-width: 100%; }
 .suivi-ecole select { min-width: 0; flex: 0 1 auto; text-overflow: ellipsis; }
+/* L'administration d'une école : le nom de la sienne, à la place du choix ; long, il passe à la ligne */
+#suivi-ecole-fixe > span { min-width: 0; overflow-wrap: anywhere; }
 .ins-stats { display: flex; flex-direction: column; gap: 1.1rem; }
 .ins-stack { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--surface-2); }
 .ins-stack span { height: 100%; transition: width .6s var(--ease); }

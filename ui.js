@@ -3,7 +3,7 @@ import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './v
 import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme, PREFIXE_BROUILLON } from './logic.js';
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
 import { getLang } from './i18n.js';
-import { avecLangue } from './regles-entree.js';
+import { avecLangue, avecEcole } from './regles-entree.js';
 import { domaineEntreprise, lienFavicon } from './vitrine-regles.js';
 
 export { html, Icon, Field, BrandLogo, SchoolScene, TYPE_ICON };
@@ -1078,8 +1078,9 @@ export const MentionLogos = ({ noms = [] }) => (noms.some(n => logoEntreprise(n)
 
 
 // Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo.
-// Partagé depuis l'interface arabe, le lien s'ouvre en arabe chez qui n'a pas encore choisi sa langue.
-export const lienDirect = hash => avecLangue(location.origin + location.pathname, getLang()) + '#' + hash;
+// Partagé depuis l'interface arabe, le lien s'ouvre en arabe chez qui n'a pas encore choisi sa langue. ecole : celle de ce
+// qui est partagé ; une autre que l'ENSAM Meknès, le lien la dit (&ecole=) et la page d'entrée l'ouvre dans son école.
+export const lienDirect = (hash, ecole) => avecEcole(avecLangue(location.origin + location.pathname, getLang()), ecole) + '#' + hash;
 export const lienWhatsApp = texte => 'https://wa.me/?text=' + encodeURIComponent(texte);
 export function PartagerWhatsApp({ texte, id }) {
   return html`<a class="icon-btn partage-wa" id=${id} href=${lienWhatsApp(texte)} target="_blank" rel="noopener" aria-label="Partager sur WhatsApp" title="Partager sur WhatsApp"><${Icon} name="share" size=${18}/></a>`;

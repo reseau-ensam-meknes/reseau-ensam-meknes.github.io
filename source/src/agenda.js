@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole, NOMS_MEKNES, nomsAPartager, nomsAPartagerDe } from './logic.js';
 
 addAR({
   'École :': 'المدرسة:',
@@ -55,18 +55,20 @@ export function eventsFor(data, me) {
 // Ajout à un agenda
 // ---------------------------------------------------------------------------
 const icsDate = d => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-function textes(e) {
+// Ce que l'agenda reçoit, dans la langue de l'écran. noms : ceux de l'école de l'événement (nomsAPartager) ; l'ENSAM
+// Meknès par défaut, avec ses textes d'avant.
+export function textesAgenda(e, noms = NOMS_MEKNES) {
   const ar = getLang() === 'ar';
-  const details = [e.description, e.lien ? (ar ? `الرابط : ${e.lien}` : `Lien : ${e.lien}`) : null, ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès'].filter(Boolean).join('\n\n');
+  const details = [e.description, e.lien ? (ar ? `الرابط : ${e.lien}` : `Lien : ${e.lien}`) : null, ar ? `شبكة ${noms.nomAr}` : `Réseau ${noms.nom}`].filter(Boolean).join('\n\n');
   return { title: e.titre, details, location: e.lieu || e.lien || '' };
 }
-function gcalUrl(e) {
-  const t = textes(e);
+function gcalUrl(e, noms) {
+  const t = textesAgenda(e, noms);
   const q = new URLSearchParams({ action: 'TEMPLATE', text: t.title, dates: `${icsDate(e.debut)}/${icsDate(finDe(e))}`, details: t.details, location: t.location });
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
-function icsHref(e) {
-  const t = textes(e);
+function icsHref(e, noms) {
+  const t = textesAgenda(e, noms);
   const esc = s => String(s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, x => '\\' + x);
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Reseau ENSAM Meknes//Agenda//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${e.id}@reseau-ensam`, `DTSTAMP:${icsDate(new Date())}`, `DTSTART:${icsDate(e.debut)}`, `DTEND:${icsDate(finDe(e))}`,
@@ -110,7 +112,7 @@ function useParticipants(ctx, e) {
 // Une seule action : « Je participe » (sélectionné une fois inscrit, un second toucher désinscrit).
 // Juste après l'inscription, une feuille propose de l'ajouter à son agenda (Google Agenda ou fichier .ics).
 function Participer({ ctx, e, small }) {
-  const { store, me, act } = ctx;
+  const { data, store, me, act } = ctx;
   const { mine } = useParticipants(ctx, e);
   const [feuille, setFeuille] = useState(false);
   if (me.role === 'admin' || e.annule || passe(e)) return null;
@@ -119,24 +121,25 @@ function Participer({ ctx, e, small }) {
     else { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); vibrer(); setFeuille(true); }
   });
   return html`<button type="button" class=${'btn tonal ev-participer ' + (small ? 'tiny' : 'small') + (mine ? ' on' : '')} aria-pressed=${!!mine} onClick=${basculer}><${Icon} name="check" size=${14}/> Je participe</button>
-    ${feuille ? html`<${FeuilleAgenda} e=${e} onClose=${() => setFeuille(false)}/>` : null}`;
+    ${feuille ? html`<${FeuilleAgenda} e=${e} noms=${nomsAPartagerDe(data, e)} onClose=${() => setFeuille(false)}/>` : null}`;
 }
 
 // Ajouter à son agenda : proposé après « Je participe » et depuis la fiche de l'événement
-function FeuilleAgenda({ e, onClose }) {
+// noms : ceux de l'école de l'événement
+function FeuilleAgenda({ e, noms, onClose }) {
   return html`<${Modal} title="Ajouter à mon agenda" onClose=${onClose} cls="ag-feuille">
     <div class="ag-quoi"><strong translate="no" dir="auto">${e.titre}</strong><${Quand} e=${e}/></div>
     <div class="ag-choix">
-      <a class="btn" href=${gcalUrl(e)} target="_blank" rel="noopener" onClick=${onClose}><${Icon} name="calendar" size=${16}/> Google Agenda</a>
-      <a class="btn" href=${icsHref(e)} download="evenement-ensam.ics" onClick=${onClose}><${Icon} name="download" size=${16}/> Autre agenda (.ics)</a>
+      <a class="btn" href=${gcalUrl(e, noms)} target="_blank" rel="noopener" onClick=${onClose}><${Icon} name="calendar" size=${16}/> Google Agenda</a>
+      <a class="btn" href=${icsHref(e, noms)} download="evenement-ensam.ics" onClick=${onClose}><${Icon} name="download" size=${16}/> Autre agenda (.ics)</a>
     </div>
   <//>`;
 }
-function AjoutAgenda({ e }) {
+function AjoutAgenda({ ctx, e }) {
   const [feuille, setFeuille] = useState(false);
   if (e.annule || passe(e)) return null;
   return html`<button type="button" class="btn small ghost" onClick=${() => setFeuille(true)}><${Icon} name="calendar" size=${15}/> Ajouter à mon agenda</button>
-    ${feuille ? html`<${FeuilleAgenda} e=${e} onClose=${() => setFeuille(false)}/>` : null}`;
+    ${feuille ? html`<${FeuilleAgenda} e=${e} noms=${nomsAPartagerDe(ctx.data, e)} onClose=${() => setFeuille(false)}/>` : null}`;
 }
 
 function AdminActions({ ctx, e, onEdit, onDone }) {
@@ -196,7 +199,7 @@ function EventDetail({ ctx, e, onClose, onEdit }) {
       ${e.lieu ? html`<p class="ev-line"><${Icon} name="pin" size=${15}/> <span translate="no" dir="auto">${e.lieu}</span></p>` : null}
       ${e.lien && !e.annule ? html`<p class="ev-line"><${Icon} name="video" size=${15}/> <a href=${e.lien} target="_blank" rel="noopener" dir="ltr" translate="no">${e.lien.replace(/^https:\/\//, '').slice(0, 60)}</a></p>` : null}
       ${e.description ? html`<p class="ev-full" translate="no" dir="auto">${e.description}</p>` : null}
-      <div class="row"><${Participer} ctx=${ctx} e=${e}/><span class="spacer"></span><${AjoutAgenda} e=${e}/></div>
+      <div class="row"><${Participer} ctx=${ctx} e=${e}/><span class="spacer"></span><${AjoutAgenda} ctx=${ctx} e=${e}/></div>
       <div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Inscrits <span class="count">${gens.length}</span></h2></div>
       ${gens.length ? html`<div class="ev-people">${gens.slice(0, 40).map(p => html`<${Person} p=${p} onOpen=${openProfile} size=${30}/>`)}</div>` : html`<p class="small muted">Personne n’est encore inscrit.</p>`}
       ${me.role === 'admin' ? html`<div class="row-end"><${AdminActions} ctx=${ctx} e=${e} onEdit=${() => onEdit(e)} onDone=${onClose}/></div>` : null}
@@ -231,6 +234,17 @@ function nouveauFormulaire() {
   return f;
 }
 
+// L'exemple du champ « Lieu » : l'école de l'administration qui publie. L'ENSAM Meknès garde le sien ; une école pas encore
+// ouverte n'y est pas nommée (« ENSAM », nomsAPartager), jamais une autre. Son arabe s'ajoute une fois par école.
+const lieuxVus = new Set();
+function lieuExemple(ctx) {
+  const n = nomsAPartager(ctx.data?.ecoles, ctx.me?.ecole);
+  if (n.meknes) return 'Ex. ENSAM Meknès, grand hall';
+  const fr = `Ex. ${n.nom}, grand hall`;
+  if (!lieuxVus.has(fr)) { lieuxVus.add(fr); addAR({ [fr]: `مثال: ${n.nomAr}، البهو الكبير` }); }
+  return fr;
+}
+
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
@@ -256,7 +270,7 @@ function EventForm({ ctx, e, onClose }) {
       <div class="ev-types" role="radiogroup" aria-label="Type">${Object.entries(TYPES_EVENEMENT).map(([k, [l, i]]) => html`<button type="button" role="radio" aria-checked=${f.type === k} class=${'chip' + (f.type === k ? ' on' : '')} onClick=${() => set('type', k)}><${Icon} name=${i} size=${14}/> ${l}</button>`)}</div>
       <div class="grid2"><${Field} label="Début"><input id="ev-debut" type="datetime-local" required value=${f.debut} onInput=${x => set('debut', x.target.value)}/><//>
         <${Field} label="Fin (facultatif)" hint=${finOk ? '' : 'La fin doit être après le début.'}><input id="ev-fin" type="datetime-local" value=${f.fin} min=${f.debut} onInput=${x => set('fin', x.target.value)}/><//></div>
-      <${Field} label="Lieu"><input id="ev-lieu" maxlength="140" value=${f.lieu} onInput=${x => set('lieu', x.target.value)} placeholder="Ex. ENSAM Meknès, grand hall"/><//>
+      <${Field} label="Lieu"><input id="ev-lieu" maxlength="140" value=${f.lieu} onInput=${x => set('lieu', x.target.value)} placeholder=${lieuExemple(ctx)}/><//>
       <${Field} label="Lien (facultatif)" hint=${lienOk ? '' : 'Le lien doit commencer par https://'}><input id="ev-lien" dir="ltr" maxlength="300" value=${f.lien} onInput=${x => set('lien', x.target.value)} placeholder="Lien de la visio ou de l’inscription : https://…"/><//>
       <${Field} label="Description"><textarea id="ev-desc" rows="3" maxlength="2000" value=${f.description} onInput=${x => set('description', x.target.value)} placeholder="Le programme, ce qu’il faut apporter…"></textarea><//>
       <div class="field"><span class="field-label">Pour qui ?</span><div class="seg" role="radiogroup" aria-label="Pour qui ?">${PUBLICS.map(([k, l]) => html`<button type="button" role="radio" aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>

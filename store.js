@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, ecoleDe, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises, bilanTestPush, codeInvitationValide, invitesDe, visagesPublics, reussitesPubliques } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, ecoleDe, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, sponsoriseLisible, sponsoriseModifiable, adminDuReseau, jourLocal, totauxSponsorises, bilanTestPush, codeInvitationValide, invitesDe, visagesPublics, reussitesPubliques } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -19,7 +19,11 @@ const MATCH = ['match_choix', 'matchs'];
 // Cartes sponsorisées de Match : un membre lit seulement celles en cours (règle de la base) ; les comptes de vues et de
 // clics ne sont jamais lus par le site (compter_sponsorise les écrit, bilan_sponsorises en donne les totaux à l'administration)
 const SPONSO = ['sponsorises'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO];
+// La ligne de l'école du membre (slug, nom, nom_court, ville, nom_ar, couleur) : son nom dans l'onglet, la marque, la carte
+// des lauréats et les messages d'invitation (logic.js, nomsEcole). La base ne laisse lire que les écoles ouvertes et la
+// sienne : quelques lignes, lues avec l'accueil, en même temps que le reste. Pas de temps réel pour elle (subscribe).
+const ECOLES = ['ecoles'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO, ...ECOLES];
 // Chargement en deux temps (en ligne, première ouverture sur un appareil ou après la connexion) : d'abord tout ce que
 // l'accueil et la navigation lisent (PREMIERES : l'accueil compte presque tout, pour ses pastilles et « À faire »), l'écran
 // s'affiche, puis le reste (ENSUITE) juste après, en arrière-plan : les messages des groupes, les réactions aux messages
@@ -45,7 +49,7 @@ export function tablesLien(hash) {
   return tablesEcran(page, sub);
 }
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO, ...ECOLES]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -215,8 +219,9 @@ const cvExemple = (p, data) => import('./seed-cv.js').then(m => m.pdfCvDemo(p, {
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
 const DEMO_KEY = 'ensam-demo-v14';
-// Tables lues par certaines pages seulement (pas au démarrage) : la démo les garde avec le reste ; écoles et suivi = console d'administration
-const TABLES_ADMIN_DEMO = ['guide_pays_historique', 'liste_officielle', 'ecoles', 'admin_suivi'];
+// Tables lues par certaines pages seulement (pas au démarrage) : la démo les garde avec le reste ; suivi = console
+// d'administration (les écoles sont dans TABLES)
+const TABLES_ADMIN_DEMO = ['guide_pays_historique', 'liste_officielle', 'admin_suivi'];
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -315,8 +320,12 @@ class DemoStore extends Base {
     this.persist(); this.emit();
     return r;
   }
-  async update(table, id, patch) {
-    const old = this.byId(table, id); if (!old) return null;
+  // exiger : le message si aucune ligne n'est modifiée (comme en ligne : une règle d'accès filtre la ligne sans erreur)
+  async update(table, id, patch, { exiger } = {}) {
+    const old = this.byId(table, id); if (!old) { if (exiger) throw new Error(exiger); return null; }
+    // Une carte sponsorisée que l'administration d'une école ne gère pas (de toutes les écoles, d'une autre école) : la
+    // règle « modif admin » ne laisse passer aucune ligne ; en ligne, sans « exiger », c'est une ligne introuvable
+    if (SPONSO.includes(table) && this.me?.role === 'admin' && !sponsoriseModifiable(old, this.me)) { if (exiger) this.emit(); throw new Error(exiger || 'Cette action n’est plus possible. Recharge la page.'); }
     const r = { ...old, ...patch };
     if (table === 'placements') applyPlacementRules(this, r, old);
     if (table === 'applications') applyApplicationRules(this, r, old);
@@ -348,6 +357,13 @@ class DemoStore extends Base {
   async remove(table, id, { exiger, saufStatut } = {}) {
     if ((table === 'annonces' || SPONSO.includes(table)) && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     const row = this.byId(table, id);
+    // Une carte sponsorisée que l'administration d'une école ne gère pas, ou déjà retirée : la règle « suppression admin »
+    // ne laisse passer aucune ligne, sans erreur de la base ; « exiger » le dit (une carte déjà retirée, sans « exiger » :
+    // comme avant)
+    if (SPONSO.includes(table) && !sponsoriseModifiable(row, this.me)) { if (exiger) throw new Error(exiger); if (row) return; }
+    // Le guide de l'étranger, commun à toutes les écoles : seule l'administration du réseau en supprime une rubrique ; pour
+    // celle d'une école, ou une rubrique déjà partie, la base ne supprime aucune ligne, sans erreur (« exiger » le dit)
+    if (table === 'guide_pays' && this.me?.role === 'admin' && (!row || !adminDuReseau(this.me))) { if (exiger) throw new Error(exiger); if (row) return; }
     if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
     if (table === 'placements' && row && this.me?.role !== 'admin' && !(row.student_id === this.me?.id || (row.laureat_id === this.me?.id && row.status === 'en_attente'))) throw new Error(exiger || 'Action non autorisée pour ton compte.');
@@ -387,7 +403,8 @@ class DemoStore extends Base {
   }
   // Parrain d'un 3A : le lauréat volontaire de sa filière qui a le moins de filleuls (même règle que la base)
   async monParrain() { demoParrains(this, this.me?.id); this.persist(); this.emit(); }
-  async attribuerParrains() { const n = demoParrains(this); this.persist(); this.emit(); return n; }
+  // L'administration d'une école : les étudiants de son école ; celle du réseau : toutes (comme attribuer_parrains())
+  async attribuerParrains() { const n = demoParrains(this, null, adminDuReseau(this.me) ? null : ecoleDe(this.me)); this.persist(); this.emit(); return n; }
   async supprimerCompte() { throw new Error('En démo, aucun compte n’est supprimé. Sur la vraie plateforme, ton compte et tes données partent tout de suite.'); }
   async seDesabonner() { return true; }
   async pushKey() { return null; }
@@ -395,9 +412,10 @@ class DemoStore extends Base {
   async abonnerPush() { return 'ok'; }
   async testPushDetails() { return bilanTestPush({ sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 }); }
   async testPush() { return (await this.testPushDetails()).sent; }
-  // Santé des notifications : une semaine plausible pour les membres de la démo (mêmes champs qu'admin_sante_notifs)
+  // Santé des notifications : une semaine plausible pour les membres de la démo (mêmes champs qu'admin_sante_notifs) ; les
+  // totaux de tout le réseau, pour son administration seulement (pas celle d'une école)
   async santeNotifs() {
-    if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    if (!adminDuReseau(this.me)) throw new Error('Réservé à l’administration.');
     return demoSanteNotifs(this.data.profiles);
   }
   async verifyAttestation(id) {
@@ -458,13 +476,24 @@ class DemoStore extends Base {
   }
   async liensPhotos(paths) { return Object.fromEntries(paths.filter(p => this.fichiers.has(p)).map(p => [p, URL.createObjectURL(this.fichiers.get(p))])); }
   async lireReglages() { return this.reglages; }
+  // Les réglages sont ceux de l'ENSAM Meknès : seule l'administration du réseau les écrit (ceux d'une autre école sont dans
+  // sa ligne des écoles)
   async enregistrerReglage(cle, valeur) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    if (!adminDuReseau(this.me)) throw new Error('Action non autorisée pour ton compte.');
     this.reglages = { ...this.reglages, [cle]: valeur }; this.persist(); this.emit();
   }
-  // L'école visée, comme ecole_visee() dans la base : l'administration peut en choisir une, un membre reste dans la sienne
+  // Son école est-elle au dossier CNDP ? Pour l'administration d'une école, qui ne lit pas le suivi : comme
+  // dossier_cndp_de_mon_ecole() dans la base (la ligne de suivi de son école, case cochée)
+  async dossierCndpDeMonEcole() {
+    if (this.me?.role !== 'admin') return false;
+    const ici = ecoleDe(this.me);
+    return (this.data.admin_suivi || []).some(x => x.type === 'ecole' && x.ecole_slug === ici && x.cndp_ok === true);
+  }
+  // L'école visée, comme ecole_visee() dans la base : l'administration du réseau peut en choisir une ; celle d'une école et
+  // un membre restent dans la leur
   ecoleVisee(ecole) {
-    if (!ecole || this.me?.role !== 'admin') return ecoleDe(this.me);
+    if (!ecole || !adminDuReseau(this.me)) return ecoleDe(this.me);
     if (ecole !== ecoleDe(null) && !(this.data.ecoles || []).some(e => e.slug === ecole)) throw new Error(`École inconnue : ${ecole}.`);
     return ecole;
   }
@@ -528,7 +557,8 @@ class DemoStore extends Base {
   // Les totaux de chaque carte, pour l'administration seule (comme bilan_sponsorises) : jamais qui a vu ni cliqué
   async bilanSponsorises() {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    return totauxSponsorises(this.data.sponsorises, this.data.sponsorises_comptes);
+    // L'administration d'une école : ses cartes et celles de toutes les écoles (comme la base)
+    return totauxSponsorises(this.data.sponsorises.filter(x => sponsoriseLisible(x, this.me)), this.data.sponsorises_comptes);
   }
   // Match : mêmes règles que protect_match_choix(), match_apres_choix(), protect_match() et repondre_rdv() dans la base.
   // Un choix par carte (« oui » ou « plus_tard »), changé sur place ; renvoie le match que ce geste vient de créer (à fêter).
@@ -636,6 +666,9 @@ class DemoStore extends Base {
 function regleSponsoDemo(store, r, old) {
   if (store.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
   Object.assign(r, normaliserSponsorise(r));
+  // L'administration d'une école écrit pour son école : une carte sans école est de la sienne (protect_sponsorise) ; une
+  // autre école est refusée par les règles (« new row violates row-level security policy »)
+  if (!adminDuReseau(store.me)) { r.ecole = r.ecole || ecoleDe(store.me); if (r.ecole !== ecoleDe(store.me)) throw new Error('Action non autorisée pour ton compte.'); }
   if (old) { r.created_by = old.created_by; r.created_at = old.created_at; }
   else { r.created_by = store.me.id; r.actif = r.actif !== false; r.public ||= 'tous'; r.debut ||= jourLocal(); r.annees ??= null; r.filieres ??= null; r.domaine ??= null; }
   const refus = refusSponsorise(r);
@@ -1012,7 +1045,8 @@ function applyPhase3Rules(store, table, r, old) {
       r.pays = old.pays; r.section = old.section; r.created_at = old.created_at;
       if (r.contenu !== old.contenu) store.data.guide_pays_historique = [{ id: uuid(), guide_id: old.id, contenu: old.contenu, updated_by: old.updated_by, updated_at: old.updated_at, created_at: now }, ...store.data.guide_pays_historique];
     } else if (store.data.guide_pays.some(g => norm(g.pays) === norm(r.pays) && g.section === r.section)) throw new Error('Cette rubrique existe déjà : recharge la page pour la modifier.');
-    if (!isAdmin && (norm(r.pays) === 'maroc' || me.role !== 'laureat' || norm(me.pays || '') !== norm(r.pays))) throw new Error('Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.');
+    // Commun à toutes les écoles : l'administration d'une école l'écrit comme un membre (celle du réseau, toujours)
+    if (!adminDuReseau(me) && (norm(r.pays) === 'maroc' || me.role !== 'laureat' || norm(me.pays || '') !== norm(r.pays))) throw new Error('Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.');
     r.updated_by = me.id; r.updated_at = now;
     return;
   }
@@ -1244,10 +1278,10 @@ function applyPhase2Rules(store, table, r, old) {
   }
 }
 
-function demoParrains(store, onlyId = null) {
+function demoParrains(store, onlyId = null, ecole = null) {
   const S = seasonOf(); let n = 0;
   const count = id => store.data.parrainages.filter(x => x.parrain_id === id && x.saison === S).length;
-  const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId)
+  const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId) && (!ecole || ecoleDe(p) === ecole)
     && !store.data.parrainages.some(x => x.filleul_id === p.id && x.saison === S)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   for (const st of waiting) {
     // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation),
@@ -1352,7 +1386,10 @@ const SUITES = { demandes: ['propositions', 'placements'], propositions: ['deman
 // message de chacune et ceux pas encore lus), pas les coordonnées des autres, pas le détail des signalements.
 // ---------------------------------------------------------------------------
 export const CACHE_V = 1;
-const CACHE_FORME = CACHE_V + ':' + TABLES.join(',');
+// Sans les écoles, arrivées après (ECOLES) : la copie d'avant reste bonne ; elle s'ouvre sans elles (un membre de l'ENSAM
+// Meknès a ses textes d'avant ; un membre d'une autre école lit « ENSAM », sans ville, jamais Meknès), puis la mise à jour qui
+// suit tout de suite les apporte (rafraichir)
+const CACHE_FORME = CACHE_V + ':' + TABLES.filter(t => !ECOLES.includes(t)).join(',');
 const CACHE_MAX = 30 * 864e5;
 const SANS_CACHE = new Set(['groupe_messages', 'reactions_messages', 'relecture_commentaires', 'retours_cv']);
 export function pourCache(data, uid) {
@@ -1781,7 +1818,9 @@ export class SupabaseStore extends Base {
         this.emit();
       }, 400);
     };
-    for (const t of TABLES) if (t !== 'messages') this.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => recharger(t));
+    // La base ne publie pas les écoles en temps réel (supabase_realtime) : pas d'abonnement pour elles ; elles sont relues avec
+    // le reste (mise à jour de la copie de l'appareil, retour après une longue absence)
+    for (const t of TABLES) if (t !== 'messages' && !ECOLES.includes(t)) this.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => recharger(t));
     // Un message arrive tel quel, sans relire toute la table : la conversation suit en direct
     this.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, e => {
       if (e.eventType === 'DELETE') this.data.messages = this.data.messages.filter(x => x.id !== e.old?.id);
@@ -1815,8 +1854,10 @@ export class SupabaseStore extends Base {
     await this.loadAll({ ensemble: true }); this.me = this.byId('profiles', this.userId) || null;
     this.emit();
   }
-  async update(table, id, patch) {
+  // exiger : le message si aucune ligne n'est modifiée (une règle d'accès filtre la ligne sans erreur) ; la table est relue
+  async update(table, id, patch, { exiger } = {}) {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
+    if (error?.code === 'PGRST116' && exiger) { await this.loadTable(table).catch(() => {}); this.emit(); throw new Error(exiger); }
     // Aucune ligne modifiée : quelqu'un est passé avant (ex. demande prise entre-temps)
     // Son propre profil : aucune ligne modifiée veut dire que la connexion s'est perdue, pas qu'un autre est passé avant
     if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de choisir un horaire.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');
@@ -1855,11 +1896,15 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer ? { data: { ...(meta || {}), par_code: true } } : {}) } });
     if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
   }
-  async verifierCode(email, token, meta = null) {
-    const { error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
+  // ecole : à l'inscription, l'école du lien que la page suit (ecoleRetenue, entree.js), null sans lien
+  async verifierCode(email, token, meta = null, ecole = null) {
+    const { data, error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
-    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur)
-    if (meta) await this.sb.auth.updateUser({ data: meta }).catch(() => {});
+    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur). Le compte né de la
+    // demande de code du lien d'une autre école ne la garde plus (null l'efface) : le lien suivi ici décide. Sinon, la même
+    // mise à jour qu'avant
+    const avant = data?.user?.user_metadata?.ecole;
+    if (meta) await this.sb.auth.updateUser({ data: ecole && avant && avant !== ecole && !meta.ecole ? { ...meta, ecole: null } : meta }).catch(() => {});
   }
   async resetPassword(email) {
     const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
@@ -2101,6 +2146,11 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.from('reglages').upsert({ cle, valeur, updated_at: new Date().toISOString() });
     if (error) throw new Error(frError(error));
     this.reglages = { ...this.reglages, [cle]: valeur }; this.emit();
+  }
+  // Son école est-elle au dossier CNDP ? L'administration d'une école ne lit pas le suivi (admin_suivi) :
+  // dossier_cndp_de_mon_ecole() le lui dit. Une base qui n'a pas encore la fonction, ou toute erreur : non (l'import reste fermé)
+  async dossierCndpDeMonEcole() {
+    try { const { data, error } = await this.sb.rpc('dossier_cndp_de_mon_ecole'); return !error && data === true; } catch { return false; }
   }
   async rapportInsertion(ecole) {
     const { data, error } = await this.sb.rpc('rapport_insertion', ecole ? { p_ecole: ecole } : {});

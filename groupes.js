@@ -2,7 +2,7 @@
 import { html, useState, useRef } from './vendor/preact-htm.js';
 import { getLang, addAR } from './i18n.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, Rangee, injectCSS, vibrer, Coche, Squelette } from './ui.js';
-import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
+import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo, NOMS_MEKNES, nomsAPartagerDe } from './logic.js';
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
 import { villeAffichee } from './geo.js';
@@ -152,10 +152,11 @@ function GroupView({ ctx, gkey }) {
 // ---------------------------------------------------------------------------
 // Cafés ENSAM
 // ---------------------------------------------------------------------------
-function gcalCafe(c) {
+// noms : ceux de l'école du café (nomsAPartager) ; l'ENSAM Meknès par défaut, avec ses textes d'avant
+export function gcalCafe(c, noms = NOMS_MEKNES) {
   const fmt = d => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   const end = new Date(new Date(c.date_at).getTime() + 90 * 6e4);
-  const q = new URLSearchParams({ action: 'TEMPLATE', text: `Café ENSAM · ${c.ville}`, dates: `${fmt(c.date_at)}/${fmt(end)}`, details: (c.message ? c.message + '\n\n' : '') + 'Rencontre du Réseau ENSAM Meknès', location: `${c.lieu}, ${c.ville}${c.pays && c.pays !== 'Maroc' ? ', ' + c.pays : ''}` });
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: `Café ENSAM · ${c.ville}`, dates: `${fmt(c.date_at)}/${fmt(end)}`, details: (c.message ? c.message + '\n\n' : '') + `Rencontre du Réseau ${noms.nom}`, location: `${c.lieu}, ${c.ville}${c.pays && c.pays !== 'Maroc' ? ', ' + c.pays : ''}` });
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
 
@@ -184,7 +185,7 @@ export function CafeCard({ ctx, c, showCity }) {
     <div class="cafe-act">
       ${c.annule ? html`<span class="tag done">Annulé</span>` : past ? html`<span class="tag done">Terminé</span>` : mineP ? html`
         <span class="mini good cafe-ok"><${Coche} taille=${16} pose=${dejaInscrit.current}/> Tu y vas</span>
-        <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
+        <a class="btn tiny ghost" href=${gcalCafe(c, nomsAPartagerDe(data, c))} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`
         : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small tonal" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); vibrer(); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}

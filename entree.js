@@ -1,11 +1,11 @@
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
-import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
+import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour, ecoleValide, adresseAvecContexte } from './regles-entree.js';
 
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
 addAR({
-  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس',
+  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس', 'Réseau ENSAM': 'شبكة ENSAM',
   'Les lauréats ouvrent la porte aux étudiants.': 'الخريجون يفتحون الباب أمام الطلبة.',
   'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
   'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي',
@@ -121,10 +121,16 @@ export function BrandLogo({ size = 38, draw = false }) {
 
 let gateOpened = false, scene = null, sceneP = null;
 export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
-export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
+export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
+  useLayoutEffect(() => {
+    const t = ref.current?.querySelector('.g-txt');
+    if (!t || (!bande && t.__b == null)) return;
+    t.__b ??= t.textContent; const b = bande || t.__b; t.textContent = b; if (!bande) t.__b = null;
+    for (const [k, v] of [['textLength', 212], ['lengthAdjust', 'spacingAndGlyphs']]) if (b.length > 20) t.setAttribute(k, v); else t.removeAttribute(k);
+  }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   const [cadre] = useState([align, fit]);
   useLayoutEffect(() => { ref.current?.querySelector('svg')?.setAttribute('preserveAspectRatio', `${align} ${fit}`); }, [align, fit, pret]);
@@ -154,32 +160,23 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 }
 
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
-const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
+const CLE_MEKNES = 'ensam-invite-meknes';
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
 export function lireInvitation() {
   try {
-    const u = new URL(location.href);
-    const de = u.searchParams.get('de');
-    if (de !== null) {
-      if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-      u.searchParams.delete('de');
-      if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-    }
-    if (u.searchParams.has('ecole')) {
-      const e = u.searchParams.get('ecole');
-      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
-      u.searchParams.delete('ecole');
-      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
-    }
-    if (!u.searchParams.has('promo')) return null;
-    const n = Number(u.searchParams.get('promo'));
+    const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
+    if (CODE_DE.test(de)) ecrire(CLE_DE, de);
+    if (e === null) { if (de !== null || promo) { ecrire(CLE_ECOLE); ecrire(CLE_MEKNES, '1'); } } else if (ecoleValide(e)) { ecrire(CLE_ECOLE, e); ecrire(CLE_MEKNES); }
+    q.delete('de'); q.delete('ecole');
+    if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    const n = Number(q.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
-    const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
-    u.searchParams.delete('promo'); u.searchParams.delete('lang');
+    const ar = q.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
+    q.delete('promo'); q.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     return ar ? 'ar' : null;
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
@@ -205,11 +202,16 @@ function reprendreArrivee() {
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+export const ecoleRetenue = () => ecoleInvitee() || (lire(CLE_MEKNES) ? 'ensam-meknes' : null);
 export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_MEKNES, null); ecrire(CLE_DE, null); adresseIci(null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
+function adresseIci(mode) {
+  if (APPLI_ICI !== 'ios' || mode === 'nouveau') return;
+  try { history.replaceState(history.state, '', adresseAvecContexte(location.href, mode && { promo: promoInvitee(), de: codeInvite(), ecole: ecoleInvitee(), role: roleRetenu(), mode: mode === 'inscription' ? mode : 'connexion' }, getLang())); } catch { /* historique indisponible */ }
+}
 
 const CLE_ACCORD = 'ensam-accord-ici';
 const adresse = e => String(e || '').trim().toLowerCase();
@@ -229,24 +231,46 @@ const ROLES = [
   ['etudiant', 'cap', 'Je suis à l’école', 'De la 1re à la 5e année à l’ENSAM Meknès', '1re à 5e année'],
   ['laureat', 'briefcase', 'J’ai mon diplôme', 'De l’ENSAM Meknès, en poste ou en recherche d’emploi', 'Diplôme ENSAM'],
 ];
-export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false }) {
+export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false, noms }) {
   return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Ta situation</legend><div class="je-suis-choix">
     ${ROLES.map(([r, ico, t, long, court]) => html`<button type="button" id=${idPrefix + r} class=${'je-carte' + (value === r ? ' on' : '')} aria-pressed=${value === r ? 'true' : 'false'} onClick=${() => onChange(r)}>
-      <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? court : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
+      <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? (noms && r === 'laureat' ? noms.diplome : court) : noms ? noms[r] : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
 }
 
 async function appelPublic(nom, corps, cfg) {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
   try {
-    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${nom}`, { method: 'POST', headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(corps), signal: c.signal });
+    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/${corps ? 'rpc/' : ''}${nom}`, { method: corps ? 'POST' : 'GET', headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' }, body: corps ? JSON.stringify(corps) : null, signal: c.signal });
     return r.ok ? { ok: true, x: await r.json() } : { ok: false };
   } catch { return { ok: false }; } finally { clearTimeout(t); }
 }
 const enLigneCfg = cfg => !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
-let chiffresP = null;
+const chiffresP = new Map();
 export function chiffresPublics(cfg = window.ENSAM_CONFIG || {}) {
   if (!enLigneCfg(cfg)) return Promise.resolve(null);
-  return chiffresP ||= appelPublic('chiffres_publics', {}, cfg).then(r => { if (!r.ok) chiffresP = null; return r.ok ? r.x : null; });
+  const args = argsEcole(), cle = args.p_ecole || '';
+  if (!chiffresP.has(cle)) chiffresP.set(cle, appelPublic('chiffres_publics', args, cfg).then(r => { if (!r.ok) chiffresP.delete(cle); return r.ok ? r.x : null; }));
+  return chiffresP.get(cle);
+}
+const mots = (v, n) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+const nomsVus = new WeakMap();
+export function nomsDeLigne(l) {
+  if (l?.ouverte !== true || !ecoleValide(l.slug) || l.slug === 'ensam-meknes') return null;
+  if (nomsVus.has(l)) return nomsVus.get(l);
+  const ville = mots(l.ville, 60), court = mots(l.nom_court, 40), nom = mots(l.nom, 120) || [court || 'ENSAM', ville].filter(Boolean).join(' ');
+  const ar = mots(l.nom_ar, 120) || nom, dip = court || nom, ec = /^[aeiouyàâäéèêëîïôöûüÿæœ]/i.test(nom) ? '' : 'école ';
+  const n = { nom, marque: `Réseau ${nom}`, etudiant: `De la 1re à la 5e année à l’${ec}${nom}`, laureat: `De l’${ec}${nom}, en poste ou en recherche d’emploi`, diplome: `Diplôme ${dip}`,
+    bande: (court && ville ? `${court} · ${ville}` : dip).toUpperCase(), domaines: Array.isArray(l.domaines) ? l.domaines.filter(d => typeof d === 'string' && d) : [], obligatoire: l.email_obligatoire === true };
+  addAR({ [n.marque]: `شبكة ${ar}`, [n.etudiant]: `من السنة الأولى إلى الخامسة في ${ar}`, [n.laureat]: `من ${ar}، في وظيفة أو في بحث عن عمل`, [n.diplome]: `شهادة ${dip}` });
+  nomsVus.set(l, n);
+  return n;
+}
+const lignesP = new Map(), lus = new Map();
+export function ecoleDuLien(cfg = window.ENSAM_CONFIG || {}) {
+  const e = argsEcole().p_ecole;
+  if (!e || !enLigneCfg(cfg)) return Promise.resolve(null);
+  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) return void lignesP.delete(e); const n = Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
+  return lignesP.get(e);
 }
 export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
   if (!estUuid(id) || !enLigneCfg(cfg)) return undefined;
@@ -431,14 +455,25 @@ export function AuthScreen({ store }) {
   const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
+  const autre = argsEcole().p_ecole;
+  const [noms, setNoms] = useState(() => (!autre ? null : lus.has(autre) ? lus.get(autre) : undefined));
+  useEffect(() => {
+    if (!autre || noms !== undefined) return;
+    let vivant = true; const relire = () => ecoleDuLien().then(n => { if (vivant && n !== undefined) setNoms(n); });
+    relire(); addEventListener('online', relire);
+    return () => { vivant = false; removeEventListener('online', relire); };
+  }, [noms === undefined, !store]);
+  const marqueFr = noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès';
+  useLayoutEffect(() => { if (autre) document.title = marqueFr; else if (!document.title.endsWith('Réseau ENSAM Meknès')) document.title = 'Réseau ENSAM Meknès'; }, [marqueFr]);
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
     const c = codeInvite(); if (!c) return;
     let vivant = true;
-    invitationDe(c).then(x => { if (!vivant) return; if (x === null) ecrire(CLE_DE, null); else if (x) setDeQui(x); });
+    invitationDe(c).then(x => { if (!vivant) return; if (x === null) { ecrire(CLE_DE, null); setDeQui(false); } else if (x) setDeQui(x); });
     return () => { vivant = false; };
   }, []);
-  const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
+  useEffect(() => { adresseIci(mode); }, [mode, deQui, getLang()]);
+  const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); adresseIci(mode); };
   const occupe = useRef(false);
   const run = async fn => {
     if (occupe.current) return; occupe.current = true;
@@ -446,14 +481,15 @@ export function AuthScreen({ store }) {
     try { await fn(store || await attendreMagasin(true).catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
     occupe.current = false; setBusy(false);
   };
-  const ecole = store?.domainesEcole?.() || [];
+  const ecole = noms ? noms.domaines : noms === undefined ? [] : store?.domainesEcole?.() || [];
   const deLEcole = estEmailEcole(email, ecole);
-  const meta = () => { const de = codeInvite(); return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}) }; };
+  const meta = () => { const de = codeInvite(), e = argsEcole().p_ecole; return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}), ...(e ? { ecole: e } : {}) }; };
   const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   const envoyer = (creer, renvoi = false) => run(async s => {
-    const e = email.trim();
-    if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
+    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : n === undefined ? [] : s.domainesEcole();
+    if (autre && n !== undefined) setNoms(n);
+    if (creer && role === 'etudiant' && (n ? n.obligatoire : s.reglages?.email_ecole_obligatoire === true) && doms.length && !estEmailEcole(e, doms)) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e, role);
     if (creer && offreFermeePour(infos, role)) oublierLien();
@@ -466,7 +502,8 @@ export function AuthScreen({ store }) {
     if (renvoi) { setCode(''); essai.current = ''; const el = document.getElementById('au-code'); if (el) el.value = ''; setMsg({ t: 'Nouveau code envoyé. Seul le dernier code reçu marche.' }); }
   });
   const verifier = v => { essai.current = v; run(async s => {
-    try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
+    const ins = origine === 'inscription';
+    try { await s.verifierCode(email.trim(), v, ins ? meta() : null, ins ? ecoleRetenue() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
     noterAttente(null); marquerMembre(); setEntre(true); apresConnexion();
   }); };
   const saisir = e => {
@@ -494,7 +531,7 @@ export function AuthScreen({ store }) {
   const bandeau = invite && inscription && (!role || role === roleDePromo(invite));
   const deIci = deQui && inscription, memePromo = !!(deIci && bandeau && Number(deQui.promo) === invite);
   const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
-  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
+  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${(noms ? noms.obligatoire : store?.reglages?.email_ecole_obligatoire) ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
   const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
   const pourquoiCode = html`<p class="small muted au-sans-mdp">Pas de mot de passe : on t’envoie un code à 6 chiffres par email.</p>`;
   const pour = (etuAvant ? ['etudiant', 'laureat'] : ['laureat', 'etudiant']).map(r => POUR[r]);
@@ -503,7 +540,7 @@ export function AuthScreen({ store }) {
 
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
-    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
+    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${marqueFr}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class=${'entree-promesse' + (serre ? ' serre' : '')}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
@@ -516,7 +553,7 @@ export function AuthScreen({ store }) {
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau || deIci ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deIci ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau && !memePromo ? html`<strong>Bienvenue, promo ${invite} !</strong>${bandeCourte ? null : ' Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.'}` : bandeau && !bandeCourte ? 'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.' : null}</span></p>` : null}
-      ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
+      ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact noms=${noms}/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
         <p id="au-code-envoye" class="muted">Entre le code à 6 chiffres envoyé à</p>
@@ -537,7 +574,7 @@ export function AuthScreen({ store }) {
       </div>
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
-    <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
+    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms ? noms.bande : noms === undefined ? 'ENSAM' : undefined}/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }
@@ -685,7 +722,7 @@ if (!window.ENSAM_ENTREE) {
     d.dataset.entree = 'visiteur';
     let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
     try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
-    chiffresPublics();
+    chiffresPublics(); ecoleDuLien();
     chargerAppareil();
     monter(null);
     chargerScene().catch(() => {});

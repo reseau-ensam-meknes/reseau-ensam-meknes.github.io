@@ -3,11 +3,11 @@ import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur, ENSUITE } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
-import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole } from './logic.js';
+import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole, nomsDuMembre, marqueDuMembre } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
-import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
+import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, recrutementDeclare, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
@@ -39,6 +39,10 @@ const CALQUES_FIXES = '.modal-back, .fete-back, .mx-fete, .visionneuse, .rs-hist
 // Coque v3 : le bandeau de la démo tient sur une ligne, son mode d'emploi se déplie
 addAR({ 'Démo avec des données fictives.': 'نسخة تجريبية ببيانات وهمية.', 'Essaie le mentorat :': 'جرّب الإرشاد:', 'Comment essayer': 'كيف تجرّب', 'Replier': 'طيّ' },
   [[/^Profil rempli à (\d+)\s?%$/, n => `الملف مكتمل بنسبة ${n}%`]]);
+// La marque de l'école du membre (marqueDuMembre) en arabe : « شبكة » et son nom, donnés une fois par nom ; « Réseau ENSAM »
+// (l'ENSAM Meknès, une école dont la ligne n'est pas là) et « Réseau ENSAM Meknès » restent ceux du dictionnaire
+const marquesAR = new Set(['Réseau ENSAM', 'Réseau ENSAM Meknès']);
+const marqueEnArabe = m => { if (!marquesAR.has(m.titre)) { marquesAR.add(m.titre); addAR({ [m.titre]: `شبكة ${m.nomAr}` }); } return m; };
 
 // Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
 // Le temps qu'ils arrivent, la forme d'une page ; s'ils ne peuvent pas arriver (réseau), un mot calme et « Réessayer ».
@@ -297,8 +301,8 @@ function App({ store }) {
     }
     seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
-    const ec = (data.ecoles || []).find(e => e.slug === me.ecole && e.slug !== 'ensam-meknes');
-    try { document.title = (n ? `(${n}) ` : '') + (ec ? `Réseau ${ec.nom}` : 'Réseau ENSAM Meknès'); } catch { /* */ }
+    // Le nom de l'école du membre (sa ligne de data.ecoles) ; jamais l'ENSAM Meknès pour une autre école
+    try { document.title = (n ? `(${n}) ` : '') + `Réseau ${nomsDuMembre(data, me).nom}`; } catch { /* */ }
     poserBadge(store, n);
   });
 
@@ -409,11 +413,13 @@ function App({ store }) {
     : me.role === 'etudiant' ? (typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX ? { cle: 'demande', label: 'Publier ma demande', icon: 'send', faire: () => go('offres/demandes/nouvelle') } : null)
     : me.role === 'admin' ? { cle: 'evenement', label: 'Publier un événement', icon: 'calendar', faire: () => publierEvenement(go) } : null;
 
+  // La marque de la barre latérale et du haut de l'écran du téléphone : celle de l'école du membre
+  const marque = marqueEnArabe(marqueDuMembre(data, me));
   return html`<div class=${'shell' + (premier ? ' premier' : '')} data-publier=${publier?.cle || null}>
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
     <aside class="side">
       <div class="side-in">
-        <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
+        <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>${marque.titre}</strong><span>${marque.sous}</span></span></a>
         ${publier ? html`<button type="button" class="btn primary side-pub" onClick=${() => { setPop(null); setCloche(false); publier.faire(); }}><${Icon} name=${publier.icon} size=${20}/><span class="side-lib">${publier.label}</span><span class="side-court" aria-hidden="true">Publier</span></button>` : null}
         <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i} size=${20}/></span><span class="side-lib">${l}</span><span class="side-court" aria-hidden="true">${court(l)}</span>${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${neuf(msgs)}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
         <div class="side-foot"><span class="small muted">Année ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
@@ -421,7 +427,7 @@ function App({ store }) {
     </aside>
     <div class=${'main' + (plein ? ' full' : '')}>
       <header class="top">
-        <a class="brand mobile-only" href="#accueil" aria-label="Réseau ENSAM · Accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${34}/><strong>Réseau ENSAM</strong></a>
+        <a class="brand mobile-only" href="#accueil" aria-label=${`${marque.titre} · Accueil`} onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${34}/><strong>${marque.titre}</strong></a>
         <span class="spacer"></span>
         ${store.mode === 'demo' ? html`<${PersonaSwitch} store=${store} go=${go}/>` : null}
         <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} aria-current=${page === 'messages' ? 'page' : null} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
@@ -574,7 +580,7 @@ function buildNotifs({ data, me, store, saison }) {
   // Étudiant : recrutement à confirmer, évolution des candidatures, nouvelles offres
   for (const p of data.placements) {
     if (p.student_id !== me.id) continue;
-    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} déclare ton recrutement chez ${p.entreprise}. Confirme-le.` });
+    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: `${recrutementDeclare(p, name(p.laureat_id))}. Confirme-le.` });
     if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ key: 'pm' + p.id, ref: p.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: perso, at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
   }
   for (const a of data.applications) if (a.student_id === me.id && a.offer_id && a.status !== 'postule' && recent(a.updated_at || a.created_at, 21)) {
@@ -830,7 +836,7 @@ function pasRdv(ctx, m, q) {
 function pasConfirmer(ctx, pl, helper) {
   const { data } = ctx, qui = helper?.full_name || 'Un lauréat';
   const sur = (pl.offer_id && data.offers.find(o => o.id === pl.offer_id)?.titre) || (pl.demande_id && (data.demandes || []).find(d => d.id === pl.demande_id)?.titre) || null;
-  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} déclare ton recrutement chez ${pl.entreprise}`, detail: sur, detailMembre: true,
+  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: recrutementDeclare(pl, qui), detail: sur, detailMembre: true,
     cta: 'Oui, je confirme', ici: true, go: () => confirmerRecrutement(ctx, pl, helper), lien: { label: 'Ce n’est pas le cas', go: () => refuserRecrutement(ctx, pl) } };
 }
 // Une notification devient la carte : son geste est le bouton (jamais « Y aller »)
@@ -1008,6 +1014,17 @@ function OffresPourToi({ ctx, offres, jeunes }) {
     <${Icon} name="arrow" size=${18}/></button>`;
 }
 
+// Le nom écrit sur la porte de l'accueil d'un membre d'une autre école que l'ENSAM Meknès : celui de son école (sa ligne de
+// la table des écoles), par la même règle que la page d'entrée du lien d'une école ouverte (« ENSA · FÈS ») ; sans sa ligne,
+// « ENSAM », jamais l'ENSAM Meknès. L'ENSAM Meknès : rien (undefined), la porte d'avant
+const motCourt = v => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 40) : '');
+function bandeDuMembre(data, me) {
+  const n = nomsDuMembre(data, me);
+  if (n.meknes) return undefined;
+  const court = motCourt((data?.ecoles || []).find(e => e?.slug === n.slug)?.nom_court);
+  return (court && n.ville ? `${court} · ${n.ville}` : court || n.nom).toUpperCase();
+}
+
 function Home(ctx) {
   const { data, me, saison, scores, store, go, openProfile, openOffer, notifs = [], openNotif } = ctx;
   const n = niveauOf(me, saison);
@@ -1102,7 +1119,7 @@ function Home(ctx) {
           ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
           <p class="hello-sub">${isStudent ? 'Les lauréats de l’école sont là pour t’aider.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
         </div>
-        <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
+        <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000} bande=${bandeDuMembre(data, me)}/>
       </header>
 
       <${BandeauPush} ctx=${ctx}/>

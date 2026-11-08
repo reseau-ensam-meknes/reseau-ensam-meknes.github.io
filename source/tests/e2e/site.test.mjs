@@ -9029,9 +9029,10 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
 // téléphone sans services de notifications), deja (cet appareil est déjà abonné)
 const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
   consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
-// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
-async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null } = {}) {
-  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
+// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent ;
+// tables : d'autres lignes que la base rend dès l'ouverture (réussites, mentorats…), comme site.tables
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null, tables = {} } = {}) {
+  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil }); Object.assign(site.tables, tables);
   const ctx = await navigateur.newContext({ viewport: { width: 360, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (vueWeb) await ctx.addInitScript(() => { delete window.Notification; delete window.PushManager; });
@@ -9869,6 +9870,41 @@ test('réussite sur la page d’entrée : chacun coche sa case, montrée seuleme
   await s.ctx.close();
 });
 
+// En ligne, la case suit ce que la base a gardé : un choix refusé (fonction absente, droits, réseau coupé) remet la case
+// où elle était, l'erreur dite ; une base plus ancienne que le site (la réussite sans ses colonnes public_*) : pas de case
+test('réussite sur la page d’entrée, en ligne : base pas encore à jour, pas de case ; un choix refusé ou perdu en route, la case revient où elle était', async () => {
+  const S = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1, now = new Date().toISOString();
+  const PL = { id: 'c0000000-0000-4000-8000-0000000000e1', student_id: UID, laureat_id: AUTEUR_OFFRE, offer_id: null, demande_id: null, source: 'plateforme', status: 'confirme', saison: S,
+    type: 'stage', entreprise: 'OCP', ville: 'Casablanca', pays: 'Maroc', merci: null, partage_ok: false, created_at: now, confirmed_at: now };
+  // Base plus ancienne que le site : la réussite est là (la case LinkedIn aussi), pas la case de la page d'entrée
+  let m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [PL] } });
+  await m.page.waitForSelector('#pl-partage', { timeout: 10000 });
+  assert.equal(await m.page.locator('.pl-public-case, .pl-public-sens').count(), 0, 'pas de case qui ne mènerait qu’à une erreur');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Base à jour, mais montrer_reussite refusée (ici, la fonction manque encore) : l'erreur dite, la case décochée comme avant
+  m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [{ ...PL, public_etudiant: false, public_laureat: false }] } });
+  const c = m.page.locator('#pl-public-' + PL.id);
+  await c.waitFor({ timeout: 10000 });
+  assert.equal(await c.isChecked(), false, 'jamais coché d’avance');
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("la base est en cours de mise à jour")');
+  assert.equal(await c.isChecked(), false, 'refusé : la case revient décochée');
+  assert.ok(m.site.appels.some(a => a.u === '/sb/rest/v1/rpc/montrer_reussite' && a.corps?.p_oui === true));
+  // Acceptée : cochée, et elle le reste
+  m.site.rpc.montrer_reussite = corps => ({ public_etudiant: corps?.p_oui === true, public_laureat: false });
+  await c.click();
+  await m.page.waitForSelector('.toast:has-text("quand l’autre personne aura coché aussi")');
+  assert.equal(await c.isChecked(), true);
+  // Décochée, réseau coupé en route : la base l'a toujours, la case revient cochée
+  await m.page.route('**/rest/v1/rpc/montrer_reussite', r => r.abort('internetdisconnected'));
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Pas de réseau")');
+  assert.equal(await c.isChecked(), true, 'perdu en route : la case revient cochée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 for (const langue of ['fr', 'ar']) test(`invitation nommée en démo (${langue}) : le lien de la promo porte le code du membre ; les camarades arrivés grâce à lui`, async () => {
   const s = await ouvrir({ largeur: 390, langue });
   const texte = async sel => decodeURIComponent((await s.page.getAttribute(sel, 'href')).split('text=')[1]);
@@ -10234,4 +10270,1251 @@ test('premiers pas masqués : le petit mot renvoie à « Moi », où « Comment 
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Écoles : la console qui regarde une autre école ouverte écrit ses messages, ses liens et son affiche ; le Réseau cache
+// l'Agenda et le guide de l'étranger avec le même filtre que leur page ; un lien de promo d'une autre école la fait suivre
+// ---------------------------------------------------------------------------
+// L'Institut exemple (créé dans la démo), ouvert : la troisième condition du suivi cochée, puis « Ouvrir le réseau »
+async function ouvrirInstitut(s) {
+  const slug = await deuxiemeEcole(s);
+  const suivi = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  await suivi.locator('.sv-check').nth(2).click(); await s.page.waitForTimeout(200);
+  await s.page.click(`#ec-ouvrir-${slug}`); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator(`.ec-reseau[data-slug="${slug}"]`).innerText(), /Ouvert/);
+  return slug;
+}
+const message = (s, id) => s.page.inputValue(`#${id} textarea.adm-msg`);
+
+test('console · une autre école ouverte : Animer et Inviter écrivent ses messages et ses liens (&ecole=), Affiches son affiche ; Partenaires et l’ENSAM Meknès comme avant', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const slug = await ouvrirInstitut(s);
+  assert.equal(slug, 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', slug); await s.page.waitForTimeout(200);
+  // Animer : plus de note ; le résumé, le merci et les fondateurs nomment l'école et portent son lien, en français et en arabe
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  const resume = await message(s, 'adm-resume');
+  assert.match(resume, /^✅ Cette semaine dans le Réseau Institut exemple\n/);
+  assert.match(resume, /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-merci'), /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-fondateurs'), /^⭐ Membres fondateurs du Réseau Institut exemple\n[\s\S]*\?ecole=institut-exemple$/);
+  await s.page.locator('#adm-resume-langue button[lang="ar"]').click(); await s.page.waitForTimeout(150);
+  assert.match(await message(s, 'adm-resume'), /^✅ هذا الأسبوع في شبكة Institut exemple\n[\s\S]*\?lang=ar&ecole=institut-exemple$/);
+  for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+  // Inviter : les liens de chaque promo et le message
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  const liens = await s.page.locator('.inv-link').allInnerTexts();
+  assert.ok(liens.length > 5 && liens.every(l => /[?&]ecole=institut-exemple$/.test(l)), liens.join(' | '));
+  const msg = await s.page.locator('.inv-msg').innerText();
+  assert.match(msg, /Le Réseau Institut exemple est ouvert : une plateforme gratuite entre étudiants et lauréats de l'Institut exemple\.\n[\s\S]*\?promo=\d{4}&ecole=institut-exemple\n/);
+  assert.doesNotMatch(msg, /Meknès|مكناس/);
+  // Partenaires : leurs textes restent ceux de l'ENSAM Meknès, la note le dit toujours
+  await s.aller('admin/partenaires');
+  assert.match(await s.page.locator('.cs-note-ecole').innerText(), /toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie/);
+  // Affiches : l'affiche et le mode événement sont ceux de l'école ; la note dit ce qui reste à l'ENSAM Meknès
+  await s.aller('admin/outils'); await s.page.waitForSelector('.affiche');
+  assert.equal(await s.page.locator('.cs-note-ecole').innerText(), 'Ici, l’affiche et le mode événement sont ceux de l’école choisie ; le rapport, les offres récentes et les visuels restent ceux du Réseau ENSAM Meknès.');
+  assert.deepEqual(await s.page.locator('.affiche .af-marque span').allInnerTexts(), ['Réseau Institut exemple', 'شبكة Institut exemple']);
+  assert.match(await s.page.locator('.affiche').innerText(), /Rejoins le Réseau Institut exemple/);
+  assert.match(await s.page.locator('.affiche .af-url').innerText(), /ecole=institut-exemple$/);
+  assert.equal(await s.debordement(), 0);
+  // Retour à l'ENSAM Meknès : ses textes et ses liens d'avant, sans &ecole=
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.match(await message(s, 'adm-resume'), /^✅ Cette semaine dans le Réseau ENSAM Meknès\n/);
+  assert.doesNotMatch(await message(s, 'adm-resume'), /ecole=/);
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.ok((await s.page.locator('.inv-link').allInnerTexts()).every(l => !/ecole=/.test(l)));
+  assert.match(await s.page.locator('.inv-msg').innerText(), /Le Réseau ENSAM Meknès est ouvert/);
+  await s.aller('admin/outils'); await s.page.waitForSelector('.affiche');
+  assert.deepEqual(await s.page.locator('.affiche .af-marque span').allInnerTexts(), ['Réseau ENSAM Meknès', 'شبكة ENSAM مكناس']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Réseau : l’onglet Agenda et le guide de l’étranger se montrent avec le filtre de leur page (école du membre, son rôle)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const onglets = () => s.page.locator('.reseau-onglets [role="tab"]').allInnerTexts();
+  const guide = async () => { await s.aller('reseau/entraide'); return s.page.locator('#gp-entree').count(); };
+  const changer = f => s.page.evaluate(f).then(() => s.page.waitForTimeout(250));
+  await s.comme('Salma'); await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Agenda', 'Entraide', 'Annuaire'], 'comme avant');
+  assert.equal(await guide(), 1);
+  // Les événements d'une autre école seulement : l'Agenda de Salma serait vide, son onglet ne se montre pas
+  await changer(() => { const d = window.__demo; window.__evts = d.data.evenements; d.data.evenements = d.data.evenements.map(e => ({ ...e, ecole: 'institut-exemple' })); d.emit(); });
+  await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Entraide', 'Annuaire']);
+  // Un événement de son école, pour les lauréats seulement : pas d'Agenda pour l'étudiante, son Agenda pour Youssef
+  await changer(() => { const d = window.__demo; d.data.evenements = [{ ...window.__evts[0], ecole: 'ensam-meknes', public: 'laureats' }]; d.emit(); });
+  await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Entraide', 'Annuaire']);
+  await s.comme('Youssef'); await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Agenda', 'Entraide', 'Annuaire']);
+  await s.aller('reseau/agenda');
+  assert.equal(await s.page.locator('.reseau-onglets [aria-selected="true"]').innerText(), 'Agenda');
+  // Le guide de l'étranger sans aucune rubrique écrite : il se montre s'il y a des lauréats de son école à l'étranger
+  await changer(() => { const d = window.__demo; window.__guide = d.data.guide_pays; d.data.guide_pays = []; d.emit(); });
+  await s.comme('Salma');
+  assert.equal(await guide(), 1, 'des lauréats de l’ENSAM Meknès à l’étranger');
+  // Une étudiante d'une autre école : aucun lauréat de son école à l'étranger, pas de guide ; le guide écrit, commun à toutes
+  // les écoles, se montre dès qu'il a une rubrique
+  await changer(() => window.__demo.update('profiles', window.__demo.me.id, { ecole: 'institut-exemple' }));
+  assert.equal(await guide(), 0);
+  await s.aller('reseau/etranger');
+  assert.equal(await s.page.locator('.gp-grid').count(), 0, 'l’adresse du guide ouvre l’Entraide');
+  await changer(() => { const d = window.__demo; d.data.guide_pays = window.__guide; d.emit(); });
+  assert.equal(await guide(), 1);
+  await s.aller('reseau/etranger'); await s.page.waitForSelector('.gp-grid');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien de promo d’une autre école : la page d’aperçu, puis le service worker, font suivre l’école et le code jusqu’à l’entrée', async () => {
+  const lus = page => page.evaluate(() => ['ensam-invite-promo', 'ensam-invite-ecole', 'ensam-invite-de'].map(k => localStorage.getItem(k)));
+  // Sans service worker : le script de la page d'aperçu
+  let s = await ouvrir();
+  await s.page.goto(adresse + 'promo/2019/?ecole=ensa-fes&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await lus(s.page), ['2019', 'ensa-fes', 'nadia219']);
+  // Une école mal écrite ne suit pas
+  await s.page.evaluate(() => localStorage.removeItem('ensam-invite-ecole'));
+  await s.page.goto(adresse + 'promo/2019/ar/?ecole=ENSA%3Cx%3E&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.deepEqual(await lus(s.page), ['2019', null, 'nadia219']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Service worker actif : la redirection qu'il fait garde aussi l'école
+  s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.goto(adresse + 'promo/2019/ar/?ecole=ensa-fes&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await lus(s.page), ['2019', 'ensa-fes', 'nadia219']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// « … peut citer mon nom s’il partage mon recrutement sur LinkedIn » (#pl-partage) suit ce que la base a gardé, comme
+// « Peut être montré » : un choix refusé (droits) ou perdu en route (réseau coupé) remet la case où elle était, l'erreur dite
+test('Mon parcours, en ligne : « peut citer mon nom » refusé ou perdu en route, la case revient où la base l’a gardée ; acceptée, elle le reste', async () => {
+  const S = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1, now = new Date().toISOString();
+  const PL = { id: 'c0000000-0000-4000-8000-0000000000e2', student_id: UID, laureat_id: AUTEUR_OFFRE, offer_id: null, demande_id: null, source: 'plateforme', status: 'confirme', saison: S,
+    type: 'stage', entreprise: 'OCP', ville: 'Casablanca', pays: 'Maroc', merci: 'Merci pour tout !', note: 5, partage_ok: false, public_etudiant: false, public_laureat: false, created_at: now, confirmed_at: now };
+  const m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [PL] } });
+  const c = m.page.locator('#pl-partage');
+  await c.waitFor({ timeout: 10000 });
+  assert.equal(await c.isChecked(), false);
+  const PATCH = '**/rest/v1/placements?*';
+  const repondre = reponse => m.page.route(PATCH, r => (r.request().method() === 'PATCH' ? r.fulfill(reponse) : r.fallback()));
+  // Refusé par la base (ses règles) : l'erreur dite, la case décochée comme avant
+  await repondre({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', details: null, hint: null, message: 'new row violates row-level security policy for table "placements"' }) });
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Action non autorisée pour ton compte.")');
+  assert.equal(await c.isChecked(), false, 'refusé : la case revient décochée');
+  // Acceptée : cochée, et la ligne gardée (le magasin relit ensuite les demandes et les propositions : la ligne y est déjà)
+  await m.page.unroute(PATCH);
+  await repondre({ status: 200, contentType: 'application/vnd.pgrst.object+json', body: JSON.stringify({ ...PL, partage_ok: true }) });
+  const relue = m.page.waitForRequest(r => r.method() === 'GET' && /\/rest\/v1\/propositions\?/.test(r.url()));
+  await c.click();
+  await relue;
+  assert.equal(await c.isChecked(), true);
+  assert.ok(m.site.appels.some(a => a.u === '/sb/rest/v1/placements' && a.m === 'GET'), 'les réussites lues à l’ouverture');
+  // Décochée, réseau coupé en route : la base l'a toujours, la case revient cochée
+  await m.page.unroute(PATCH);
+  await m.page.route(PATCH, r => (r.request().method() === 'PATCH' ? r.abort('internetdisconnected') : r.fallback()));
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Pas de réseau")');
+  assert.equal(await c.isChecked(), true, 'perdu en route : la case revient cochée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Un compte supprimé, des offres retirées par leur auteur : la base ne garde que ce qui reste (supabase/schema.sql). Chaque
+// clé étrangère « on delete cascade » emporte les lignes qui visaient ce qui part ; chaque « on delete set null » vide leur
+// lien et garde la ligne (le recrutement reste à l'étudiant, la demande en match à son auteur, la relecture rendue à qui
+// l'a demandée, la rubrique du guide et la carte sponsorisée à tous). Une relecture pas encore rendue redevient ouverte à
+// tous, sans son brouillon (protect_relecture). Les clés sont lues dans le schéma : la démo efface comme la vraie base.
+let CLES_ETRANGERES;
+function clesEtrangeres() {
+  if (CLES_ETRANGERES) return CLES_ETRANGERES;
+  const sql = fs.readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
+  const fk = []; let table = null;
+  for (const l of sql.split('\n')) {
+    const t = l.match(/^create table if not exists public\.(\w+)/);
+    if (t) table = t[1]; else if (/^\)/.test(l)) table = null;
+    const a = l.match(/^alter table public\.(\w+) add column if not exists (\w+) uuid references public\.(\w+)\(id\) on delete (cascade|set null)/);
+    const c = !a && table && l.match(/^\s+(\w+) uuid\b[^,]*?references public\.(\w+)\(id\) on delete (cascade|set null)/);
+    if (a) fk.push([a[1], a[2], a[3], a[4]]); else if (c) fk.push([table, c[1], c[2], c[3]]);
+  }
+  assert.ok(fk.length > 80 && fk.some(k => k.join() === 'placements,laureat_id,profiles,set null'), 'les clés étrangères du schéma');
+  return (CLES_ETRANGERES = fk);
+}
+
+// La démo d'avant, puis un lauréat (L) qui avait aidé Salma et Amine supprime son compte, et trois offres sont retirées par
+// leur auteur. L avait : recruté Salma l'an dernier par son offre (merci, nom cité), déclaré le stage d'Amine (à confirmer),
+// fait un match avec la demande de Salma, rendu une relecture de son CV et commencé une autre, écrit la rubrique France du
+// guide ; d'autres ont félicité une étudiante qu'il a recrutée. Youssef retire son PFE (une candidature de Salma en entretien,
+// deux recrutements) et l'offre de son match ; Meryem retire celle de son match avec Salma. Les cartes sponsorisées, une
+// annonce, un événement et un signalement traité perdent leur auteur (un admin parti).
+async function apresUnDepart(s) {
+  return s.page.evaluate(async fk => {
+    // Les données lues après l'import : emit() (une écriture de la démo qui finit pendant cette attente) remplace d.data par
+    // une copie, et une table réassignée dans l'ancien objet ne serait plus celle de la démo
+    const d = window.__demo, { seasonOf, niveauOf } = await import('./logic.js'), D = d.data;
+    const S = seasonOf(new Date()), t = Date.now(), il = j => new Date(t - j * 864e5).toISOString();
+    const P = n => D.profiles.find(p => p.full_name === n);
+    const salma = P('Salma Bennani'), amine = P('Amine Talbi'), youssef = P('Youssef El Amrani'), meryem = P('Meryem Kettani');
+    const L = D.profiles.find(p => p.role === 'laureat' && !p._persona && p.verified && p.entreprise && p.id !== meryem.id && D.offers.some(o => o.author_id === p.id));
+    const oL = D.offers.find(o => o.author_id === L.id);
+    const pl = (st, x) => ({ id: 'pl-dep-' + st.id + '-' + x.saison, student_id: st.id, laureat_id: L.id, offer_id: oL.id, demande_id: null, source: 'plateforme', type: oL.type === 'pfe' ? 'pfe' : 'stage',
+      entreprise: oL.entreprise, ville: oL.ville || null, pays: 'Maroc', niveau: Math.min(niveauOf(st, x.saison), 6), merci: null, note: null, partage_ok: false, public_etudiant: false, public_laureat: false, created_at: il(40), confirmed_at: null, ...x });
+    // Salma : recrutée l'an dernier par L (sa réussite d'alors, confirmée, avec un merci et le nom cité)
+    D.placements = D.placements.filter(x => !(x.student_id === salma.id && x.saison === S - 1));
+    D.placements.push(pl(salma, { saison: S - 1, status: 'confirme', merci: 'Merci pour ta confiance et tes conseils pendant tout le stage.', note: 5, partage_ok: true, public_etudiant: true, public_laureat: true, confirmed_at: il(300), created_at: il(310) }));
+    // Amine : sa demande de stage en match avec L, qui a déclaré son démarrage (pas encore confirmé)
+    D.demandes.push({ id: 'dm-dep-amine', auteur_id: amine.id, type: 'stage', titre: 'Stage d’été en maintenance', details: 'Je cherche un stage d’été de deux mois en maintenance industrielle, près de Meknès.', lieu: 'Meknès',
+      debut: null, duree: '2 mois', status: 'match', laureat_id: L.id, proposition_id: 'pr-dep-amine', match_at: il(6), relancee_at: il(12), created_at: il(12), updated_at: il(6) });
+    D.propositions.push({ id: 'pr-dep-amine', demande_id: 'dm-dep-amine', laureat_id: L.id, aide: 'encadre', entreprise: L.entreprise, poste: null, message: 'Je peux t’encadrer cet été dans mon atelier.', status: 'acceptee', repondu_at: il(6), created_at: il(8) });
+    D.placements.push(pl(amine, { saison: S, status: 'en_attente', offer_id: null, demande_id: 'dm-dep-amine', aide: 'encadre', created_at: il(2) }));
+    // Une étudiante recrutée par L cette saison, félicitée par Salma et Youssef
+    const etu = D.profiles.find(p => p.role === 'etudiant' && !p._persona && !D.placements.some(x => x.student_id === p.id && x.saison === S));
+    const rec = pl(etu, { saison: S, status: 'confirme', merci: 'Merci de m’avoir fait confiance !', confirmed_at: il(1), created_at: il(6) });
+    D.placements.push(rec);
+    D.kudos.push({ id: 'k-dep-1', placement_id: rec.id, user_id: salma.id, created_at: il(1) }, { id: 'k-dep-2', placement_id: rec.id, user_id: youssef.id, created_at: il(1) });
+    // La demande de Salma, en match avec L
+    const dem = { id: 'dm-dep', auteur_id: salma.id, type: 'pfe', titre: 'PFE en excellence opérationnelle', details: 'Je cherche un PFE de six mois en amélioration continue, idéalement dans l’automobile.', lieu: 'Tanger',
+      debut: null, duree: '6 mois', status: 'match', laureat_id: L.id, proposition_id: 'pr-dep', match_at: il(3), relancee_at: il(9), created_at: il(9), updated_at: il(3) };
+    D.demandes.push(dem);
+    D.propositions.push({ id: 'pr-dep', demande_id: dem.id, laureat_id: L.id, aide: 'recrute', entreprise: L.entreprise, poste: null, message: 'Je peux te prendre en PFE dans mon équipe, parlons-en.', status: 'acceptee', repondu_at: il(3), created_at: il(5) });
+    // Les relectures du CV de Salma par L : une rendue, une commencée
+    D.relectures_cv.push({ id: 'rc-dep-rendue', student_id: salma.id, reviewer_id: L.id, cv_path: salma.cv_path || salma.id + '/cv-demo.pdf', message: 'Mon CV est-il prêt pour les PFE ?', status: 'rendue',
+      synthese: 'Clair et bien construit. Chiffre tes résultats de stage et garde une seule page.', merci: null, note: null, created_at: il(20), pris_at: il(19), rendue_at: il(18) });
+    D.relectures_cv.push({ id: 'rc-dep-cours', student_id: salma.id, reviewer_id: L.id, cv_path: salma.cv_path || salma.id + '/cv-demo.pdf', message: 'Une deuxième lecture avant le forum ?', status: 'en_cours',
+      synthese: 'Brouillon de L', merci: null, note: null, created_at: il(4), pris_at: il(3), rendue_at: null });
+    // Une candidature de Salma et un avis d'entretien sur l'offre de L
+    D.applications.push({ id: 'a-dep', student_id: salma.id, offer_id: oL.id, entreprise: oL.entreprise, titre: oL.titre, status: 'postule', message: 'Bonjour, votre offre m’intéresse beaucoup.', note: '', created_at: il(8), updated_at: il(8) });
+    const ent = D.entretiens.find(x => x.author_id === salma.id); if (ent) ent.offer_id = oL.id;
+    // La rubrique France du guide, écrite par L
+    for (const g of D.guide_pays.filter(x => x.pays === 'France')) g.updated_by = L.id;
+    for (const g of D.guide_pays_historique) g.updated_by = L.id;
+    // Un admin parti : les cartes sponsorisées, une annonce, un événement et un signalement traité perdent leur auteur
+    for (const x of D.sponsorises) x.created_by = null;
+    if (D.annonces[0]) D.annonces[0].author_id = null;
+    if (D.evenements[0]) D.evenements[0].author_id = null;
+    for (const x of D.signalements) if (x.traite_par) x.traite_par = null;
+    // La base, quand des lignes s'en vont
+    const effacer = (table, ids) => {
+      const file = [[table, new Set(ids)]];
+      while (file.length) {
+        const [tb, partis] = file.shift();
+        if (D[tb]) D[tb] = D[tb].filter(r => !partis.has(r.id));
+        for (const [ft, col, ref, regle] of fk) {
+          if (ref !== tb || !D[ft]) continue;
+          if (regle === 'cascade') {
+            const suite = D[ft].filter(r => partis.has(r[col]));
+            if (!suite.length) continue;
+            D[ft] = D[ft].filter(r => !partis.has(r[col]));
+            const ids2 = new Set(suite.map(r => r.id).filter(Boolean));
+            if (ids2.size) file.push([ft, ids2]);
+          } else D[ft] = D[ft].map(r => !partis.has(r[col]) ? r
+            : { ...r, [col]: null, ...(ft === 'relectures_cv' && r.status === 'en_cours' ? { status: 'demandee', pris_at: null, synthese: null } : {}) });
+        }
+      }
+    };
+    const avant = { offresL: D.offers.filter(o => o.author_id === L.id).length };
+    effacer('profiles', [L.id]);
+    const offres = ['o-002u', 'o-00fm', 'o-0033'].filter(id => D.offers.some(o => o.id === id));
+    effacer('offers', offres);
+    d.persist(); d.emit();
+    return { L: L.full_name, oL: oL.id, offres, avant, etu: etu.full_name, entreprise: oL.entreprise, pfe: 'PFE : réduction des rebuts sur ligne d’emboutissage', titreL: oL.titre,
+      restes: { placements: D.placements.filter(x => x.id.startsWith('pl-dep-')).map(x => [x.status, x.laureat_id, x.offer_id]),
+        demande: ['dm-dep', 'dm-dep-amine'].flatMap(id => { const x = D.demandes.find(y => y.id === id); return x ? [x.status, x.laureat_id] : []; }),
+        relectures: D.relectures_cv.filter(x => x.id.startsWith('rc-dep')).map(x => [x.id, x.status, x.reviewer_id, x.synthese]), matchs: D.matchs.map(x => x.offre_id), kudos: D.kudos.filter(x => x.id.startsWith('k-dep')).length } };
+  }, clesEtrangeres());
+}
+
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`un compte supprimé et des offres retirées : chaque profil parcourt tous ses écrans sans erreur, sans « undefined », sans texte oublié (${largeur} px, ${langue})`, async () => {
+    const s = await ouvrir({ largeur, langue });
+    const consoles = [];
+    s.page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_/.test(m.text())) consoles.push(m.text()); });
+    const dep = await apresUnDepart(s);
+    // La base a bien fait ce qu'elle fait : les liens vidés, les lignes gardées, la relecture commencée rouverte
+    assert.deepEqual(dep.restes.placements, [['confirme', null, null], ['en_attente', null, null], ['confirme', null, null]]);
+    assert.deepEqual(dep.restes.demande, ['match', null, 'match', null], 'les deux demandes restent en match, sans leur lauréat');
+    assert.deepEqual(dep.restes.relectures, [['rc-dep-rendue', 'rendue', null, 'Clair et bien construit. Chiffre tes résultats de stage et garde une seule page.'], ['rc-dep-cours', 'demandee', null, null]]);
+    assert.deepEqual(dep.restes.matchs, [null, null], 'les deux matchs gardés, sans leur offre');
+    assert.equal(dep.restes.kudos, 2);
+    assert.ok(dep.avant.offresL >= 1 && dep.offres.length === 3);
+    const problemes = [], oublis = new Map();
+    const lireOublis = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!oublis.has(x)) oublis.set(x, ou); };
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
+      for (const e of ECRANS) {
+        await s.aller(e);
+        const txt = await s.page.evaluate(() => document.body.innerText);
+        const bris = txt.match(/\bundefined\b|\bnull\b|NaN|\[object Object\]/);
+        if (bris) problemes.push(`${nom} · ${e} : « ${bris[0]} » à l’écran`);
+        if (txt.includes(dep.L)) problemes.push(`${nom} · ${e} : le nom du compte supprimé à l’écran`);
+        const d = await s.debordement(); if (d > 0) problemes.push(`${nom} · ${e} : ${d} px de trop en largeur`);
+        if (langue === 'ar') {
+          await lireOublis(`${nom} · ${e}`);
+          // Un nom de repli resté en français dans une phrase arabe (un motif le prend pour un nom)
+          for (const x of await s.page.evaluate(replisFrancais)) problemes.push(`${nom} · ${e} : repli en français ${JSON.stringify(x)}`);
+        }
+      }
+    }
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...consoles, ...problemes], []);
+    await verifierReplis(s, langue, dep);
+    if (langue === 'ar') await lireOublis('après les gestes');
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...consoles, ...problemes], []);
+    await s.ctx.close();
+  });
+}
+
+// Dans la page : les textes de l'interface où un nom de repli est resté en français (sauf le français voulu : l'affiche
+// bilingue, lang="fr", et le choix du profil de démo)
+function replisFrancais() {
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), out = [];
+  for (let n; (n = w.nextNode());) {
+    if (!n.parentElement || n.parentElement.closest('[lang="fr"], script, style, #persona')) continue;
+    if (/\b[Uu]n (?:lauréat|ancien membre|membre|étudiant)\b|L’étudiant|[Ll]e lauréat\b|Offre retirée/.test(n.textContent)) out.push(n.textContent.trim());
+  }
+  return out;
+}
+
+// Ce que chacun voit de ce qui est parti : « Un ancien membre » à la place d'un nom, « Offre retirée » à la place d'une
+// offre ; jamais un nom inventé, un visage ou un bouton « Écrire » vers personne. Puis les gestes qui restent : rouvrir la
+// demande, confirmer le démarrage déclaré avant le départ.
+async function verifierReplis(s, langue, dep) {
+  const ar = langue === 'ar';
+  const T = ar ? { ancien: 'عضو سابق', supprime: 'حُذف هذا الحساب.', retiree: 'عرض مسحوب', declare: 'بتصريح من عضو سابق', tous: 'كل الخريجين', hors: 'خارج المنصة' }
+    : { ancien: 'Un ancien membre', supprime: 'Ce compte a été supprimé.', retiree: 'Offre retirée', declare: 'déclaré par un ancien membre', tous: 'Tous les lauréats', hors: 'hors plateforme' };
+  // Salma : sa demande en match avec L, sans visage ni « Écrire » ; elle peut la rouvrir ou la fermer
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  const match = s.page.locator('#dm-dm-dep .dm-match');
+  await match.waitFor();
+  let t = await match.innerText();
+  assert.ok(t.includes(T.ancien) && t.includes(T.supprime), `la demande de Salma : ${t}`);
+  assert.equal(await match.locator('.person, .msg-btn').count(), 0, 'ni visage ni « Écrire » vers un compte supprimé');
+  assert.equal(await match.locator('.dm-sortie button').count(), 2, 'rouvrir ou fermer');
+  // Ses relectures : la rendue garde sa synthèse et dit qui l'a faite sans nom ; la commencée est rouverte à tous
+  await s.aller('mentorat/cv');
+  const rendue = s.page.locator('.rel-card:has-text("Clair et bien construit")');
+  t = await rendue.innerText();
+  assert.ok(t.includes(T.ancien) && !t.includes(T.tous), `la relecture rendue : ${t}`);
+  assert.equal(await s.page.locator('#rv-q-rc-dep-rendue').count(), 0, 'pas de question à un compte supprimé');
+  assert.ok((await s.page.locator('.rel-card:has-text("Une deuxième lecture avant le forum")').innerText()).includes(T.tous), 'la relecture commencée, ouverte à tous');
+  // Ses candidatures aux offres retirées : « Offre retirée », pas « hors plateforme »
+  await s.aller('parcours');
+  for (const titre of [dep.pfe, dep.titreL]) {
+    const q = await s.page.locator('.pc-cand', { hasText: titre }).first().locator('.pc-quand').innerText();
+    assert.equal(q, T.retiree, `${titre} : ${q}`);
+  }
+  assert.equal(await s.page.locator('.pc-cand:has-text("Decathlon") .pc-quand').innerText(), T.hors, 'une candidature hors plateforme le reste');
+  // Hajar, lauréate : la relecture rouverte est dans la file de tous les lauréats
+  await s.comme('Hajar'); await s.aller('mentorat/cv');
+  assert.equal(await s.page.locator('.rel-card:has-text("Une deuxième lecture avant le forum")').count(), 1);
+  // L'administration : le recrutement à confirmer d'Amine, déclaré par un ancien membre (pas « ? »)
+  await s.comme('Admin'); await s.aller('admin/traiter');
+  t = await s.page.evaluate(() => document.body.innerText);
+  assert.ok(t.includes(T.declare) && !t.includes(ar ? 'بتصريح من ?' : 'déclaré par ?'), 'le recrutement d’Amine dans « À traiter »');
+  // Amine : sa demande en match, le démarrage déclaré avant le départ ; il le confirme
+  await s.comme('Amine'); await s.aller('offres/demandes');
+  const sien = s.page.locator('#dm-dm-dep-amine .dm-match');
+  t = await sien.innerText();
+  assert.ok(t.includes(T.ancien), `la demande d’Amine : ${t}`);
+  if (!ar) assert.ok(t.includes(`Ton démarrage chez ${dep.entreprise} a été déclaré.`), t);
+  assert.equal(await sien.locator('.person, .msg-btn').count(), 0);
+  if (ar) return;
+  await sien.locator('.dm-confirmer').click();
+  await s.page.waitForSelector('text=Félicitations, c’est officiel !');
+  t = await s.page.evaluate(() => document.body.innerText);
+  assert.ok(t.includes(`Ta réussite chez ${dep.entreprise} est vérifiée des deux côtés et annoncée dans le réseau.`) && !t.includes('Dire merci à'), 'la fête, sans merci à personne');
+  assert.deepEqual(await s.page.evaluate(() => { const d = window.__demo.data; const p = d.placements.find(x => x.demande_id === 'dm-dep-amine'); return [p.status, d.demandes.find(x => x.id === 'dm-dep-amine').status]; }), ['confirme', 'pourvue']);
+  await s.fermer();
+  // Salma rouvre sa demande : d'autres lauréats pourront lui proposer leur aide
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.locator('#dm-dm-dep .dm-sortie button', { hasText: 'Rouvrir ma demande' }).click();
+  await s.page.waitForSelector('.toast:has-text("Ta demande est de nouveau ouverte.")');
+  assert.deepEqual(await s.page.evaluate(() => { const d = window.__demo.data.demandes.find(x => x.id === 'dm-dep'); return [d.status, d.laureat_id]; }), ['ouverte', null]);
+}
+
+// Cartes sponsorisées, administration d'une école (pas celle du réseau) : comme la base (« lecture membres », « ecriture
+// admin », « modif admin », protect_sponsorise), elle lit les cartes de son école et celles de toutes les écoles, et ne gère
+// que celles de son école. Une carte pour toutes les écoles se lit seulement (ses chiffres, son bilan) ; le formulaire dit
+// que la carte est pour son école, sans choix « Toutes les écoles ». Une carte passée à toutes les écoles juste avant son
+// geste ne s'arrête pas d'ici (la base ne touche aucune ligne) : c'est dit, et rien ne change. L'administration du réseau
+// garde tout comme avant.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`Sponsorisés, administration d’une école : ses cartes se gèrent, celles de toutes les écoles se lisent seulement ; une nouvelle carte est pour son école (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const T = ar ? { toutes: 'كل المدارس', lecture: 'وحدها إدارة الشبكة تعدّلها.', ici: 'تظهر في شبكة مدرستك فقط.', rien: 'لم يتغيّر شيء: لم تعد مدرستك تدير هذه البطاقة.', enregistree: 'حُفظت البطاقة' }
+      : { toutes: 'Toutes les écoles', lecture: 'Seule l’administration du réseau la modifie.', ici: 'Elle paraît dans le réseau de ton école seulement.', rien: 'Rien n’a changé : cette carte n’est plus gérée par ton école.', enregistree: 'Carte enregistrée' };
+    const s = await ouvrir({ largeur, langue });
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    await s.comme('Admin');
+    const ie = await deuxiemeEcole(s);
+    // L'administration du réseau a écrit une carte pour l'ENSAM Meknès et une pour l'Institut exemple ; puis l'admin de la
+    // démo devient celle de l'Institut exemple
+    await s.page.evaluate(ie => {
+      const d = window.__demo, base = d.data.sponsorises[0], t = Date.now();
+      d.data.sponsorises = [...d.data.sponsorises,
+        { ...base, id: 'sp-mek', titre: 'Stage d’été à l’atelier de Meknès', ecole: 'ensam-meknes', created_at: new Date(t - 2e5).toISOString() },
+        { ...base, id: 'sp-ie', titre: 'Visite d’usine pour l’Institut', ecole: ie, created_at: new Date(t - 1e5).toISOString() }];
+      const moi = { ...d.me, ecole: ie };
+      d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+    }, ie);
+    await s.aller('admin/sponsorises'); await s.page.waitForSelector('.sp-ligne[data-id="sp-ie"]');
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    const ligne = id => s.page.locator(`.sp-ligne[data-id="${id}"]`);
+    assert.equal(await ligne('sp-mek').count(), 0, 'la carte d’une autre école ne se lit pas');
+    // La carte de toutes les écoles : ses chiffres et son bilan, ni « Modifier » ni « Arrêter »
+    const toutes = ligne('sp-demo-0001');
+    assert.equal(await toutes.locator('.sp-ecole').innerText(), T.toutes);
+    assert.equal(await toutes.locator('.sp-modifier, .sp-basculer').count(), 0);
+    assert.equal(await toutes.locator('.sp-bilan').count(), 1);
+    assert.equal(await toutes.locator('.sp-lecture').innerText(), T.lecture);
+    // La carte de son école se gère
+    assert.equal(await ligne('sp-ie').locator('.sp-modifier, .sp-basculer').count(), 2);
+    assert.equal(await ligne('sp-ie').locator('.sp-lecture').count(), 0);
+    await relever('Sponsorisés');
+    // Nouvelle carte : pour son école, dit en clair, sans choix « Toutes les écoles »
+    await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+    const form = s.page.locator('.sp-form');
+    assert.equal(await s.page.locator('#sp-ecole').count(), 0, 'pas de choix d’école');
+    assert.equal(await s.page.locator('#sp-ecole-fixe').innerText(), 'Institut exemple');
+    assert.ok((await form.innerText()).includes(T.ici));
+    assert.ok(!(await form.innerText()).includes(T.toutes));
+    await relever('nouvelle carte');
+    await s.page.fill('#sp-ent', 'Atelier Exemple');
+    await s.page.fill('#sp-titre', 'Préparer son départ en Allemagne');
+    await s.page.fill('#sp-texte', 'Visa, logement et premiers pas : un accompagnement pour les élèves ingénieurs.');
+    await s.page.fill('#sp-lien', 'https://example.org/depart');
+    await s.page.click('#sp-enregistrer');
+    await s.page.waitForSelector(`.toast:has-text("${T.enregistree}")`);
+    const nouvelle = await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.entreprise === 'Atelier Exemple'));
+    assert.equal(nouvelle.ecole, ie, 'enregistrée pour son école');
+    assert.equal(await ligne(nouvelle.id).locator('.sp-ecole').innerText(), 'Institut exemple');
+    assert.equal(await ligne(nouvelle.id).locator('.sp-modifier, .sp-basculer').count(), 2);
+    // L'administration du réseau passe la carte de l'Institut à toutes les écoles juste avant « Arrêter » : la base ne
+    // touche aucune ligne ; c'est dit, la carte reste en cours, et elle se lit désormais seulement
+    await s.page.evaluate(() => {
+      const d = window.__demo, u = d.update.bind(d);
+      d.update = (t, id, patch, o) => { d.update = u; if (t === 'sponsorises') d.data.sponsorises = d.data.sponsorises.map(x => (x.id === id ? { ...x, ecole: null } : x)); return u(t, id, patch, o); };
+    });
+    await ligne('sp-ie').locator('.sp-basculer').click();
+    await s.page.waitForSelector(`.toast:has-text("${T.rien}")`);
+    assert.equal(await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.id === 'sp-ie').actif), true, 'toujours en cours');
+    await ligne('sp-ie').locator('.sp-lecture').waitFor();
+    assert.equal(await ligne('sp-ie').locator('.sp-modifier, .sp-basculer').count(), 0);
+    assert.equal(await ligne('sp-ie').locator('.sp-ecole').innerText(), T.toutes);
+    await relever('carte passée à toutes les écoles');
+
+    // L'administration du réseau : comme avant, toutes les cartes se gèrent, et le formulaire offre « Toutes les écoles »
+    await s.page.evaluate(() => {
+      const d = window.__demo, moi = { ...d.me, ecole: 'ensam-meknes' };
+      d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+    });
+    await ligne('sp-mek').waitFor();
+    assert.equal(await s.page.locator('.sp-lecture').count(), 0);
+    const n = await s.page.locator('.sp-ligne').count();
+    assert.equal(n, 4, 'la carte de la démo, celles de l’ENSAM Meknès et de l’Institut, la nouvelle');
+    assert.equal(await s.page.locator('.sp-ligne .sp-modifier').count(), n);
+    assert.equal(await s.page.locator('.sp-ligne .sp-basculer').count(), n);
+    await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+    assert.deepEqual(await s.page.locator('#sp-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', ie]);
+    assert.equal(await s.page.locator('#sp-ecole-fixe').count(), 0);
+    await relever('administration du réseau');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Console de l'administration d'une école (pas celle du réseau). Depuis le 3e tour SQL, la base ne lui donne que son
+// école : la console est celle de son école, sans choix d'école ni « Toutes les écoles » ; ses textes la nomment, jamais
+// l'ENSAM Meknès ; ce qui est au réseau n'y paraît pas (Réglages, Écoles, Partenaires, Affiches et rapport, santé des
+// notifications, suppression d'une rubrique du guide de l'étranger, « Modifier » d'un guide qu'elle n'écrit pas, comme
+// protect_guide). Animer et Inviter écrivent pour son école (ses chiffres, ses liens &ecole=). Sa liste officielle d'une
+// école pas encore ouverte lit le dossier CNDP par dossier_cndp_de_mon_ecole(). L'administration du réseau : comme avant.
+// ---------------------------------------------------------------------------
+const SAISON_ADM = (d => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1))(new Date());
+// L'Institut exemple, créé par l'administration du réseau (pas encore ouvert, ou ouvert), et des membres à lui : un lauréat
+// à vérifier sans CV, une lauréate volontaire pour parrainer et un étudiant de 3A de la même filière, qui a signalé la
+// rubrique Visa du guide de la France ; puis l'admin de la démo devient celui de l'Institut exemple (comme le test des
+// cartes sponsorisées)
+async function adminDeLInstitut(s, { ouverte = false } = {}) {
+  await s.comme('Admin');
+  const ie = ouverte ? await ouvrirInstitut(s) : await deuxiemeEcole(s);
+  await s.page.evaluate(([ie, saison]) => {
+    const d = window.__demo, t = new Date().toISOString(), fil = 'Génie Industriel';
+    const visa = d.data.guide_pays.find(g => g.pays === 'France' && g.section === 'visa');
+    d.data.profiles = [...d.data.profiles,
+      { id: 'ie-lau-1', role: 'laureat', ecole: ie, full_name: 'Amine Ferhat', verified: false, promo: 2019, filiere: fil, created_at: t },
+      { id: 'ie-lau-2', role: 'laureat', ecole: ie, full_name: 'Nadia Talbi', verified: true, parrain_dispo: true, promo: 2016, filiere: fil, created_at: t },
+      { id: 'ie-etu-1', role: 'etudiant', ecole: ie, full_name: 'Youssef Bennani', verified: true, promo: saison + 3, filiere: fil, created_at: t }];
+    d.data.signalements = [{ id: 'sg-ie-guide', auteur_id: 'ie-etu-1', cible_type: 'guide', cible_id: visa.id, motif: 'faux', details: null, status: 'ouvert', traite_par: null, traite_at: null, created_at: t }, ...d.data.signalements];
+    const moi = { ...d.me, ecole: ie };
+    d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+  }, [ie, SAISON_ADM]);
+  return ie;
+}
+const RUBRIQUES_ECOLE = ['vue', 'traiter', 'animer', 'agenda', 'inviter', 'membres', 'contenus', 'moderation', 'liste', 'sponsorises'];
+const rubriquesAffichees = s => s.page.locator('[id^="adm-tab-"]').evaluateAll(xs => xs.map(x => x.id.slice('adm-tab-'.length)));
+const rubriqueActive = s => s.page.locator('[id^="adm-tab-"][aria-current="page"], [id^="adm-tab-"][aria-selected="true"]').evaluateAll(xs => xs.map(x => x.id.slice('adm-tab-'.length)));
+const sansIsolants = x => x.replace(/[‎‏⁦-⁩]/g, '');
+const HORS_DOSSIER_ECOLE = { fr: 'Avant d’importer la liste de ton école, l’administration du réseau doit l’ajouter au dossier CNDP.', ar: 'قبل استيراد لائحة مدرستك، يجب أن تضيفها إدارة الشبكة إلى ملف CNDP.' };
+const NOTE_FERMEE = { fr: 'Ton école n’est pas encore ouverte : ces liens n’inscrivent personne avant son ouverture par l’administration du réseau.', ar: 'مدرستك لم تُفتح بعد: لا تسمح هذه الروابط بأي تسجيل قبل أن تفتحها إدارة الشبكة.' };
+
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`console d’une école pas encore ouverte : la sienne seulement, sans choix d’école ni rubriques du réseau ; ses textes la nomment ; le guide comme un membre ; la liste attend le dossier CNDP (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur, langue });
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    const ie = await adminDeLInstitut(s);
+    // La santé des notifications (des totaux de tout le réseau) n'est jamais demandée pour elle
+    await s.page.evaluate(() => { const d = window.__demo, f = d.santeNotifs; window.__sante = 0; d.santeNotifs = (...a) => { window.__sante++; return f.apply(d, a); }; });
+    const bouton = s.page.locator('button', { hasText: ar ? 'تعيين العرّابين' : 'Attribuer les parrains' });
+    const parrainage = s.page.locator('.panel', { has: bouton });
+    await s.aller('admin/membres'); await s.aller('admin'); await parrainage.waitFor();
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'pas de choix d’école');
+    assert.deepEqual(await rubriquesAffichees(s), RUBRIQUES_ECOLE, 'ni Réglages, ni Écoles, ni Partenaires, ni Affiches');
+    assert.equal(await s.page.locator('#adm-notifs').count(), 0, 'pas de santé des notifications');
+    assert.equal(await s.page.evaluate(() => window.__sante), 0, 'admin_sante_notifs jamais demandée');
+    // Parrainage : ses chiffres, et le bouton qui attribue les parrains de son école
+    const phrase = 'Le bouton attribue les parrains aux étudiants de l’Institut exemple ; la plateforme le fait aussi chaque matin.';
+    if (ar) assert.match(sansIsolants(await parrainage.locator('p').innerText()), /يعيّن الزر العرّابين لطلبة Institut exemple؛ وتفعل المنصة ذلك أيضًا كل صباح\.$/);
+    else assert.equal(await parrainage.locator('p').innerText(), `0 filleul cette année · 1 lauréat volontaire · 1 étudiant de 3A sans parrain. ${phrase}`);
+    await bouton.click(); await s.page.waitForSelector('.toast');
+    assert.equal(sansIsolants(await s.page.locator('.toast').last().innerText()), ar ? 'عدد العرّابين المعيَّنين لطلبة Institut exemple: 1.' : '1 parrain attribué aux étudiants de l’Institut exemple.');
+    assert.deepEqual(await s.page.evaluate(() => window.__demo.data.parrainages.filter(x => x.filleul_id.startsWith('ie-') || x.parrain_id.startsWith('ie-')).map(x => [x.filleul_id, x.parrain_id])), [['ie-etu-1', 'ie-lau-2']]);
+    await relever('Tableau de bord');
+    // Les adresses directes des rubriques du réseau mènent au tableau de bord
+    for (const r of ['admin/reglages', 'admin/ecoles', 'admin/partenaires', 'admin/outils']) {
+      await s.aller(r); await parrainage.waitFor();
+      assert.deepEqual(await rubriqueActive(s), ['vue'], r);
+      assert.equal(await s.page.locator('#rg-domaines, #ec-reseaux, #pa-suivi, .affiche').count(), 0, r);
+    }
+    // Membres : vérifier qu'il est diplômé de son école ; la demande de CV la nomme
+    await s.aller('admin/membres'); await s.page.waitForSelector('.verif-list');
+    const verif = sansIsolants(await s.page.locator('.accent-panel > p').first().innerText());
+    assert.equal(verif, ar ? 'تحقق من أن الشخص خريج Institut exemple (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.'
+      : 'Vérifie que la personne est bien diplômée de l’Institut exemple (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.');
+    await relever('Membres');
+    await s.page.locator('.verif-list li', { hasText: 'Amine Ferhat' }).locator('.msg-btn').click(); await s.page.waitForSelector('#chat-txt');
+    assert.equal(await s.page.inputValue('#chat-txt'), 'Bonjour Amine, bienvenue sur le Réseau Institut exemple ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !');
+    await s.page.fill('#chat-txt', '');
+    // Animer et Inviter : pour son école, sans la note des textes de l'ENSAM Meknès ; son école pas encore ouverte, c'est dit
+    for (const r of ['admin/animer', 'admin/inviter']) {
+      await s.aller(r); await s.page.waitForSelector('#cs-note-fermee');
+      assert.equal(await s.page.locator('.cs-note-ecole').count(), 0, r);
+      assert.equal(await s.page.locator('#cs-note-fermee').innerText(), NOTE_FERMEE[langue], r);
+      await relever(r);
+    }
+    await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+    for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+    assert.match(await message(s, 'adm-resume'), /[?&]ecole=institut-exemple$/);
+    // Aucune rubrique ne la dit de l'ENSAM Meknès
+    for (const r of RUBRIQUES_ECOLE) {
+      await s.aller(r === 'vue' ? 'admin' : 'admin/' + r); await s.page.waitForSelector('.cs-main');
+      assert.doesNotMatch(await s.page.locator('.cs-main').innerText(), /ENSAM Meknès|ENSAM مكناس/, r);
+      await relever(r);
+    }
+    // Modération : le guide (commun à toutes les écoles) se lit, sa rubrique ne se supprime pas d'ici
+    await s.aller('admin/moderation');
+    const carte = s.page.locator('.mod-card', { hasText: 'Youssef Bennani' });
+    await carte.waitFor();
+    assert.match(await carte.locator('.mod-titre').innerText(), /^France · Visa et titre de séjour$/);
+    assert.equal(await carte.locator('.mod-decider').count(), 0, 'pas de « Supprimer la rubrique »');
+    assert.equal(await carte.locator('.mod-clore .btn').count(), 2, 'marquer traité, classer sans suite');
+    await relever('Modération');
+    // Liste officielle : son école n'est pas au dossier CNDP ; ce n'est pas à elle de cocher la case
+    await s.aller('admin/liste'); await s.page.waitForSelector('#lo-cndp');
+    assert.equal(await s.page.locator('#lo-cndp').innerText(), HORS_DOSSIER_ECOLE[langue]);
+    assert.equal(await s.page.locator('#lo-cndp-ecoles').count(), 0, 'pas de bouton vers Écoles');
+    assert.equal(await s.page.locator('#lo-file').isDisabled(), true);
+    await relever('Liste officielle');
+    // L'administration du réseau coche la case : la liste s'importe
+    await s.page.evaluate(ie => { const d = window.__demo; d.data.admin_suivi = d.data.admin_suivi.map(x => (x.type === 'ecole' && x.ecole_slug === ie ? { ...x, cndp_ok: true } : x)); d.persist(); d.emit(); }, ie);
+    await s.aller('admin'); await s.aller('admin/liste'); await s.page.waitForSelector('#lo-file:not([disabled])');
+    assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+    // Le guide de l'étranger : comme un membre qui n'y vit pas (ni « Modifier », ni « Écrire », ni suppression)
+    await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa');
+    assert.equal(await s.page.locator('.gp-rub-head .btn, .gp-rub-head .icon-btn').count(), 0, 'ni « Modifier » ni « Supprimer la rubrique »');
+    assert.equal(await s.page.locator('.gp-rub .btn.small').count(), 0, 'pas de « Écrire cette rubrique »');
+    assert.equal(await s.page.locator('.gp-who').count(), 1);
+    await relever('Guide de la France');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('console d’une école ouverte : Animer et Inviter écrivent ses messages et ses liens (&ecole=), sans note ; sa liste s’importe sans demander le dossier CNDP', async () => {
+  const s = await ouvrir();
+  await adminDeLInstitut(s, { ouverte: true });
+  await s.page.evaluate(() => { const d = window.__demo, f = d.dossierCndpDeMonEcole; window.__cndp = 0; d.dossierCndpDeMonEcole = (...a) => { window.__cndp++; return f ? f.apply(d, a) : false; }; });
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0);
+  assert.equal(await s.page.locator('.cs-note-ecole, #cs-note-fermee').count(), 0, 'pas de note : ses textes sont ceux de son école');
+  const resume = await message(s, 'adm-resume');
+  assert.match(resume, /^✅ Cette semaine dans le Réseau Institut exemple\n/);
+  assert.match(resume, /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-fondateurs'), /^⭐ Membres fondateurs du Réseau Institut exemple\n[\s\S]*\?ecole=institut-exemple$/);
+  for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.equal(await s.page.locator('.cs-note-ecole, #cs-note-fermee').count(), 0);
+  const liens = await s.page.locator('.inv-link').allInnerTexts();
+  assert.ok(liens.length > 0 && liens.every(l => /[?&]ecole=institut-exemple$/.test(l)), liens.join(' | '));
+  assert.match(await s.page.locator('.inv-msg').innerText(), /Le Réseau Institut exemple est ouvert/);
+  assert.doesNotMatch(await s.page.locator('.inv-msg').innerText(), /Meknès|مكناس/);
+  await s.aller('admin/liste'); await s.page.waitForSelector('#lo-file:not([disabled])');
+  assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+  assert.equal(await s.page.evaluate(() => window.__cndp), 0, 'école ouverte : le dossier CNDP n’est pas demandé');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// En ligne (faux Supabase) : le suivi des écoles (admin_suivi) n'est lisible que par l'administration du réseau ; celle
+// d'une école pas encore ouverte demande dossier_cndp_de_mon_ecole(). Une base pas encore à jour (fonction absente), une
+// réponse fausse ou une erreur : l'import reste fermé, avec le message pour elle
+test('console d’une école pas encore ouverte, en ligne : le dossier CNDP par dossier_cndp_de_mon_ecole() (base pas à jour, oui, non, erreur) ; ni admin_suivi ni admin_sante_notifs ; le réseau comme avant', async () => {
+  const ECOLE_IE = { slug: 'institut-exemple', nom: 'Institut exemple', ouverte: false, created_at: '2026-11-01T00:00:00Z' };
+  const ADMIN_IE = { ...MEMBRE, full_name: 'Nadia Ferhat', role: 'admin', ecole: 'institut-exemple', promo: 2012 };
+  let m = await membreEnLigne({ profil: ADMIN_IE, chemin: '#admin/liste', tables: { ecoles: [ECOLE_IE] } });
+  const appelsA = u => m.site.appels.filter(a => a.u === u).length;
+  const RPC = '/sb/rest/v1/rpc/dossier_cndp_de_mon_ecole';
+  const remonter = async () => {
+    await m.page.evaluate(() => { location.hash = 'admin'; }); await m.page.waitForSelector('#lo-file', { state: 'detached' });
+    await m.page.evaluate(() => { location.hash = 'admin/liste'; });
+  };
+  const ferme = async () => {
+    await m.page.waitForSelector('#lo-cndp', { timeout: 10000 });
+    assert.equal(await m.page.locator('#lo-cndp').innerText(), HORS_DOSSIER_ECOLE.fr);
+    assert.equal(await m.page.locator('#lo-cndp-ecoles').count(), 0);
+    assert.equal(await m.page.locator('#lo-file').isDisabled(), true);
+  };
+  // Base pas encore à jour : la fonction n'existe pas (404)
+  await ferme();
+  assert.equal(appelsA(RPC), 1);
+  // Son école est au dossier
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => true;
+  await remonter(); await m.page.waitForSelector('#lo-file:not([disabled])', { timeout: 10000 });
+  assert.equal(await m.page.locator('#lo-cndp').count(), 0);
+  assert.equal(appelsA(RPC), 2);
+  // Pas (ou plus) au dossier
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => false;
+  await remonter(); await ferme();
+  assert.equal(appelsA(RPC), 3);
+  // Une erreur de la base
+  await m.page.route('**/rest/v1/rpc/dossier_cndp_de_mon_ecole', r => r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'boom' }) }));
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => true;
+  await remonter(); await ferme();
+  // Ni le suivi des écoles, ni la santé des notifications (tout le réseau)
+  await m.page.evaluate(() => { location.hash = 'admin'; });
+  await m.page.locator('.panel', { has: m.page.locator('button', { hasText: 'Attribuer les parrains' }) }).waitFor();
+  assert.equal(await m.page.locator('#adm-notifs').count(), 0);
+  assert.equal(appelsA('/sb/rest/v1/admin_suivi'), 0, 'admin_suivi jamais lu');
+  assert.equal(appelsA('/sb/rest/v1/rpc/admin_sante_notifs'), 0, 'admin_sante_notifs jamais demandée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // L'administration du réseau : le suivi lu comme avant, jamais la fonction ; la santé des notifications demandée
+  m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, chemin: '#admin/liste', tables: { ecoles: [ECOLE_IE] } });
+  await m.page.waitForSelector('#lo-file:not([disabled])', { timeout: 10000 });
+  await m.page.evaluate(() => { location.hash = 'admin'; }); await m.page.waitForSelector('#adm-notifs', { timeout: 10000 });
+  assert.ok(appelsA('/sb/rest/v1/admin_suivi') >= 1, 'admin_suivi lu');
+  assert.equal(appelsA(RPC), 0);
+  assert.ok(appelsA('/sb/rest/v1/rpc/admin_sante_notifs') >= 1);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Guide de l'étranger, administration du réseau : supprimer une rubrique que la base ne supprime pas (déjà partie, ou
+// une règle qui ne laisse passer aucune ligne) n'est pas dit fait ; « Rubrique supprimée. » seulement quand c'est vrai
+test('guide de l’étranger, administration du réseau : une rubrique que la base ne supprime pas n’est pas dite supprimée (sa page, la Modération), en démo et en ligne', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const RIEN = 'Rien n’a été supprimé : cette rubrique n’existe plus, ou ton compte ne peut pas la supprimer.';
+  const toast = async () => { await s.page.waitForSelector('.toast'); return s.page.locator('.toast').last().innerText(); };
+  await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa .gp-rub-head .icon-btn');
+  // Supprimée ailleurs juste avant : l'écran l'a encore, la base ne touche aucune ligne
+  const ids = await s.page.evaluate(() => Object.fromEntries(window.__demo.data.guide_pays.filter(g => g.pays === 'France').map(g => [g.section, g.id])));
+  await s.page.evaluate(id => { const d = window.__demo; d.data.guide_pays = d.data.guide_pays.filter(g => g.id !== id); }, ids.visa);
+  await s.page.click('#gp-visa .gp-rub-head .icon-btn'); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), RIEN);
+  assert.equal(await s.page.locator('.toast', { hasText: 'Rubrique supprimée.' }).count(), 0);
+  await s.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  // Une rubrique bien là : supprimée, comme avant
+  await s.page.click('#gp-logement .gp-rub-head .icon-btn'); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), 'Rubrique supprimée.');
+  assert.equal(await s.page.evaluate(id => window.__demo.data.guide_pays.some(g => g.id === id), ids.logement), false);
+  await s.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  // Modération : un signalement de la rubrique Budget, qui part juste avant « Supprimer la rubrique » ; le signalement reste ouvert
+  await s.page.evaluate(id => { const d = window.__demo; d.data.signalements = [{ id: 'sg-guide-budget', auteur_id: d.data.profiles.find(p => p.role === 'etudiant').id, cible_type: 'guide', cible_id: id, motif: 'faux', details: null, status: 'ouvert', traite_par: null, traite_at: null, created_at: new Date().toISOString() }, ...d.data.signalements]; d.emit(); }, ids.budget);
+  await s.aller('admin/moderation');
+  const carte = s.page.locator('.mod-card', { hasText: 'France · Budget et coût de la vie' }); await carte.waitFor();
+  await s.page.evaluate(id => { const d = window.__demo; d.data.guide_pays = d.data.guide_pays.filter(g => g.id !== id); }, ids.budget);
+  await carte.locator('.mod-decider .btn').click(); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), RIEN);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.signalements.find(x => x.id === 'sg-guide-budget').status), 'ouvert');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En ligne : la base renvoie les lignes supprimées (select=id) ; aucune, c'est dit
+  const VISA = { id: 'c0000000-0000-4000-8000-0000000000f1', pays: 'France', section: 'visa', contenu: 'Le visa long séjour se demande sur France-Visas.', updated_by: null, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z' };
+  // Un téléphone déjà abonné (deja) : la feuille « Reçois l'essentiel sur ton téléphone », qui s'ouvre 3 s après le début de
+  // la visite, ne passe pas devant la rubrique
+  const m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, deja: true, chemin: '#reseau/etranger/france', tables: { guide_pays: [VISA] } });
+  const suppressions = [];
+  let rendre = [];
+  await m.page.route('**/rest/v1/guide_pays?*', r => {
+    if (r.request().method() !== 'DELETE') return r.fallback();
+    suppressions.push(r.request().url());
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rendre) });
+  });
+  const toastM = async () => { await m.page.waitForSelector('.toast'); return m.page.locator('.toast').last().innerText(); };
+  await m.page.waitForSelector('#gp-visa .gp-rub-head .icon-btn', { timeout: 10000 });
+  await m.page.click('#gp-visa .gp-rub-head .icon-btn'); await m.page.locator('.modal .btn.danger').click();
+  assert.equal(await toastM(), RIEN);
+  assert.equal(suppressions.length, 1);
+  assert.match(suppressions[0], /[?&]select=id(&|$)/, 'la base dit ce qu’elle a supprimé');
+  await m.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  rendre = [{ id: VISA.id }];
+  await m.page.click('#gp-visa .gp-rub-head .icon-btn'); await m.page.locator('.modal .btn.danger').click();
+  assert.equal(await toastM(), 'Rubrique supprimée.');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Le formulaire d'une carte sponsorisée sur un téléphone : « Pour qui ? » et les puces passent à la ligne, rien ne dépasse
+// (ni la page, ni le formulaire), en français comme en arabe ; sur ordinateur, « Pour qui ? » reste sur une ligne
+for (const langue of ['fr', 'ar']) {
+  test(`Sponsorisés : le formulaire d’une carte tient sur un téléphone, rien ne dépasse (360 et 390 px, ${langue})`, async () => {
+    for (const largeur of [360, 390]) {
+      const s = await ouvrir({ largeur, langue });
+      await s.comme('Admin'); await s.aller('admin/sponsorises');
+      await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+      const m = await s.page.evaluate(() => {
+        const f = document.querySelector('.sp-form'), g = f.querySelector('.seg'), q = f.getBoundingClientRect();
+        const dehors = [...f.querySelectorAll('.seg button, .chip')].filter(b => { const r = b.getBoundingClientRect(); return r.left < q.left - 1 || r.right > q.right + 1; }).map(b => b.textContent.trim());
+        return { page: document.documentElement.scrollWidth - innerWidth, form: f.scrollWidth - f.clientWidth, seg: g.scrollWidth - g.clientWidth, dehors };
+      });
+      assert.deepEqual(m, { page: 0, form: 0, seg: 0, dehors: [] }, `${largeur} px`);
+      assert.deepEqual(s.erreurs, []);
+      await s.ctx.close();
+    }
+  });
+}
+test('Sponsorisés sur ordinateur : « Pour qui ? » sur une seule ligne, comme avant', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/sponsorises');
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+  const lignes = await s.page.locator('.sp-form .seg button').evaluateAll(bs => new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size);
+  assert.equal(lignes, 1);
+  assert.equal(await s.debordement(), 0);
+  await s.ctx.close();
+});
+
+// L'administration du réseau, deux écoles : sa console comme avant (toutes les rubriques, le choix d'école, la santé des
+// notifications, les rubriques du réseau, ses textes, le guide qu'elle écrit et supprime, la liste d'une école pas encore
+// ouverte qui renvoie à la case de son suivi)
+test('console de l’administration du réseau, deux écoles : comme avant (rubriques, choix d’école, santé des notifications, guide, liste d’une école pas encore ouverte)', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const ie = await deuxiemeEcole(s);
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs');
+  assert.deepEqual(await rubriquesAffichees(s), ['vue', 'traiter', 'animer', 'agenda', 'inviter', 'membres', 'contenus', 'moderation', 'liste', 'ecoles', 'partenaires', 'sponsorises', 'outils', 'reglages']);
+  assert.deepEqual(await s.page.locator('#cs-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', ie]);
+  assert.match(await s.page.locator('.panel', { has: s.page.locator('button', { hasText: 'Attribuer les parrains' }) }).locator('p').innerText(), /Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin\.$/);
+  for (const [r, sel] of [['admin/reglages', '#rg-domaines'], ['admin/ecoles', '#ec-reseaux'], ['admin/partenaires', '#pa-suivi'], ['admin/outils', '.affiche']]) {
+    await s.aller(r); await s.page.waitForSelector(sel);
+    assert.deepEqual(await rubriqueActive(s), [r.slice('admin/'.length)]);
+  }
+  await s.aller('admin/membres'); await s.page.waitForSelector('.verif-list');
+  assert.equal(await s.page.locator('.accent-panel > p').first().innerText(), 'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.');
+  // Le guide : elle écrit, corrige et supprime chaque rubrique
+  await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa');
+  const ecrites = await s.page.locator('.gp-rub:not(.vide)').count();
+  assert.ok(ecrites >= 3);
+  assert.equal(await s.page.locator('.gp-rub-head .btn', { hasText: 'Modifier' }).count(), ecrites);
+  assert.equal(await s.page.locator('.gp-rub-head .icon-btn[aria-label="Supprimer la rubrique"]').count(), ecrites);
+  assert.equal(await s.page.locator('.gp-rub.vide .btn.small', { hasText: 'Écrire cette rubrique' }).count(), 7 - ecrites);
+  assert.equal(await s.page.locator('.etranger > .hint-box').innerText(), 'En tant qu’administration, tu peux écrire, corriger ou supprimer chaque rubrique.');
+  // La liste d'une école pas encore ouverte : la case du dossier CNDP, dans la rubrique Écoles
+  await s.aller('admin/liste'); await s.page.selectOption('#cs-ecole', ie); await s.page.waitForSelector('#lo-cndp-ecoles');
+  assert.equal(await s.page.locator('#lo-cndp span').innerText(), 'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).');
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), true);
+  await s.page.click('#lo-cndp-ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Un recrutement déclaré par un lauréat qui a supprimé son compte depuis (la base vide laureat_id) : Mon parcours, l'accueil
+// et la cloche disent ce qui a été déclaré, comme sa demande (« Ton démarrage chez … a été déclaré. ») ; déclaré depuis une
+// offre, retirée avec lui : « … a été déclaré par un ancien membre ». « Ce n'est pas le cas » répond « C'est noté. », sans
+// promettre de prévenir un lauréat qui n'est plus là. Déclaré par un lauréat toujours là : les textes d'avant, à l'octet près.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`un recrutement déclaré par un compte supprimé depuis : Mon parcours, l’accueil et la cloche disent ce qui a été déclaré, « Ce n’est pas le cas » ne promet plus de prévenir personne ; un lauréat toujours là, comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const T = ar ? {
+      youssef: 'تصريح من Youssef El Amrani بتوظيفك لدى Renault Group Maroc', informe: 'تم التسجيل. سيتم إخبار الخريج.', note: 'تم التسجيل.', debut: 'تم التسجيل',
+      demarrage: e => `تم التصريح ببدايتك لدى ${e}`, offre: e => `تصريح من عضو سابق بتوظيفك لدى ${e}`,
+      cloche: { youssef: x => `${x}. أكّده.`, demarrage: x => `${x}. أكّد ذلك.`, offre: x => `${x}. أكّده.` },
+    } : {
+      youssef: 'Youssef El Amrani déclare ton recrutement chez Renault Group Maroc', informe: 'C’est noté. Le lauréat sera informé.', note: 'C’est noté.', debut: 'C’est noté',
+      demarrage: e => `Ton démarrage chez ${e} a été déclaré`, offre: e => `Ton recrutement chez ${e} a été déclaré par un ancien membre`,
+      cloche: { youssef: x => `${x}. Confirme-le.`, demarrage: x => `${x}. Confirme-le.`, offre: x => `${x}. Confirme-le.` },
+    };
+    const s = await ouvrir({ largeur, langue });
+    const net = x => x.replace(/[⁦-⁩]/g, '').trim();
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    // Ce que disent Mon parcours, la carte de l'accueil et la ligne de la cloche ; puis « Ce n'est pas le cas » (ici : sur
+    // Mon parcours ou sur l'accueil) et la réponse, seule
+    const verifier = async (id, titre, cloche, ici, reponse) => {
+      await s.aller('parcours');
+      assert.equal(net(await s.page.locator('.a-faire .confirm-card h2').innerText()), titre, 'Mon parcours');
+      await relever('Mon parcours');
+      await s.aller('accueil');
+      assert.equal(net(await s.page.locator(`.pas[data-pas="pa${id}"] .pas-titre`).innerText()), titre, 'l’accueil');
+      await relever('accueil');
+      await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+      assert.equal(net(await s.page.locator(`.cloche .af-row[data-cle="pa${id}"] .af-txt`).innerText()), cloche, 'la cloche');
+      await relever('cloche');
+      await s.fermer();
+      if (ici === 'parcours') { await s.aller('parcours'); await s.page.locator('.a-faire .confirm-card .btn.ghost').click(); }
+      else await s.page.locator(`.pas[data-pas="pa${id}"] .pas-lien`).click();
+      const toast = s.page.locator('.toast:not(.sortie) .toast-txt', { hasText: T.debut });
+      await toast.waitFor();
+      assert.equal(net(await toast.innerText()), reponse, `la réponse de « Ce n’est pas le cas » (${ici})`);
+      assert.equal(await s.page.evaluate(id => window.__demo.data.placements.find(p => p.id === id).status, id), 'refuse');
+      await relever(`réponse (${ici})`);
+    };
+    // Youssef, toujours là, déclare le recrutement de Salma : comme avant
+    await s.comme('Youssef'); await s.aller('accueil');
+    const idY = await s.page.evaluate(async () => {
+      const d = window.__demo, { seasonOf } = await import('./logic.js');
+      const salma = d.data.profiles.find(p => p.full_name.startsWith('Salma'));
+      await d.insert('placements', { student_id: salma.id, saison: seasonOf(), niveau: 5, type: 'pfe', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc' });
+      return d.data.placements.find(p => p.student_id === salma.id && p.status === 'en_attente').id;
+    });
+    await s.comme('Salma');
+    await verifier(idY, T.youssef, T.cloche.youssef(T.youssef), 'accueil', T.informe);
+    // Le lauréat qui avait déclaré le démarrage d'Amine (sa demande en match) supprime son compte
+    const dep = await apresUnDepart(s);
+    const idA = await s.page.evaluate(() => window.__demo.data.placements.find(p => p.demande_id === 'dm-dep-amine').id);
+    await s.comme('Amine');
+    await verifier(idA, T.demarrage(dep.entreprise), T.cloche.demarrage(T.demarrage(dep.entreprise)), 'parcours', T.note);
+    // Déclaré depuis une offre (retirée avec son auteur : ni offre, ni demande, ni lauréat)
+    await s.page.evaluate(id => {
+      const d = window.__demo;
+      d.data.placements = d.data.placements.map(p => (p.id === id ? { ...p, status: 'en_attente', demande_id: null, offer_id: null } : p)); d.persist(); d.emit();
+    }, idA);
+    await verifier(idA, T.offre(dep.entreprise), T.cloche.offre(T.offre(dep.entreprise)), 'accueil', T.note);
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// La marque de la barre latérale et du haut de l'écran du téléphone (son lien « Accueil ») : celle de l'école du membre.
+// L'ENSAM Meknès garde « Réseau ENSAM » et « Meknès · Lauréats & étudiants », à l'octet près ; l'ENSA Fès : « Réseau ENSA » et
+// « Fès · Lauréats & étudiants » ; une école connue par son seul nom : « Réseau » et son nom (en arabe, son nom arabe) ; sa
+// ligne pas (encore) là : « Réseau ENSAM », sans ville, jamais Meknès. En arabe par la table de l'application.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`marque de la barre latérale et du téléphone : celle de l’école du membre (ENSA Fès, son seul nom, sa ligne pas là) ; l’ENSAM Meknès comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', couleur: '#225588', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+    const INSTITUT = { slug: 'institut-exemple', nom: 'Institut exemple', nom_ar: 'معهد مثال', ouverte: true, created_at: '2026-10-02T00:00:00Z' };
+    const A = ar ? {
+      meknes: ['شبكة ENSAM', 'مكناس · الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+      fes: ['شبكة ENSA', 'فاس · الخريجون والطلبة', 'شبكة ENSA', 'شبكة ENSA · الرئيسية'],
+      institut: ['شبكة معهد مثال', 'الخريجون والطلبة', 'شبكة معهد مثال', 'شبكة معهد مثال · الرئيسية'],
+      sans: ['شبكة ENSAM', 'الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+    } : {
+      meknes: ['Réseau ENSAM', 'Meknès · Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+      fes: ['Réseau ENSA', 'Fès · Lauréats & étudiants', 'Réseau ENSA', 'Réseau ENSA · Accueil'],
+      institut: ['Réseau Institut exemple', 'Lauréats & étudiants', 'Réseau Institut exemple', 'Réseau Institut exemple · Accueil'],
+      sans: ['Réseau ENSAM', 'Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+    };
+    const s = await ouvrir({ largeur, langue });
+    // La marque de la barre latérale (son nom, sa ligne) et celle du téléphone (son nom, le nom de son lien), et celle qu'on voit
+    const lire = () => s.page.evaluate(() => {
+      const side = document.querySelector('.side .brand-txt'), tel = document.querySelector('.top .brand.mobile-only');
+      const vue = [side.closest('.brand'), tel].filter(e => e.offsetParent !== null).map(e => e.querySelector('strong').innerText);
+      return { marque: [side.querySelector('strong').textContent, side.querySelector(':scope > span').textContent, tel.querySelector('strong').textContent, tel.getAttribute('aria-label')], vue };
+    });
+    // L'école du membre change ; on attend que la barre latérale le dise (son nom et sa ligne), puis on lit tout
+    const ecoleDuMembre = async (ecoles, ecole, attendu) => {
+      await s.page.evaluate(([ecoles, ecole]) => {
+        const d = window.__demo, moi = { ...d.me, ecole };
+        d.data.ecoles = ecoles; d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+      }, [ecoles, ecole]);
+      await s.page.waitForFunction(([t, sous]) => { const b = document.querySelector('.side .brand-txt'); return b?.querySelector('strong')?.textContent === t && b.querySelector(':scope > span')?.textContent === sous; }, attendu.slice(0, 2));
+    };
+    const verifier = async (attendu, ou) => {
+      const { marque, vue } = await lire();
+      assert.deepEqual(marque, attendu, ou);
+      assert.deepEqual(vue, [attendu[0]], `${ou} : la marque qu’on voit`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+      if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Réseau|Lauréats|Accueil/.test(x))), [], `${ou} : tout traduit`);
+    };
+    await s.comme('Salma'); await s.aller('accueil');
+    await verifier(A.meknes, 'ENSAM Meknès');
+    await ecoleDuMembre([FES, INSTITUT], 'ensa-fes', A.fes);
+    await verifier(A.fes, 'ENSA Fès');
+    await ecoleDuMembre([FES, INSTITUT], 'institut-exemple', A.institut);
+    await verifier(A.institut, 'son seul nom');
+    await ecoleDuMembre([], 'ensa-fes', A.sans);
+    await verifier(A.sans, 'sa ligne pas là');
+    await ecoleDuMembre([FES, INSTITUT], 'ensam-meknes', A.meknes);
+    await verifier(A.meknes, 'de nouveau l’ENSAM Meknès');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Ce qu'un membre emporte hors de l'application : son attestation (dessinée, et ce que LinkedIn en reçoit), l'en-tête de
+// son bilan de cooptation, ce que Google Agenda reçoit pour un événement de son école. Ceux de l'ENSAM Meknès, comme avant ;
+// pour un membre d'une autre école, seuls les noms changent (en arabe, son nom arabe) ; une école pas encore ouverte n'y est
+// jamais nommée (« ENSAM »)
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`attestation, lien LinkedIn, bilan de cooptation et agenda d’un événement : l’école du membre (ENSA Fès ; pas encore ouverte : « ENSAM ») ; l’ENSAM Meknès comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+    const FERMEE = { slug: 'ecole-exemple', nom: 'École exemple', nom_court: 'EE', ville: 'Exempleville', nom_ar: 'مدرسة مثال', ouverte: false, created_at: '2026-10-03T00:00:00Z' };
+    const s = await ouvrir({ largeur, langue });
+    await s.comme('Youssef');
+    // L'école du membre, et celle des événements (un membre ne voit que ceux de son école)
+    const ecoleDuMembre = ecole => s.page.evaluate(([ecoles, ecole]) => {
+      const d = window.__demo, moi = { ...d.me, ecole };
+      d.data.ecoles = ecoles; d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi;
+      d.data.evenements = d.data.evenements.map(e => ({ ...e, ecole })); d.persist(); d.emit();
+    }, [[FES, FERMEE], ecole]);
+    const lire = async () => {
+      // L'attestation : son en-tête, la phrase qui atteste, et le nom et l'organisation que reçoit LinkedIn
+      await s.aller('espace/documents');
+      const cartes = s.page.locator('#esp-panneau .esp-docs .attest-card');
+      await cartes.nth(0).locator('button').click(); await s.page.waitForSelector('.modal .certificate');
+      const linkedin = s.page.locator('.modal .cert-actions a[href*="linkedin.com/profile/add"]');
+      if (!(await linkedin.count())) { await s.page.locator('.modal .cert-actions .btn.primary').click(); await linkedin.waitFor(); }
+      const attestation = await s.page.evaluate(() => {
+        const c = document.querySelector('.modal .certificate'), u = new URL(document.querySelector('.modal .cert-actions a[href*="linkedin.com/profile/add"]').href);
+        return [c.querySelector('.cert-org strong').textContent, c.querySelector('.cert-kicker + p').textContent, u.searchParams.get('name'), u.searchParams.get('organizationName')];
+      });
+      await s.fermer(); await s.page.waitForSelector('.modal .certificate', { state: 'detached' });
+      // Le bilan : son en-tête, puis le titre pour tous les lauréats de son entreprise
+      await cartes.nth(1).locator('button').click(); await s.page.waitForSelector('.modal .bilan-sheet');
+      const seul = await s.page.locator('.bilan-title').textContent();
+      await s.page.check('#bl-eq'); await s.page.waitForFunction(t => document.querySelector('.bilan-title')?.textContent !== t, seul);
+      const bilan = await s.page.evaluate(() => [document.querySelector('.bilan-sheet .cert-org strong').textContent, document.querySelector('.bilan-title').textContent]);
+      await s.fermer(); await s.page.waitForSelector('.modal .bilan-sheet', { state: 'detached' });
+      // Google Agenda, depuis la fiche d'un événement à venir
+      await s.aller('reseau/agenda/' + await s.page.evaluate(() => window.__demo.data.evenements.find(e => e.titre === 'Forum ENSAM Entreprises').id));
+      await s.page.locator('.ev-detail .row > .spacer + button').click();
+      const gcal = await s.page.locator('.modal.ag-feuille a[href^="https://calendar.google.com"]').getAttribute('href');
+      await s.fermer(); await s.page.waitForSelector('.modal.ag-feuille', { state: 'detached' });
+      return { attestation, bilan, agenda: new URL(gcal).searchParams.get('details') };
+    };
+    const meknes = await lire();
+    assert.deepEqual(meknes.attestation, [ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès', ar ? 'تشهد منصة شبكة ENSAM مكناس أن' : 'La plateforme Réseau ENSAM Meknès atteste que',
+      'Attestation de contribution · Réseau ENSAM Meknès', 'Réseau ENSAM Meknès']);
+    assert.equal(meknes.bilan[0], ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès');
+    assert.match(meknes.bilan[1], ar ? /^⁨Renault Group Maroc⁩ · .+ من ENSAM مكناس$/ : /^Renault Group Maroc · \d+ lauréats? de l’ENSAM Meknès$/);
+    assert.ok(meknes.agenda.endsWith(ar ? '\n\nشبكة ENSAM مكناس' : '\n\nRéseau ENSAM Meknès'), meknes.agenda);
+    // Une autre école : seuls ses noms changent ; pas encore ouverte : « ENSAM », sans ville
+    const avec = (o, de, nom, nomAr) => JSON.parse(JSON.stringify(o).replaceAll('de l’ENSAM Meknès', de).replaceAll('ENSAM Meknès', nom).replaceAll('ENSAM مكناس', nomAr));
+    await ecoleDuMembre('ensa-fes');
+    const fes = await lire();
+    assert.deepEqual(fes, avec(meknes, 'de l’ENSA Fès', 'ENSA Fès', 'ENSA فاس'));
+    await ecoleDuMembre('ecole-exemple');
+    const fermee = await lire();
+    assert.deepEqual(fermee, avec(meknes, 'de l’ENSAM', 'ENSAM', 'ENSAM'));
+    for (const x of [fes, fermee].flatMap(o => [...o.attestation, ...o.bilan, o.agenda])) assert.doesNotMatch(x, /Meknès|مكناس|École exemple|Exempleville|مدرسة مثال/, x);
+    if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Réseau|atteste|lauréats? de l’/.test(x))), [], 'tout traduit');
+    // De nouveau à l'ENSAM Meknès : comme au début
+    await ecoleDuMembre('ensam-meknes');
+    assert.deepEqual(await lire(), meknes);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Suivi de l'administration d'une école (pas celle du réseau) : la base ne lui donne que la sienne. Ni choix d'école (le
+// choix revenait aussitôt à la sienne), ni « tout, comme avant » (le cas d'une seule école, l'ENSAM Meknès) : sa page, à ses
+// chiffres, qui la nomme (en tête de page, dans le rapport imprimé), dès le premier appel à la base, même avant que la liste
+// des écoles arrive. L'administration du réseau garde le choix de l'école, comme avant.
+// ---------------------------------------------------------------------------
+const ecoleFixe = async s => (await s.page.locator('#suivi-ecole-fixe').textContent()).replace(/\s+/g, ' ').trim();
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`Suivi de l’administration d’une école : sans choix d’école, sa page et son nom (Placement, Insertion, rapport) ; le réseau garde le choix (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur, langue });
+    await adminDeLInstitut(s);
+    // Un choix d'école gardé sur cet appareil pour ce compte (quand il était celui du réseau) ne compte plus
+    await s.page.evaluate(() => localStorage.setItem('ensam-admin-ecole:' + window.__demo.me.id, JSON.stringify('ensam-meknes')));
+    const oublis = [];
+    const relever = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`); };
+    const nom = ar ? 'المدرسة Institut exemple' : 'École Institut exemple';
+    await s.aller('suivi'); await s.page.waitForSelector('#dash-season');
+    assert.equal(await s.page.locator('#suivi-ecole').count(), 0, 'Placement : pas de choix d’école');
+    assert.equal(await ecoleFixe(s), nom);
+    // Ses chiffres : l'Institut exemple n'a encore aucune offre (celles de l'ENSAM Meknès ne comptent pas)
+    assert.equal(sansIsolants(await s.page.locator('.sh-faits li').last().innerText()).replace(/\s+/g, ' ').trim(), ar ? '0 عرض مفتوح' : '0 offre ouverte');
+    assert.equal(await s.debordement(), 0, 'Placement : rien ne dépasse');
+    await relever('Placement');
+    await s.aller('suivi/insertion'); await s.page.waitForSelector('.ins-rapport-panel');
+    assert.equal(await s.page.locator('#suivi-ecole').count(), 0, 'Insertion : pas de choix d’école');
+    assert.equal(await ecoleFixe(s), nom);
+    assert.equal(await s.page.locator('.ins-print-head p').first().textContent(), 'Institut exemple', 'le rapport imprimé la nomme');
+    assert.equal(await s.debordement(), 0, 'Insertion : rien ne dépasse');
+    await relever('Insertion');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    // L'administration du réseau, deux écoles : le choix, comme avant ; jamais le nom fixe
+    const r = await ouvrir({ largeur, langue });
+    await r.comme('Admin'); await deuxiemeEcole(r);
+    for (const h of ['suivi', 'suivi/insertion']) {
+      await r.aller(h); await r.page.waitForSelector('#suivi-ecole');
+      assert.deepEqual(await r.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple'], h);
+      assert.equal(await r.page.locator('#suivi-ecole-fixe').count(), 0, h);
+    }
+    assert.deepEqual(r.erreurs, []);
+    await r.ctx.close();
+  });
+}
+
+// En ligne (faux Supabase) : les chiffres (stats_insertion) et le rapport (rapport_insertion) de l'administration d'une
+// école sont toujours demandés pour la sienne, dès le premier appel, et jamais sans école (avant, tant que la liste des
+// écoles n'était pas arrivée, la page partait « tout, comme avant » : un appel sans p_ecole, le rapport au nom de l'ENSAM
+// Meknès) ; puis aucun choix d'école ne paraît. L'administration du réseau : comme avant (Meknès, puis l'école choisie).
+test('Suivi de l’administration d’une école, en ligne : ses chiffres et son rapport demandés pour son école dès le premier appel, sans choix d’école ; le réseau comme avant', async () => {
+  const ECOLE_IE = { slug: 'institut-exemple', nom: 'Institut exemple', ouverte: false, created_at: '2026-11-01T00:00:00Z' };
+  const corps = (m, f) => m.site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + f).map(a => JSON.stringify(a.corps));
+  const listesEcoles = m => m.site.appels.filter(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET').length;
+  // L'insertion, après l'accueil ; la liste des écoles que lit le suivi (en plus de celle de l'accueil) arrivée, la page a fini de changer
+  const insertion = async m => {
+    m.site.rpc.stats_insertion = () => []; m.site.rpc.rapport_insertion = () => [];
+    const avant = listesEcoles(m);
+    await m.page.evaluate(() => { location.hash = 'suivi/insertion'; });
+    await m.page.waitForSelector('.ins-rapport-panel', { timeout: 10000 });
+    for (let k = 0; k < 50 && listesEcoles(m) <= avant; k++) await m.page.waitForTimeout(100);
+    await m.page.waitForTimeout(600);
+  };
+  let m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Nadia Ferhat', role: 'admin', ecole: 'institut-exemple', promo: 2012 }, deja: true, chemin: '#accueil', tables: { ecoles: [ECOLE_IE] } });
+  await insertion(m);
+  for (const f of ['stats_insertion', 'rapport_insertion']) {
+    assert.ok(corps(m, f).length >= 1, f);
+    assert.deepEqual([...new Set(corps(m, f))], ['{"p_ecole":"institut-exemple"}'], f);
+  }
+  assert.equal(await m.page.locator('#suivi-ecole').count(), 0, 'pas de choix d’école');
+  assert.equal(await m.page.locator('#suivi-ecole-fixe').textContent(), 'École Institut exemple');
+  assert.equal(await m.page.locator('.ins-print-head p').first().textContent(), 'Institut exemple');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, deja: true, chemin: '#accueil', tables: { ecoles: [ECOLE_IE] } });
+  await insertion(m);
+  await m.page.waitForSelector('#suivi-ecole', { timeout: 10000 });
+  assert.deepEqual(await m.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple']);
+  assert.equal(await m.page.locator('#suivi-ecole-fixe').count(), 0);
+  assert.ok(corps(m, 'stats_insertion').includes('{"p_ecole":"ensam-meknes"}'), corps(m, 'stats_insertion').join(' '));
+  assert.ok(!corps(m, 'stats_insertion').some(c => c.includes('institut-exemple')));
+  await m.page.selectOption('#suivi-ecole', 'institut-exemple'); await m.page.waitForTimeout(600);
+  assert.equal(corps(m, 'stats_insertion').at(-1), '{"p_ecole":"institut-exemple"}');
+  assert.equal(corps(m, 'rapport_insertion').at(-1), '{"p_ecole":"institut-exemple"}');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Parrainage, administration du réseau, deux écoles : la phrase du bouton, dite en entier en français et en arabe. Avant,
+// sa virgule (« Le bouton, comme la plateforme chaque matin, … ») la livrait au motif large des raisons de Match
+// (« X, comme Y », match.js), passé avant le sien : l'arabe mêlait les deux langues.
+for (const langue of ['fr', 'ar']) {
+  test(`parrainage de l’administration du réseau, deux écoles : la phrase du bouton dite en entier (${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur: ar ? 390 : 1280, langue });
+    await s.comme('Admin');
+    const parrainage = s.page.locator('.panel', { has: s.page.locator('button', { hasText: ar ? 'تعيين العرّابين' : 'Attribuer les parrains' }) });
+    const phrase = async () => { await s.aller('admin/membres'); await s.aller('admin'); await parrainage.waitFor(); return sansIsolants(await parrainage.locator('p').innerText()); };
+    const UNE = ar ? 'كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.';
+    const DEUX = ar ? 'يعيّن الزر العرّابين في كل المدارس، كلٌّ في مدرسته؛ وتفعل المنصة ذلك أيضًا كل صباح.' : 'Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin.';
+    const seule = await phrase();
+    assert.ok(seule.endsWith(' ' + UNE), seule);
+    await deuxiemeEcole(s);
+    assert.equal(await phrase(), seule.slice(0, -UNE.length) + DEUX);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Les phrases de l'interface qui ont « , comme » (les chaînes et le texte des gabarits des modules du site construit, chaque
+// ${…} remplacé par un nombre ; hors commentaires et motifs) : chacune lue par la vraie recherche de l'arabe, les modules
+// chargés dans l'ordre du navigateur. Aucune ne garde un mot français : le motif large de match.js (« X, comme Y ») ne
+// prend que ce qui est fait pour lui (les raisons de Match).
+function phrasesAvecComme(src) {
+  const phrases = [];
+  const garder = x => { const y = x.replace(/\s+/g, ' ').trim(); if (y.includes(', comme ')) phrases.push(y); };
+  let i = 0;
+  const chaine = q => { let s = ''; i++; while (i < src.length && src[i] !== q) { if (src[i] === '\\') { s += src[i + 1]; i += 2; } else s += src[i++]; } i++; return s; };
+  const motif = () => {
+    i++; let classe = false;
+    while (i < src.length && src[i] !== '\n') { const c = src[i]; if (c === '\\') { i += 2; continue; } i++; if (c === '[') classe = true; else if (c === ']') classe = false; else if (c === '/' && !classe) break; }
+    while (/[a-z]/i.test(src[i] || '')) i++;
+  };
+  const gabarit = () => {
+    let s = ''; i++;
+    while (i < src.length && src[i] !== '`') {
+      if (src[i] === '\\') { s += src[i + 1]; i += 2; } else if (src[i] === '$' && src[i + 1] === '{') { i += 2; code(true); s += '2019'; } else s += src[i++];
+    }
+    i++;
+    // Le texte entre les balises, et les valeurs des attributs ; les commentaires d'une feuille de style ne comptent pas
+    for (const part of s.replace(/\/\*[\s\S]*?\*\//g, ' ').split(/[<>]/)) { for (const [, v] of part.matchAll(/="([^"]*)"/g)) garder(v); garder(part.replace(/="[^"]*"/g, '')); }
+  };
+  function code(dansGabarit) {
+    let prof = 0, dernier = '';
+    while (i < src.length) {
+      const c = src[i], d = src[i + 1];
+      if (c === '/' && d === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+      if (c === '/' && d === '*') { const f = src.indexOf('*/', i + 2); i = f < 0 ? src.length : f + 2; continue; }
+      if (c === "'" || c === '"') { garder(chaine(c)); dernier = 'x'; continue; }
+      if (c === '`') { gabarit(); dernier = 'x'; continue; }
+      if (c === '/' && (/^$|[(,=:[!&|?{};+\-*%<>~^]/.test(dernier) || /\b(return|typeof|case|in|of|void|delete|throw|new|else|do|yield|await)$/.test(src.slice(Math.max(0, i - 12), i).trimEnd()))) { motif(); dernier = 'x'; continue; }
+      if (c === '{') prof++;
+      else if (c === '}') { if (dansGabarit && prof === 0) { i++; return; } prof--; }
+      if (!/\s/.test(c)) dernier = c;
+      i++;
+    }
+  }
+  code(false);
+  return phrases;
+}
+test('arabe : aucune phrase de l’interface avec « , comme » ne reste à moitié en français (le motif large des raisons de Match)', async () => {
+  const phrases = new Map();
+  for (const f of fs.readdirSync(SITE).filter(f => f.endsWith('.js') && !f.startsWith('seed')).sort()) {
+    for (const p of phrasesAvecComme(fs.readFileSync(path.join(SITE, f), 'utf8'))) if (!phrases.has(p)) phrases.set(p, f);
+  }
+  // Le relevé trouve bien les phrases connues (une raison de Match, la confirmation d'une promo)
+  assert.ok(phrases.has('2019, comme 2019') && phrases.has('Je confirme : promo 2019, comme moi'), [...phrases.keys()].join(' | '));
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Admin'); await deuxiemeEcole(s);
+  for (const h of ['admin', 'admin/membres', 'suivi', 'suivi/insertion', 'enquete', 'match', 'admin']) await s.aller(h);
+  const lues = await s.page.evaluate(async ps => {
+    for (const f of new Set(ps.map(([, f]) => f))) await import('./' + f);
+    const { t } = await import('./i18n.js');
+    return ps.map(([p, f]) => [f, p, t(p)]);
+  }, [...phrases]);
+  const francais = lues.filter(([, , ar]) => /(?<![\p{L}])[a-zà-ÿœæç][a-zà-ÿœæç’'-]{2,}/u.test(ar)).map(([f, p, ar]) => `${f} : ${p} → ${ar}`);
+  assert.deepEqual(francais, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Agenda : l'exemple du champ « Lieu » d'un événement est à l'école de l'administration qui le publie : l'ENSAM Meknès
+// garde le sien (l'administration du réseau, une école ou deux) ; une école pas encore ouverte n'y est pas nommée
+// (« ENSAM ») ; une école ouverte, son nom. Jamais celui d'une autre école.
+for (const langue of ['fr', 'ar']) {
+  test(`Agenda : l’exemple de lieu d’un événement est à l’école de l’administration, jamais à une autre (${langue})`, async () => {
+    const ar = langue === 'ar';
+    const exemple = async s => {
+      // Sur ordinateur, le bouton de la page se cache derrière « Publier » de la barre latérale : le même clic
+      await s.aller('reseau/agenda'); await s.page.$eval('#ev-new', x => x.click()); await s.page.waitForSelector('#ev-lieu');
+      const p = await s.page.getAttribute('#ev-lieu', 'placeholder');
+      await s.fermer(); await s.page.waitForSelector('#ev-lieu', { state: 'detached' });
+      return sansIsolants(p);
+    };
+    const MEKNES = ar ? 'مثال: ENSAM مكناس، البهو الكبير' : 'Ex. ENSAM Meknès, grand hall';
+    let s = await ouvrir({ langue });
+    await s.comme('Admin');
+    assert.equal(await exemple(s), MEKNES, 'réseau, une école');
+    await deuxiemeEcole(s);
+    assert.equal(await exemple(s), MEKNES, 'réseau, deux écoles');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    s = await ouvrir({ langue });
+    await adminDeLInstitut(s);
+    assert.equal(await exemple(s), ar ? 'مثال: ENSAM، البهو الكبير' : 'Ex. ENSAM, grand hall', 'école pas encore ouverte');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    // Ouvrir l'Institut exemple se fait en français (ouvrirInstitut lit « Ouvert ») ; la démo enregistrée, la page passe ensuite en arabe
+    s = await ouvrir();
+    await adminDeLInstitut(s, { ouverte: true });
+    if (ar) { await s.page.evaluate(() => { localStorage.setItem('ensam-lang', 'ar'); location.hash = ''; }); await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); }
+    assert.equal(await s.page.getAttribute('html', 'lang'), langue);
+    assert.equal(await exemple(s), ar ? 'مثال: Institut exemple، البهو الكبير' : 'Ex. Institut exemple, grand hall', 'école ouverte');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Le formulaire d'une offre sur un téléphone : les puces des filières (« Plus de détails ») passent à la ligne, rien ne
+// dépasse (ni la page, ni la feuille, ni le formulaire), en français comme en arabe : un lauréat qui publie (pour les
+// étudiants, puis entre lauréats) ou modifie une offre, une étudiante qui en partage une. Sur ordinateur : comme avant.
+const mesureOffre = page => page.evaluate(() => {
+  const f = document.querySelector('#of-form'), m = f.closest('.modal'), q = f.getBoundingClientRect();
+  const dehors = [...f.querySelectorAll('button, .chip, input, textarea, summary, .seg')].filter(b => { const r = b.getBoundingClientRect(); return r.width && (r.left < q.left - 1 || r.right > q.right + 1); }).map(b => b.textContent.trim() || b.id);
+  return { page: document.documentElement.scrollWidth - innerWidth, feuille: m.scrollWidth - m.clientWidth, form: f.scrollWidth - f.clientWidth, dehors };
+});
+const RIEN_DEHORS = { page: 0, feuille: 0, form: 0, dehors: [] };
+const plusDeDetails = async s => { await s.page.click('#of-form details.more-fields > summary'); await s.page.waitForSelector('#of-form .fil-pick'); };
+for (const langue of ['fr', 'ar']) {
+  test(`Offres : le formulaire d’une offre tient sur un téléphone, filières comprises ; rien ne dépasse (360 et 390 px, ${langue})`, async () => {
+    for (const largeur of [360, 390]) {
+      const s = await ouvrir({ largeur, langue });
+      await s.comme('Youssef'); await s.aller('offres');
+      await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-form');
+      await plusDeDetails(s);
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : publier`);
+      await s.page.locator('#of-form > .seg button').nth(1).click(); await s.page.waitForTimeout(200);
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : entre lauréats`);
+      await s.fermer(); await s.page.waitForSelector('#of-form', { state: 'detached' });
+      // Modifier une de ses offres : « Plus de détails » s'ouvre d'emblée
+      await s.aller('espace/offres'); await s.page.locator('.esp-offre').first().click(); await s.page.waitForSelector('.od h2');
+      await s.page.click('.od .menu-wrap .icon-btn'); await s.page.locator('.menu-pop button').first().click(); await s.page.waitForSelector('#of-form .fil-pick');
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : modifier`);
+      await s.ctx.close();
+      // Une étudiante partage une offre vue ailleurs
+      const e = await ouvrir({ largeur, langue });
+      await e.comme('Salma'); await e.aller('offres');
+      await e.page.click('.page-head button.btn'); await e.page.waitForSelector('#of-form');
+      await plusDeDetails(e);
+      assert.deepEqual(await mesureOffre(e.page), RIEN_DEHORS, `${largeur} px : partager`);
+      assert.deepEqual([...s.erreurs, ...e.erreurs], []);
+      await e.ctx.close();
+    }
+  });
+}
+test('Offres sur ordinateur : le formulaire d’une offre comme avant, chaque puce des filières sur une ligne ; rien ne dépasse', async () => {
+  const s = await ouvrir();
+  await s.comme('Youssef'); await s.aller('offres');
+  // Le bouton de la page se cache derrière « Publier » de la barre latérale : le même clic
+  await s.page.$eval('.page-head #of-publier', x => x.click()); await s.page.waitForSelector('#of-form');
+  await plusDeDetails(s);
+  assert.deepEqual(await s.page.locator('#of-form .chip').evaluateAll(cs => cs.filter(c => getComputedStyle(c).whiteSpace !== 'nowrap').map(c => c.textContent.trim())), []);
+  assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });

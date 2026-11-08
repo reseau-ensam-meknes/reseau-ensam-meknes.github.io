@@ -2,7 +2,7 @@
 // et fil des réussites à partager sur LinkedIn.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS, FiliereFiltre } from './ui.js';
-import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere, AIDES, NIVEAUX, ecoleDuContenu } from './logic.js';
+import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere, AIDES, NIVEAUX, ecoleDuContenu, NOMS_MEKNES, nomsAPartagerDe, deLEcoleNommee, diesesEcole } from './logic.js';
 import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
@@ -135,9 +135,22 @@ export const verifyUrl = id => `${location.origin}${location.pathname}#verifier/
 const fmtLong = iso => new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 const STAT_KEYS = ['mentorats', 'recrutes', 'reponses'];
 
-function linkedinCertUrl(a) {
+// noms : ceux de l'école du lauréat (nomsAPartager) ; l'ENSAM Meknès par défaut, avec ses textes d'avant
+export function linkedinCertUrl(a, noms = NOMS_MEKNES) {
   const d = new Date(a.created_at); const enc = encodeURIComponent;
-  return `https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&name=${enc('Attestation de contribution · Réseau ENSAM Meknès')}&organizationName=${enc('Réseau ENSAM Meknès')}&issueYear=${d.getFullYear()}&issueMonth=${d.getMonth() + 1}&certUrl=${enc(verifyUrl(a.id))}&certId=${enc(codeOf(a.id))}`;
+  return `https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&name=${enc(`Attestation de contribution · Réseau ${noms.nom}`)}&organizationName=${enc(`Réseau ${noms.nom}`)}&issueYear=${d.getFullYear()}&issueMonth=${d.getMonth() + 1}&certUrl=${enc(verifyUrl(a.id))}&certId=${enc(codeOf(a.id))}`;
+}
+
+// L'attestation d'un lauréat d'une autre école, en arabe : son nom après « شبكة », donné une fois par école. Celle de l'ENSAM
+// Meknès et « Réseau ENSAM » (une école qui n'est pas nommée) restent ceux du dictionnaire.
+const attestationsAR = new Set();
+function attestationEnArabe(noms) {
+  const cle = `${noms.nom}\n${noms.nomAr}`;
+  if (noms.meknes || attestationsAR.has(cle)) return;
+  attestationsAR.add(cle);
+  const ar = { [`La plateforme Réseau ${noms.nom} atteste que`]: `تشهد منصة شبكة ${noms.nomAr} أن` };
+  if (noms.nom !== 'ENSAM') ar[`Réseau ${noms.nom}`] = `شبكة ${noms.nomAr}`;
+  addAR(ar);
 }
 
 function printCertificate() {
@@ -148,8 +161,10 @@ function printCertificate() {
   try { window.print(); } catch { off(); toast('Utilise Ctrl+P, ou Partager puis Imprimer sur téléphone.', 'err'); }
 }
 
-export function Certificate({ p, a, code, url }) {
+// noms : ceux de l'école du lauréat ; l'ENSAM Meknès par défaut (la page de vérification, qui ne connaît pas son école)
+export function Certificate({ p, a, code, url, noms = NOMS_MEKNES }) {
   const s = a.stats || {};
+  attestationEnArabe(noms);
   const facts = [
     [s.mentorats, 'mentorat terminé', 'mentorats terminés'],
     [s.recrutes, 'étudiant recruté et confirmé', 'étudiants recrutés et confirmés'],
@@ -157,9 +172,9 @@ export function Certificate({ p, a, code, url }) {
   ].filter(f => f[0] > 0);
   return html`<div class="certificate">
     <div class="cert-in">
-      <div class="cert-top"><${BrandLogo} size=${52}/><span class="cert-org"><strong>Réseau ENSAM Meknès</strong><span>Lauréats & étudiants</span></span></div>
+      <div class="cert-top"><${BrandLogo} size=${52}/><span class="cert-org"><strong>${`Réseau ${noms.nom}`}</strong><span>Lauréats & étudiants</span></span></div>
       <p class="cert-kicker">Attestation de contribution</p>
-      <p>La plateforme Réseau ENSAM Meknès atteste que</p>
+      <p>${`La plateforme Réseau ${noms.nom} atteste que`}</p>
       <p class="cert-name">${p.full_name}</p>
       <p class="cert-sub">${p.filiere} · Promo ${p.promo}</p>
       <p>a accompagné les étudiants de l’école :</p>
@@ -190,11 +205,12 @@ function AttestationModal({ ctx, onClose }) {
   if (!now.mentorats && !now.recrutes) return html`<${Modal} title="Attestation de contribution" onClose=${onClose}>
     <${Empty} icon="award" title="Bientôt prête">Ton attestation sera disponible après ton premier mentorat terminé ou recrutement confirmé.<//><//>`;
   const shown = current || { stats: now, created_at: new Date().toISOString() };
+  const noms = nomsAPartagerDe(data, me);
   return html`<${Modal} title="Attestation de contribution" onClose=${onClose} wide>
-    <${Certificate} p=${me} a=${shown} code=${current ? codeOf(current.id) : null} url=${current ? verifyUrl(current.id) : null}/>
+    <${Certificate} p=${me} a=${shown} code=${current ? codeOf(current.id) : null} url=${current ? verifyUrl(current.id) : null} noms=${noms}/>
     ${current ? html`<div class="row-end wrap cert-actions">
       <button class="btn ghost" onClick=${() => copyText(verifyUrl(current.id), 'Lien de vérification copié.')}><${Icon} name="link" size=${16}/> Copier le lien</button>
-      <a class="btn ghost" href=${linkedinCertUrl(current)} target="_blank" rel="noopener"><${Icon} name="share" size=${16}/> Ajouter à mon profil LinkedIn</a>
+      <a class="btn ghost" href=${linkedinCertUrl(current, noms)} target="_blank" rel="noopener"><${Icon} name="share" size=${16}/> Ajouter à mon profil LinkedIn</a>
       <button class="btn primary" onClick=${printCertificate}><${Icon} name="download" size=${16}/> Imprimer ou PDF</button></div>`
     : html`<div class="row-end wrap cert-actions"><p class="small muted grow">${last ? 'Tes chiffres ont changé depuis ta dernière attestation. Crée une version à jour.' : 'Crée ton attestation pour obtenir son code et son lien de vérification.'}</p>
       <button class="btn primary" onClick=${() => act(async () => { await store.insert('attestations', { laureat_id: me.id }); toast('Attestation créée.', 'win'); })}><${Icon} name="award" size=${16}/> Créer mon attestation</button></div>`}
@@ -303,21 +319,22 @@ const POUR_MOI = { stage: 'mon stage', pfe: 'mon projet de fin d’études', etr
 const POUR_LUI = { stage: 'son stage', pfe: 'son projet de fin d’études', etranger: 'son stage', emploi: 'son premier poste d’ingénieur' };
 
 // Texte proposé : l'étudiant parle de lui ; le lauréat ne cite le nom de l'étudiant qu'avec son accord.
-export function shareText(store, me, pl) {
+// noms : ceux de l'école du membre qui partage (nomsAPartager) ; l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function shareText(store, me, pl, noms = NOMS_MEKNES) {
   const st = store.byId('profiles', pl.student_id); const la = pl.laureat_id && pl.status === 'confirme' ? store.byId('profiles', pl.laureat_id) : null;
   const lieu = pl.ville ? ` à ${pl.ville}` : '';
   if (pl.student_id === me.id) {
     return `Une belle nouvelle : je rejoins ${pl.entreprise}${lieu} pour ${POUR_MOI[pl.type]} !`
-      + (la ? `\n\nMerci à ${la.full_name} (ENSAM Meknès), qui m’a ouvert la porte grâce au Réseau ENSAM Meknès.` : '')
-      + '\n\n#ENSAM #ENSAMMeknès #ArtsEtMétiers';
+      + (la ? `\n\nMerci à ${la.full_name} (${noms.nom}), qui m’a ouvert la porte grâce au Réseau ${noms.nom}.` : '')
+      + `\n\n${diesesEcole(noms)}`;
   }
-  const who = pl.partage_ok ? st?.full_name : 'un talent de l’ENSAM Meknès';
-  return `C’est une joie d’accueillir ${who} chez ${pl.entreprise}${lieu} pour ${POUR_LUI[pl.type]}.\n\nSur le Réseau ENSAM Meknès, les lauréats partagent leurs offres de stages, de PFE et d’emplois avec les étudiants de l’école. Lauréats, rejoignez-nous !\n\n#ENSAM #ENSAMMeknès #ArtsEtMétiers`;
+  const who = pl.partage_ok ? st?.full_name : `un talent ${deLEcoleNommee(noms.nom)}`;
+  return `C’est une joie d’accueillir ${who} chez ${pl.entreprise}${lieu} pour ${POUR_LUI[pl.type]}.\n\nSur le Réseau ${noms.nom}, les lauréats partagent leurs offres de stages, de PFE et d’emplois avec les étudiants de l’école. Lauréats, rejoignez-nous !\n\n${diesesEcole(noms)}`;
 }
 
 export function ShareModal({ ctx, pl, onClose }) {
   const { store, me } = ctx;
-  const [text, setText] = useState(() => shareText(store, me, pl));
+  const [text, setText] = useState(() => shareText(store, me, pl, nomsAPartagerDe(ctx.data, me)));
   const st = store.byId('profiles', pl.student_id);
   const anonymous = pl.student_id !== me.id && !pl.partage_ok;
   return html`<${Modal} title="Partager sur LinkedIn" onClose=${onClose}>

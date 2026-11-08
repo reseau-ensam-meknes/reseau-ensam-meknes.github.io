@@ -40,3 +40,37 @@ test('une offre qui n’existe plus : null ; la table des offres reste illisible
 test('connecté : la même réponse', async () => {
   assert.deepEqual(await lire(ids.pfe, 'authenticated'), await lire(ids.pfe));
 });
+
+// Une école dont le réseau n'est pas encore ouvert : le lien d'une de ses offres ne dit rien à qui n'en est pas membre,
+// exactement comme une offre qui n'existe pas (null). Ses membres la reconnaissent ; ouverte, tout le monde.
+const lireEn = (u, id) => en(db, u, tx => tx.query('select public.offre_partagee($1) x', [id])).then(r => r.rows[0].x);
+const CASA_LAU = uid(802), CASA_ETU = uid(803);
+test('une offre d’une école fermée : rien, comme une offre inconnue ; un membre de cette école la reconnaît', async () => {
+  await db.query(`update public.ecoles set ouverte = true where slug = 'ensam-casa'`);
+  await creerCompte(db, { id: CASA_LAU, full_name: 'Lauréate Casa', role: 'laureat', filiere: 'Génie Industriel', promo: 2015, ecole: 'ensam-casa' });
+  await creerCompte(db, { id: CASA_ETU, full_name: 'Étudiant Casa', role: 'etudiant', filiere: 'Génie Industriel', promo: 2027, ecole: 'ensam-casa' });
+  const r = await en(db, CASA_LAU, tx => tx.query(`insert into public.offers (author_id, type, titre, entreprise, description, annees) values ($1, 'stage', 'Titre secret casa', 'Entreprise secrète', 'Texte secret casa', '{4}') returning id, ecole`, [CASA_LAU]));
+  assert.equal(r.rows[0].ecole, 'ensam-casa');
+  ids.casa = r.rows[0].id;
+  await db.query(`update public.ecoles set ouverte = false where slug = 'ensam-casa'`);
+  const rien = await lire(uid(898));
+  assert.equal(rien, null);
+  assert.equal(await lire(ids.casa), rien, 'un visiteur sans compte');
+  assert.equal(await lireEn(LAU, ids.casa), rien, 'un membre de l’ENSAM Meknès');
+  assert.deepEqual(await lireEn(CASA_ETU, ids.casa), { type: 'stage', audience: 'etudiants', ouverte: true }, 'un membre de l’école');
+  // Le réseau ouvert : la réponse habituelle pour tous
+  await db.query(`update public.ecoles set ouverte = true where slug = 'ensam-casa'`);
+  try { assert.deepEqual(await lire(ids.casa), { type: 'stage', audience: 'etudiants', ouverte: true }); }
+  finally { await db.query(`update public.ecoles set ouverte = false where slug = 'ensam-casa'`); }
+});
+
+test('ENSAM Meknès : la même réponse qu’avant, octet pour octet', async () => {
+  for (const k of ['pfe', 'lau', 'pourvue']) {
+    const avant = (await db.query(`select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')::text t
+      from public.offers o where o.id = $1`, [ids[k]])).rows[0].t;
+    for (const u of [null, LAU, CASA_ETU]) {
+      const t = (await en(db, u, tx => tx.query('select public.offre_partagee($1)::text t', [ids[k]]), { role: u ? 'authenticated' : 'anon' })).rows[0].t;
+      assert.equal(t, avant, `${k} ${u || 'visiteur'}`);
+    }
+  }
+});

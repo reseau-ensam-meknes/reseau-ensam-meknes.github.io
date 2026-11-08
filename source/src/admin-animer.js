@@ -9,14 +9,14 @@ import { Icon, toast, injectCSS, lienWhatsApp } from './ui.js';
 import { PersonneLigne, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, getLang } from './i18n.js';
 import { ajouterIcones } from './entree.js';
-import { avecLangue } from './regles-entree.js';
+import { avecLangue, avecEcole } from './regles-entree.js';
 import { MessageBtn } from './messages.js';
 import { OfferComposer } from './offers.js';
 import { publierEvenement } from './agenda.js';
 import { lienInvitation } from './invitation.js';
-import { NIVEAUX, classementFondateurs, lignePlaces } from './logic.js';
+import { NIVEAUX, classementFondateurs, lignePlaces, ecoleDe, ecoleDesTextes, adminDuReseau } from './logic.js';
 import { resumeSemaine, aidantsSemaine, texteMerci, messageAccordMerci, texteFondateurs, textePromoDemande, laureatsSansOffre, messageOffreBoite,
-  OBJECTIF_OFFRES, rendezVousDuMois, semaineISO, ligneGestes } from './admin-textes.js';
+  OBJECTIF_OFFRES, rendezVousDuMois, semaineISO, ligneGestes, vueEcole } from './admin-textes.js';
 
 ajouterIcones({
   'porte-voix': '<path d="M4 10v4h3l8 4.5v-13L7 10z"/><path d="M18 9.2a4 4 0 0 1 0 5.6"/>',
@@ -60,8 +60,9 @@ addAR({
 // ---------------------------------------------------------------------------
 // Petits morceaux communs aux rubriques de la console
 // ---------------------------------------------------------------------------
-// L'adresse du site, dans la langue du message (?lang=ar ouvre le site en arabe)
-export const lienSite = (langue = 'fr') => avecLangue(location.origin + location.pathname, langue);
+// L'adresse du site, dans la langue du message (?lang=ar ouvre le site en arabe) ; ecole : celle des messages de la console
+// (ecoleDesTextes), dite dans le lien quand ce n'est pas l'ENSAM Meknès (&ecole=…)
+export const lienSite = (langue = 'fr', ecole) => avecEcole(avecLangue(location.origin + location.pathname, langue), ecole);
 
 export async function copier(texte, fait = 'Message copié.', zone = null) {
   try { await navigator.clipboard.writeText(texte); toast(fait); }
@@ -135,9 +136,13 @@ export const promosEtudiantes = saison => [saison + 1, saison + 2, saison + 3].m
 export function AnimerAdmin({ ctx }) {
   const { data, saison } = ctx;
   const now = Date.now();
-  const inscrites = new Set((data.profiles || []).map(p => Number(p.promo)));
+  // L'école des messages et des liens : celle que regarde la console quand elle est ouverte, sinon celle de l'administration
+  // (ses textes d'avant). Une autre école : ses membres seulement, ses chiffres, son nom, ses liens (&ecole=…).
+  const ecoleTextes = ecoleDesTextes(ctx);
+  const { slug: ecole, autre } = ecoleTextes;
+  const inscrites = new Set((autre ? (data.profiles || []).filter(p => ecoleDe(p) === ecole) : data.profiles || []).map(p => Number(p.promo)));
   // Lien d'une promo : sa page d'aperçu dès qu'elle a un inscrit (comme dans « Inviter »)
-  const lienPromo = (promo, l) => lienInvitation(promo, l, inscrites.has(promo));
+  const lienPromo = (promo, l) => lienInvitation(promo, l, inscrites.has(promo), ecole);
   return html`<div class="adm-animer">
     <section class="panel adm-tete">
       <h2 class="h-ico"><${Icon} name="porte-voix"/> Animer le réseau</h2>
@@ -145,11 +150,11 @@ export function AnimerAdmin({ ctx }) {
     </section>
     <h2 class="eyebrow adm-eyebrow">Cette semaine</h2>
     <div class="adm-cartes">
-      <${Resume} ctx=${ctx} now=${now} lienPromo=${lienPromo}/>
-      <${Merci} ctx=${ctx} now=${now}/>
-      <${Fondateurs} ctx=${ctx}/>
+      <${Resume} ctx=${ctx} now=${now} lienPromo=${lienPromo} ecoleTextes=${ecoleTextes}/>
+      <${Merci} ctx=${ctx} now=${now} ecoleTextes=${ecoleTextes}/>
+      <${Fondateurs} ctx=${ctx} ecoleTextes=${ecoleTextes}/>
       <${DemandesPromo} saison=${saison} lienPromo=${lienPromo}/>
-      <${OffreBoite} ctx=${ctx}/>
+      <${OffreBoite} ctx=${ctx} ecoleTextes=${ecoleTextes}/>
       <div class="adm-pile">
         <${RendezVous} ctx=${ctx}/>
         <${Gmail} ctx=${ctx}/>
@@ -159,12 +164,12 @@ export function AnimerAdmin({ ctx }) {
 }
 
 // a) Le résumé de la semaine : pour les lauréats, ou pour une promo d'étudiants (3A, 4A, 5A)
-function Resume({ ctx, now, lienPromo }) {
+function Resume({ ctx, now, lienPromo, ecoleTextes: { slug: ecole, noms } }) {
   const { data, saison } = ctx;
   const [pour, setPour] = useState('laureats');
   const items = [['laureats', 'Lauréats'], ...promosEtudiantes(saison)];
   const promo = pour === 'laureats' ? null : pour;
-  const textes = l => resumeSemaine(data, { now, saison, promo, lien: promo ? lienPromo(promo, l) : lienSite(l) });
+  const textes = l => resumeSemaine(data, { now, saison, promo, lien: promo ? lienPromo(promo, l) : lienSite(l, ecole), ecole, noms });
   return html`<${CarteMessage} id="adm-resume" titre="Résumé de la semaine" icone="chart" textes=${l => ({ [l]: textes(l)[l] })}
     aide="Les 7 derniers jours : nouveaux membres, offres, Demandes qui attendent, matchs et aides, puis l’agenda des 14 jours à venir. Pour une promo d’étudiants, seulement les offres de son année.">
     <${Puces} items=${items} value=${pour} onChange=${setPour} label="Pour qui ?" id="adm-resume-pour"/>
@@ -174,9 +179,9 @@ function Resume({ ctx, now, lienPromo }) {
 // b) Le merci public : la case « D'accord » est gardée sur cet appareil, pour cet admin et cette semaine
 const cleMerci = (uid, now) => `ensam-admin-merci:${uid}:${semaineISO(now)}`;
 const lireCoches = k => { try { const v = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
-function Merci({ ctx, now }) {
+function Merci({ ctx, now, ecoleTextes: { slug: ecole, noms } }) {
   const { data, me, openProfile } = ctx;
-  const aidants = aidantsSemaine(data, now);
+  const aidants = aidantsSemaine(data, now, ecole);
   const cle = cleMerci(me?.id, now);
   const [coches, setCoches] = useState(() => lireCoches(cle));
   useEffect(() => setCoches(lireCoches(cle)), [cle]);
@@ -186,7 +191,7 @@ function Merci({ ctx, now }) {
     try { localStorage.setItem(cle, JSON.stringify(n)); } catch { /* stockage indisponible : la case vaut pour cette visite */ }
   };
   const { vus: visibles, reste, plus } = useVoirPlus(aidants, 5);
-  const textes = l => texteMerci(aidants, coches, { lien: lienSite(l) });
+  const textes = l => texteMerci(aidants, coches, { lien: lienSite(l, ecole), ecoleNoms: noms });
   return html`<${CarteMessage} id="adm-merci" titre="Merci de la semaine" icone="heart" textes=${l => ({ [l]: textes(l)[l] })}
     aide="Les lauréats qui ont aidé ces 7 derniers jours. Demande d’abord son accord à chacun, puis coche « D’accord » : seuls les prénoms cochés sont dans le message.">
     ${aidants.length ? html`<ul class="adm-lignes" id="adm-merci-liste">${visibles.map(a => html`<li key=${a.id} class="adm-ligne" data-id=${a.id}>
@@ -219,12 +224,14 @@ function useAccordsFondateurs(store, liste) {
   return live ? accords : null;
 }
 
-// c) Les membres fondateurs : le classement du site (useFondateurs, déjà dans ctx), sinon le calcul sur les données
-function Fondateurs({ ctx }) {
+// c) Les membres fondateurs : le classement du site (useFondateurs, déjà dans ctx), sinon le calcul sur les données ;
+// pour une autre école que celle de l'administration, et dans la console d'une école (ses données seulement), le calcul
+// sur ses membres
+function Fondateurs({ ctx, ecoleTextes: { slug: ecole, noms, autre } }) {
   const { data, fondateurs, store } = ctx;
-  const liste = fondateurs?.liste || classementFondateurs(data);
+  const liste = autre || !adminDuReseau(ctx.me) ? classementFondateurs(vueEcole(data, ecole)) : fondateurs?.liste || classementFondateurs(data);
   const accords = useAccordsFondateurs(store, liste);
-  const textes = l => texteFondateurs(data, { liste, lien: lienSite(l), accords });
+  const textes = l => texteFondateurs(data, { liste, lien: lienSite(l, ecole), accords, noms });
   return html`<${CarteMessage} id="adm-fondateurs" titre="Membres fondateurs" icone="star" textes=${l => ({ [l]: textes(l)[l] })}
     aide="Pour donner envie aux lauréats : les prénoms des fondateurs qui acceptent d’être montrés, et les places qui restent.">
     <p class="small strong adm-places">${lignePlaces(liste.length)}</p>
@@ -241,13 +248,13 @@ function DemandesPromo({ saison, lienPromo }) {
 }
 
 // e) Les lauréats qui ont une entreprise et pas encore d'offre ; le compteur des offres publiées par l'admin
-function OffreBoite({ ctx }) {
+function OffreBoite({ ctx, ecoleTextes: { slug: ecole, noms } }) {
   const { data, me, openProfile } = ctx;
   const [compose, setCompose] = useState(false);
-  const liste = laureatsSansOffre(data);
+  const liste = laureatsSansOffre(data, ecole);
   const { vus: visibles, reste, plus } = useVoirPlus(liste, 8);
   const miennes = (data.offers || []).filter(o => o.author_id === me?.id).length;
-  const lien = l => avecLangue(location.origin + location.pathname, l) + '#offres';
+  const lien = l => lienSite(l, ecole) + '#offres';
   return html`<section class="panel adm-carte" id="adm-offre-boite" aria-labelledby="adm-offre-boite-t">
     <div class="section-head"><h3 class="h-ico adm-carte-t" id="adm-offre-boite-t"><${Icon} name="briefcase"/> <span>Une offre de ta boîte</span></h3>
       <button type="button" class="btn small tonal" id="adm-publier" onClick=${() => setCompose(true)}><${Icon} name="plus" size=${15}/> Publier une offre</button></div>
@@ -256,7 +263,7 @@ function OffreBoite({ ctx }) {
       <span class="adm-jauge-barre" aria-hidden="true"><span style=${`inline-size:${Math.min(100, Math.round(miennes / OBJECTIF_OFFRES * 100))}%`}></span></span></div>
     ${liste.length ? html`<ul class="adm-lignes" id="adm-sans-offre">${visibles.map(p => html`<li key=${p.id} class="adm-ligne">
         <${PersonneLigne} p=${p} onOpen=${openProfile}/>
-        <span class="adm-ligne-act"><${MessageBtn} ctx=${ctx} p=${p} label="Écrire" cls="btn tiny ghost" texte=${messageOffreBoite(p, lien(p.langue === 'ar' ? 'ar' : 'fr'))}/></span>
+        <span class="adm-ligne-act"><${MessageBtn} ctx=${ctx} p=${p} label="Écrire" cls="btn tiny ghost" texte=${messageOffreBoite(p, lien(p.langue === 'ar' ? 'ar' : 'fr'), undefined, noms)}/></span>
       </li>`)}</ul>
       <${VoirPlus} reste=${reste} onPlus=${plus}/>`
       : html`<p class="small hint-box"><${Icon} name="check" size=${15}/> <span>Aucun lauréat avec une entreprise et sans offre pour l’instant.</span></p>`}

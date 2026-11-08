@@ -1,7 +1,7 @@
 // Service worker du Réseau ENSAM : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
-const VERSION = 'bf523ddb87ea';
+const VERSION = '7b472fa1440a';
 const FICHIERS = ["./","admin-animer.js","admin-console-cibles.js","admin-console-contenus.js","admin-console-membres.js","admin-console-regles.js","admin-console-traiter.js","admin-console.js","admin-donnees.js","admin-ecoles.js","admin-notifs.js","admin-outils.js","admin-partenaires.js","admin-tableau.js","admin-textes.js","admin.js","agenda.js","ambassadeurs.js","apercu-cv.js","app.js","appareil.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree-vitrine.js","entree.js","entreprises.js","etranger.js","fondateurs-public.js","fondateurs.js","geo.js","groupes.js","growth.js","i18n.js","installer.js","invitation.js","lignes.js","lire-cv.js","logic.js","logo.js","match.js","me.js","mentorat.js","messages.js","moi.js","offers.js","origine.js","parse-linkedin.js","parse-offre.js","partages.js","pdf-compat.js","pdf-worker.js","photo.js","polices/texte.woff2","polices/titres.woff2","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","qr.js","rappels.js","reactions.js","recrutement.js","regles-entree.js","reseau-vivant.js","reussites.js","saison.js","sante-notifs.js","scene.js","site.css","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js","vitrine-regles.js","vitrine.js"];
 // L'arabe (dictionnaire, police) : gardé d'avance seulement pour qui l'avait déjà, sinon au premier usage
 const FACULTATIFS = ["i18n-ar.js","polices/arabe-400.woff2","polices/arabe-500.woff2","polices/arabe-600.woff2","polices/arabe-700.woff2","polices/arabe-titres-600.woff2","polices/arabe-titres-700.woff2"];
@@ -60,11 +60,14 @@ async function taillerPhotos(c, max = PHOTOS_MAX) {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  // Lien d'une promo (promo/2019/, promo/2019/ar/) : sa page ne sert qu'à l'aperçu WhatsApp. Ici, l'application gardée s'ouvre tout de suite.
-  // Le code de qui invite (&de=…, invitation nommée) suit le lien
-  const promo = req.mode === 'navigate' && new URL(req.url).pathname.match(/\/promo\/(\d{4})\/(ar\/)?(?:index\.html)?$/);
-  const de = promo && new URL(req.url).searchParams.get('de');
-  if (promo) return e.respondWith(Response.redirect(new URL(`./?promo=${promo[1]}${promo[2] ? '&lang=ar' : ''}${/^[a-z0-9]{8}$/.test(de || '') ? '&de=' + de : ''}`, self.registration.scope).href, 302));
+  // Lien d'une promo (promo/2019/, promo/2019/ar/, et leurs pages neutres promo/2019/e/, promo/2019/ar/e/ : les liens d'une
+  // autre école) : sa page ne sert qu'à l'aperçu WhatsApp. Ici, l'application gardée s'ouvre tout de suite.
+  // Le code de qui invite (&de=…, invitation nommée) et l'école du lien (&ecole=…, écrite comme l'accepte ecoleValide) le suivent
+  const promo = req.mode === 'navigate' && new URL(req.url).pathname.match(/\/promo\/(\d{4})\/(ar\/)?(?:e\/)?(?:index\.html)?$/);
+  const de = promo && new URL(req.url).searchParams.get('de'), ecole = promo && new URL(req.url).searchParams.get('ecole');
+  if (promo) return e.respondWith(Response.redirect(new URL(`./?promo=${promo[1]}${promo[2] ? '&lang=ar' : ''}${/^[a-z0-9-]{2,40}$/.test(ecole || '') ? '&ecole=' + ecole : ''}${/^[a-z0-9]{8}$/.test(de || '') ? '&de=' + de : ''}`, self.registration.scope).href, 302));
+  // La page neutre du site (e.html : l'aperçu d'un lien d'une autre école) : l'application, avec toute l'adresse (le # suit)
+  if (req.mode === 'navigate' && new URL(req.url).pathname === new URL('e.html', self.registration.scope).pathname) return e.respondWith(Response.redirect(new URL('./' + new URL(req.url).search, self.registration.scope).href, 302));
   e.respondWith(FICHIERS.length ? depuisCache(req) : reseauDabord(req));
 });
 

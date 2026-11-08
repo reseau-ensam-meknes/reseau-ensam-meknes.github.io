@@ -1,0 +1,7608 @@
+-- =====================================================================
+--  ENSAM Meknès · Réseau Lauréats & Étudiants
+--  Schéma Supabase complet : tables, sécurité (RLS), temps réel.
+--  À coller tel quel dans Supabase > SQL Editor > New query > Run.
+-- =====================================================================
+
+create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------------
+-- Profils (1 ligne par compte)
+-- role    : etudiant | laureat | admin
+-- promo   : année de diplôme (prévue pour un étudiant, réelle pour un lauréat)
+--           -> le niveau (3A/4A/5A) est calculé automatiquement chaque saison
+-- ---------------------------------------------------------------------
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  full_name text not null check (char_length(full_name) between 2 and 80),
+  role text not null default 'etudiant' check (role in ('etudiant','laureat','admin')),
+  filiere text not null,
+  promo int not null check (promo between 1990 and 2040),
+  entreprise text,
+  poste text,
+  ville text,
+  pays text default 'Maroc',
+  bio text check (char_length(bio) <= 600),
+  competences text[] default '{}',
+  linkedin text,
+  contact text,
+  cv_url text,
+  disponibilite text constraint profiles_disponibilite_len check (char_length(disponibilite) <= 80),
+  mentor_dispo boolean default false,
+  mentor_sujets text,
+  vitrine boolean default true,
+  verified boolean default false,
+  created_at timestamptz default now()
+);
+-- Bases installées avant la « Phase 1 »
+alter table public.profiles add column if not exists disponibilite text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_disponibilite_len') then
+    alter table public.profiles add constraint profiles_disponibilite_len check (char_length(disponibilite) <= 80);
+  end if;
+end $$;
+
+create or replace function public.is_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
+$$;
+
+-- L'administration du réseau (école ENSAM Meknès) voit toutes les écoles ; celle d'une autre école ne voit que la sienne.
+-- En plpgsql : la colonne « ecole » n'existe pas encore à cet endroit d'une première installation.
+create or replace function public.super_admin() returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from public.profiles where id = auth.uid() and role = 'admin' and coalesce(ecole, 'ensam-meknes') = 'ensam-meknes');
+exception when undefined_column then return public.is_admin();
+end $$;
+revoke all on function public.super_admin() from public, anon;
+grant execute on function public.super_admin() to authenticated, service_role;
+
+-- ---------------------------------------------------------------------
+-- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
+-- appellations des promos précédentes, rattachées à leur parcours. Mêmes règles que logic.js.
+-- ---------------------------------------------------------------------
+create or replace function public.parcours_de(f text) returns text[]
+language sql immutable as $$
+  select case f
+    when 'Génie Industriel et Productique' then '{PEI}'
+    when 'Génie Industriel : Excellence Opérationnelle' then '{PEI}'
+    when 'Génie Électromécanique : Digitalisation Industrielle' then '{PEI}'
+    when 'Génie Électromécanique : Maintenance et Commande Industrielles' then '{PEI}'
+    when 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques' then '{PM}'
+    when 'Génie Mécanique : Ingénierie Mécanique et Structures' then '{PM}'
+    when 'Génie Mécanique : Matériaux et Procédés de Fabrication' then '{PM}'
+    when 'Génie Mécanique : Énergétique' then '{PM}'
+    when 'Génie Civil' then '{CIVIL}'
+    when 'Intelligence Artificielle et Technologies des Données : Systèmes Industriels' then '{IA}'
+    when 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents' then '{INFO}'
+    -- anciennes appellations
+    when 'Génie Mécanique' then '{PM}'
+    when 'Génie Industriel' then '{PEI}'
+    when 'Génie Électromécanique' then '{PEI}'
+    when 'Génie Énergétique' then '{PM}'
+    when 'Mécatronique' then '{PEI}'
+    when 'Génie Informatique & IA' then '{INFO,IA}'
+    else '{}' end::text[];
+$$;
+-- Filière de la maquette actuelle (sinon : ancienne appellation, classes prépa ou texte libre)
+create or replace function public.filiere_actuelle(f text) returns boolean
+language sql immutable as $$
+  select coalesce(f = any(array['Génie Industriel et Productique', 'Génie Industriel : Excellence Opérationnelle',
+    'Génie Électromécanique : Digitalisation Industrielle', 'Génie Électromécanique : Maintenance et Commande Industrielles',
+    'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', 'Génie Mécanique : Ingénierie Mécanique et Structures',
+    'Génie Mécanique : Matériaux et Procédés de Fabrication', 'Génie Mécanique : Énergétique', 'Génie Civil',
+    'Intelligence Artificielle et Technologies des Données : Systèmes Industriels', 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents']), false);
+$$;
+-- Une offre (liste vide = toutes filières) concerne-t-elle cette filière ? Deux filières actuelles doivent être
+-- identiques ; une ancienne appellation couvre son parcours.
+create or replace function public.filiere_ok(p_liste text[], p_filiere text) returns boolean
+language sql immutable as $$
+  select cardinality(coalesce(p_liste, '{}')) = 0
+    or (p_filiere is not null and (p_filiere = any(p_liste) or exists (
+      select 1 from unnest(p_liste) x
+      where (not public.filiere_actuelle(p_filiere) or not public.filiere_actuelle(x))
+        and public.parcours_de(x) && public.parcours_de(p_filiere))));
+$$;
+-- Proximité entre deux membres : 2 = même filière, 1 = même parcours, 0 = sinon
+create or replace function public.proximite_filiere(a text, b text) returns int
+language sql immutable as $$
+  select case when a is null or b is null then 0 when a = b then 2
+              when public.parcours_de(a) && public.parcours_de(b) then 1 else 0 end;
+$$;
+
+-- admin_ok : ce compte fait partie de l'administration, même quand il regarde l'application comme un lauréat
+-- (rôle « laureat » le temps de cette vue, puis « admin » d'un appui). Donné et retiré avec le rôle admin ; personne ne se le donne.
+alter table public.profiles add column if not exists admin_ok boolean not null default false;
+
+-- Personne ne peut s'auto-proclamer admin ou "lauréat vérifié"
+create or replace function public.protect_profile() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or public.is_admin() then
+    -- Rôle admin donné : admin_ok suit. Rôle changé par quelqu'un d'autre (ou depuis l'éditeur SQL) : admin_ok part.
+    -- Un admin qui passe lui-même en vue lauréat le garde, pour revenir.
+    if new.role = 'admin' then new.admin_ok := true;
+    elsif tg_op = 'UPDATE' and new.id is distinct from auth.uid() and new.role is distinct from old.role then new.admin_ok := false;
+    end if;
+    -- L'administration retire une vérification : les confirmations des camarades de promo partent aussi
+    if tg_op = 'UPDATE' and old.verified and not new.verified then
+      begin delete from public.verifications_pairs where laureat_id = new.id; exception when others then null; end;
+    end if;
+    return new;
+  end if;
+  -- Email de l'école obligatoire pour les étudiants (si l'administration l'a demandé)
+  if new.role = 'etudiant' and (tg_op = 'INSERT' or old.role <> 'etudiant') then
+    begin
+      if public.email_obligatoire_de(new.ecole)
+         and cardinality(public.domaines_de(new.ecole)) > 0 and not public.email_ecole(new.id, new.ecole) then
+        raise exception using message = 'Inscris-toi avec ton email de l’école (@' || array_to_string(public.domaines_de(new.ecole), ', @') || ').', errcode = 'P0001', hint = 'email_ecole';
+      end if;
+    exception when others then
+      if sqlerrm like 'Inscris-toi avec ton email%' then raise; end if;
+    end;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.role = 'admin' then new.role := 'etudiant'; end if;
+    new.verified := false;
+    new.admin_ok := false;
+  elsif coalesce(old.admin_ok, false) and new.role in ('admin', 'laureat') then
+    -- L'administration en vue lauréat revient en admin (ou y reste) : sa vérification ne bouge pas
+    new.admin_ok := true;
+    new.verified := old.verified;
+  else
+    new.admin_ok := coalesce(old.admin_ok, false);
+    new.role := case when old.role = 'admin' then 'admin'
+                     when new.role = 'admin' then old.role
+                     else new.role end;
+    if new.role <> old.role then new.verified := false;
+    else new.verified := old.verified; end if;
+  end if;
+  -- Vérifié tout seul : présent dans la liste officielle de l'école (même email, ou même nom et même promo),
+  -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
+  -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
+  begin
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo, new.ecole)
+        or (new.role = 'etudiant' and public.email_ecole(new.id, new.ecole))
+        or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
+      new.verified := true;
+    end if;
+  exception when others then null;
+  end;
+  return new;
+end $$;
+drop trigger if exists trg_protect_profile on public.profiles;
+create trigger trg_protect_profile before insert or update on public.profiles
+  for each row execute function public.protect_profile();
+update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
+
+-- ---------------------------------------------------------------------
+-- Offres publiées (surtout par les lauréats)
+-- type : stage | pfe | etranger | emploi
+-- annees : niveaux ciblés (3,4,5 ; 6 = jeunes diplômés)
+-- ---------------------------------------------------------------------
+create table if not exists public.offers (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null check (type in ('stage','pfe','etranger','emploi')),
+  titre text not null check (char_length(titre) between 4 and 140),
+  entreprise text not null,
+  ville text,
+  pays text default 'Maroc',
+  filieres text[] default '{}',
+  annees int[] default '{}',
+  description text not null check (char_length(description) <= 4000),
+  contact text,
+  lien text,
+  deadline date,
+  cooptation boolean default false,
+  remunere boolean default false,
+  duree text,
+  status text not null default 'ouverte' check (status in ('ouverte','pourvue','fermee')),
+  created_at timestamptz default now()
+);
+
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  offer_id uuid not null references public.offers(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(body) between 1 and 1500),
+  created_at timestamptz default now()
+);
+
+-- kind : utile (= "ça m'aide") | save (= sauvegardée)
+create table if not exists public.reactions (
+  id uuid primary key default gen_random_uuid(),
+  offer_id uuid not null references public.offers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('utile','save')),
+  created_at timestamptz default now(),
+  unique (offer_id, user_id, kind)
+);
+
+-- ---------------------------------------------------------------------
+-- Candidatures
+-- Sur une offre de la plateforme : l'étudiant postule, le LAURÉAT auteur de
+-- l'offre fait avancer le statut (entretien, retenu, pas retenu).
+-- Candidature externe (offer_id vide) : l'étudiant la suit lui-même.
+-- ---------------------------------------------------------------------
+create table if not exists public.applications (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  offer_id uuid references public.offers(id) on delete set null,
+  entreprise text not null,
+  titre text,
+  message text check (char_length(message) <= 1500),
+  status text not null default 'postule' check (status in ('postule','entretien','retenu','refuse')),
+  note text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.applications add column if not exists message text;
+create unique index if not exists applications_une_par_offre on public.applications (student_id, offer_id) where offer_id is not null;
+
+create or replace function public.protect_application() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_author uuid; v_status text; v_note text; v_message text;
+begin
+  if tg_op = 'INSERT' then
+    if new.offer_id is not null then
+      select author_id into v_author from public.offers where id = new.offer_id;
+      -- Une offre partagée (vue ailleurs) se postule sur son site d'origine, pas ici
+      if exists (select 1 from public.offers where id = new.offer_id and origine = 'partagee') then
+        raise exception 'Cette offre partagée se postule sur son site d’origine.' using errcode = '42501';
+      end if;
+      select entreprise, titre into new.entreprise, new.titre from public.offers where id = new.offer_id;
+      if auth.uid() is not null and not public.is_admin() then new.status := 'postule'; end if;
+    end if;
+    return new;
+  end if;
+  if auth.uid() is null or public.is_admin() then new.updated_at := now(); return new; end if;
+  select author_id into v_author from public.offers where id = old.offer_id;
+  v_status := new.status; v_note := new.note; v_message := new.message;
+  new := old;
+  new.updated_at := now();
+  if old.offer_id is not null and auth.uid() = v_author and auth.uid() <> old.student_id then
+    new.status := v_status;                         -- le lauréat fait avancer la candidature
+  elsif auth.uid() = old.student_id then
+    new.note := v_note; new.message := v_message;   -- l'étudiant garde ses notes
+    if old.offer_id is null then new.status := v_status; end if;  -- et suit seul ses candidatures externes
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_application on public.applications;
+create trigger trg_protect_application before insert or update on public.applications
+  for each row execute function public.protect_application();
+
+-- ---------------------------------------------------------------------
+-- Réussites (placements) : la base du tableau de bord.
+-- saison : année de début de l'année universitaire (2026 = 2026-2027)
+-- niveau : 3,4,5 ou 6 (jeune diplômé)
+-- Deux façons d'arriver ici :
+--   1. Le LAURÉAT déclare « j'ai recruté X » (depuis son offre)  -> en_attente
+--      puis l'ÉTUDIANT confirme                                  -> confirme (vérifié des deux côtés)
+--      ou dit que ce n'est pas le cas                            -> refuse
+--   2. L'étudiant déclare avoir trouvé hors plateforme            -> declare (non vérifié)
+-- ---------------------------------------------------------------------
+create table if not exists public.placements (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  offer_id uuid references public.offers(id) on delete set null,
+  laureat_id uuid references public.profiles(id) on delete set null,
+  saison int not null,
+  niveau int not null check (niveau between 3 and 6),
+  type text not null check (type in ('stage','pfe','etranger','emploi')),
+  entreprise text not null,
+  ville text,
+  pays text default 'Maroc',
+  source text not null default 'autre' check (source in ('plateforme','autre')),
+  status text not null default 'declare' check (status in ('declare','en_attente','confirme','refuse')),
+  merci text check (char_length(merci) <= 800),
+  note int check (note between 1 and 5),
+  partage_ok boolean default false,           -- l'étudiant accepte d'être cité sur LinkedIn
+  created_at timestamptz default now(),
+  confirmed_at timestamptz
+);
+alter table public.placements add column if not exists partage_ok boolean default false;
+-- Une seule réussite par étudiant et par saison (une déclaration refusée par l'étudiant ne compte pas)
+create unique index if not exists placements_une_par_saison on public.placements (student_id, saison) where status <> 'refuse';
+
+-- ---------------------------------------------------------------------
+-- Demandes des étudiants : l'étudiant (ou le lauréat qui cherche un emploi) dit ce qu'il cherche,
+-- CV joint ; des lauréats lui proposent leur aide (recruter, encadrer, recommander) ; il en accepte
+-- une : c'est un match. Quand il a commencé, le lauréat le déclare et l'étudiant confirme
+-- (table placements, demande_id) : la demande est pourvue et la réussite annoncée.
+-- Règles et suites : voir « Demandes des étudiants » plus bas.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes (
+  id uuid primary key default gen_random_uuid(),
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null check (type in ('stage','pfe','etranger','emploi')),
+  titre text not null check (char_length(titre) between 4 and 120),
+  details text not null check (char_length(details) between 20 and 1500),
+  lieu text check (char_length(lieu) <= 120),
+  debut date,
+  duree text check (char_length(duree) <= 40),
+  status text not null default 'ouverte' check (status in ('ouverte','match','pourvue','fermee')),
+  laureat_id uuid references public.profiles(id) on delete set null,
+  proposition_id uuid,
+  match_at timestamptz,
+  relancee_at timestamptz not null default now(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+-- aide : recrute (dans son équipe) | encadre (le stage ou le PFE) | recommande (à son entreprise)
+create table if not exists public.propositions (
+  id uuid primary key default gen_random_uuid(),
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  aide text not null check (aide in ('recrute','encadre','recommande')),
+  entreprise text not null check (char_length(entreprise) between 2 and 120),
+  poste text check (char_length(poste) <= 140),
+  message text not null check (char_length(message) between 10 and 1000),
+  status text not null default 'envoyee' check (status in ('envoyee','acceptee','declinee','retiree','close')),
+  repondu_at timestamptz,
+  created_at timestamptz default now(),
+  unique (demande_id, laureat_id)
+);
+-- Une réussite venue d'une demande : laquelle, et ce que le lauréat a fait (affiché dans l'annonce)
+alter table public.placements add column if not exists demande_id uuid references public.demandes(id) on delete set null;
+alter table public.placements add column if not exists aide text check (aide in ('recrute','encadre','recommande'));
+
+create or replace function public.protect_placement() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is null then return new; end if;
+    if public.is_admin() then
+      -- L'administration qui recrute elle-même (son offre, sa demande) : l'étudiant confirme, comme pour un lauréat
+      if new.laureat_id = auth.uid() and new.student_id is distinct from auth.uid() and new.status = 'declare' then
+        new.source := 'plateforme'; new.status := 'en_attente'; new.confirmed_at := null;
+      end if;
+      return new;
+    end if;
+    new.confirmed_at := null;
+    if auth.uid() = new.student_id then
+      -- l'étudiant ne peut déclarer qu'une réussite hors plateforme (non vérifiée)
+      new.offer_id := null; new.laureat_id := null; new.source := 'autre'; new.status := 'declare';
+      return new;
+    end if;
+    -- sinon c'est un lauréat qui déclare avoir recruté l'étudiant
+    if not exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then
+      raise exception 'Seul un lauréat peut déclarer un recrutement.';
+    end if;
+    new.laureat_id := auth.uid();
+    if new.offer_id is not null then
+      select author_id into v_author from public.offers where id = new.offer_id;
+      if v_author is distinct from auth.uid() then raise exception 'Seul l’auteur de l’offre peut déclarer ce recrutement.'; end if;
+    end if;
+    -- Depuis une demande : seulement le lauréat du match, pour l'auteur de la demande
+    new.aide := null;
+    if new.demande_id is not null then
+      select d.status, d.auteur_id, d.laureat_id, d.proposition_id into v_d from public.demandes d where d.id = new.demande_id;
+      if v_d.status is distinct from 'match' or v_d.laureat_id is distinct from auth.uid() or v_d.auteur_id is distinct from new.student_id then
+        raise exception 'Cette demande n’est pas en cours avec toi.';
+      end if;
+      select x.aide into new.aide from public.propositions x where x.id = v_d.proposition_id;
+    end if;
+    new.source := 'plateforme'; new.status := 'en_attente'; new.partage_ok := false;
+    return new;
+  end if;
+  -- UPDATE
+  if auth.uid() is null or public.is_admin() then
+    if new.status = 'confirme' and old.status <> 'confirme' then new.confirmed_at := now(); end if;
+    return new;
+  end if;
+  v_status := new.status; v_merci := new.merci; v_note := new.note; v_partage := new.partage_ok;
+  v_ent := new.entreprise; v_ville := new.ville; v_pays := new.pays; v_type := new.type;
+  new := old;
+  if auth.uid() = old.student_id then
+    new.merci := v_merci; new.note := v_note; new.partage_ok := coalesce(v_partage, false);
+    if old.status = 'en_attente' and v_status in ('confirme','refuse') then
+      new.status := v_status;
+      if v_status = 'confirme' then new.confirmed_at := now(); end if;
+    end if;
+    if old.source = 'autre' then new.entreprise := v_ent; new.ville := v_ville; new.pays := v_pays; new.type := v_type; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_placement on public.placements;
+create trigger trg_protect_placement before insert or update on public.placements
+  for each row execute function public.protect_placement();
+
+-- ---------------------------------------------------------------------
+-- Mentorat en 3 étapes
+--   1. L'étudiant dit de quoi il a besoin et propose 2 ou 3 horaires,
+--      à un lauréat précis ou à tous les lauréats (mentor_id vide).
+--   2. Un lauréat clique sur un horaire : le rendez-vous est fixé et le lien
+--      de visio est créé tout seul (table liens_rdv, visible des deux seulement).
+--   3. Après l'échange, l'étudiant note et dit merci.
+-- ---------------------------------------------------------------------
+create table if not exists public.mentorships (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  mentor_id uuid references public.profiles(id) on delete cascade,
+  besoin text check (besoin in ('cv','stage','entretien','etranger','carriere')),
+  sujet text not null check (char_length(sujet) between 3 and 140),
+  message text check (char_length(message) <= 1500),
+  creneaux timestamptz[] not null default '{}',
+  status text not null default 'demande',
+  rdv_at timestamptz,
+  reponse text check (char_length(reponse) <= 1500),
+  merci text check (char_length(merci) <= 800),
+  note int check (note between 1 and 5),
+  accepted_at timestamptz,
+  created_at timestamptz default now()
+);
+-- Bases installées avant le mentorat en 3 étapes
+alter table public.mentorships alter column mentor_id drop not null;
+alter table public.mentorships add column if not exists besoin text check (besoin in ('cv','stage','entretien','etranger','carriere'));
+alter table public.mentorships add column if not exists creneaux timestamptz[] not null default '{}';
+alter table public.mentorships add column if not exists rdv_at timestamptz;
+alter table public.mentorships add column if not exists note int check (note between 1 and 5);
+alter table public.mentorships add column if not exists accepted_at timestamptz;
+-- L'étudiant confirme sa présence au rendez-vous fixé (remis à zéro si l'horaire change)
+alter table public.mentorships add column if not exists confirme_at timestamptz;
+alter table public.mentorships drop constraint if exists mentorships_status_check;
+alter table public.mentorships add constraint mentorships_status_check check (status in ('demande','acceptee','terminee','refusee','annulee'));
+create index if not exists mentorships_ouvertes on public.mentorships (created_at) where mentor_id is null and status = 'demande';
+
+-- Lien de visio d'un rendez-vous : lisible par l'étudiant et le lauréat concernés seulement
+create table if not exists public.liens_rdv (
+  id uuid primary key references public.mentorships(id) on delete cascade,
+  lien text not null check (lien ~* '^https://[^\s]+$' and char_length(lien) <= 300),
+  created_at timestamptz default now()
+);
+
+-- Horaires proposés : à venir, sans doublon, 3 au plus
+create or replace function public.creneaux_valides(c timestamptz[]) returns timestamptz[]
+language sql stable as $$
+  select coalesce(array_agg(x order by x), '{}') from (
+    select distinct x from unnest(coalesce(c, '{}')) x where x > now() order by x limit 3) t;
+$$;
+
+create or replace function public.protect_mentorship() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.mentorships%rowtype; v_role text;
+begin
+  if auth.uid() is null then return new; end if;
+  if public.is_admin() then
+    -- L'administration corrige ce qu'elle veut. Quand elle fixe elle-même un rendez-vous, elle a aussi sa salle de visio.
+    if tg_op = 'UPDATE' and new.status = 'acceptee' and new.rdv_at is not null and new.mentor_id is not null then
+      if old.status = 'demande' then new.accepted_at := coalesce(new.accepted_at, now()); end if;
+      if new.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
+      insert into public.liens_rdv (id, lien)
+        values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
+        on conflict (id) do nothing;
+    end if;
+    return new;
+  end if;
+  select role into v_role from public.profiles where id = auth.uid();
+  if tg_op = 'INSERT' then
+    new.student_id := auth.uid();
+    if new.mentor_id = auth.uid() then raise exception 'Choisis un autre lauréat que toi.'; end if;
+    if new.mentor_id is not null and not exists (select 1 from public.profiles where id = new.mentor_id and role = 'laureat') then
+      raise exception 'Choisis un lauréat.';
+    end if;
+    new.creneaux := public.creneaux_valides(new.creneaux);
+    if cardinality(new.creneaux) = 0 then raise exception 'Propose au moins un horaire à venir.'; end if;
+    if (select count(*) from public.mentorships where student_id = auth.uid() and status = 'demande') >= 3 then
+      raise exception 'Tu as déjà 3 rendez-vous en attente d’un horaire. Attends une réponse avant d’en proposer un autre.';
+    end if;
+    new.status := 'demande'; new.rdv_at := null; new.reponse := null; new.merci := null; new.note := null;
+    new.accepted_at := null; new.confirme_at := null; new.created_at := now();
+    return new;
+  end if;
+  v := new;
+  new := old;
+  -- Un lauréat prend une demande ouverte à tous
+  if old.mentor_id is null and old.status = 'demande' and v.mentor_id = auth.uid() and auth.uid() <> old.student_id then
+    if v_role is distinct from 'laureat' then raise exception 'Seul un lauréat peut choisir un horaire.'; end if;
+    new.mentor_id := auth.uid();
+  end if;
+  -- Le lauréat : fixer ou déplacer le rendez-vous, passer la main, clore
+  if new.mentor_id = auth.uid() then
+    new.reponse := v.reponse;
+    if old.status = 'demande' and v.mentor_id is null and old.mentor_id is not null then
+      new.mentor_id := null;                                 -- la demande devient ouverte à tous
+    elsif v.status = 'acceptee' and old.status in ('demande','acceptee') then
+      if v.rdv_at is null then raise exception 'Choisis l’horaire du rendez-vous.'; end if;
+      if v.rdv_at is distinct from old.rdv_at and v.rdv_at < now() then raise exception 'Choisis un moment à venir.'; end if;
+      new.status := 'acceptee'; new.rdv_at := v.rdv_at;
+      if v.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
+      if old.status = 'demande' then new.accepted_at := now(); end if;
+      insert into public.liens_rdv (id, lien)
+        values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
+        on conflict (id) do nothing;
+    elsif v.status = 'refusee' and old.status = 'demande' then new.status := 'refusee';
+    elsif v.status in ('terminee','annulee') and old.status = 'acceptee' then new.status := v.status;
+    end if;
+    return new;
+  end if;
+  -- L'étudiant : modifier sa demande en attente, annuler, dire que l'échange a eu lieu, noter, remercier
+  if auth.uid() = old.student_id then
+    new.merci := v.merci; new.note := v.note;
+    if old.status = 'demande' then
+      new.besoin := v.besoin; new.sujet := v.sujet; new.message := v.message;
+      if v.creneaux is distinct from old.creneaux then
+        new.creneaux := public.creneaux_valides(v.creneaux);
+        if cardinality(new.creneaux) = 0 then raise exception 'Propose au moins un horaire à venir.'; end if;
+      end if;
+      if v.status = 'annulee' then new.status := 'annulee'; end if;
+    elsif old.status = 'acceptee' and v.status in ('terminee','annulee') then
+      new.status := v.status;
+    elsif old.status = 'acceptee' and v.confirme_at is not null and old.confirme_at is null then
+      new.confirme_at := now();                              -- « Je serai là »
+    end if;
+  end if;
+  return new;
+end $$;
+-- Rendez-vous fixés sans salle de visio (par l'administration, avant cette mise à jour) : on la crée
+insert into public.liens_rdv (id, lien)
+  select m.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12)
+  from public.mentorships m where m.status = 'acceptee' and m.rdv_at is not null and m.mentor_id is not null
+  on conflict (id) do nothing;
+drop trigger if exists trg_protect_mentorship on public.mentorships;
+create trigger trg_protect_mentorship before insert or update on public.mentorships
+  for each row execute function public.protect_mentorship();
+
+-- Email de l'étudiant, donné au seul lauréat qui a fixé le rendez-vous
+-- (pour l'invitation Google Agenda)
+create or replace function public.email_rdv(p_id uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select u.email::text from public.mentorships m join auth.users u on u.id = m.student_id
+  where m.id = p_id and m.status = 'acceptee' and m.mentor_id = auth.uid();
+$$;
+revoke all on function public.email_rdv(uuid) from public;
+grant execute on function public.email_rdv(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Entraide : questions / réponses / votes
+-- ---------------------------------------------------------------------
+create table if not exists public.questions (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  categorie text not null,
+  titre text not null check (char_length(titre) between 5 and 160),
+  body text check (char_length(body) <= 3000),
+  best_answer_id uuid,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.answers (
+  id uuid primary key default gen_random_uuid(),
+  question_id uuid not null references public.questions(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(body) between 1 and 3000),
+  created_at timestamptz default now()
+);
+
+create table if not exists public.votes (
+  id uuid primary key default gen_random_uuid(),
+  answer_id uuid not null references public.answers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (answer_id, user_id)
+);
+
+-- ---------------------------------------------------------------------
+-- Shortlist : les profils qu'un lauréat garde de côté (visible par lui seul)
+-- ---------------------------------------------------------------------
+create table if not exists public.shortlists (
+  id uuid primary key default gen_random_uuid(),
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  note text check (char_length(note) <= 300),
+  created_at timestamptz default now(),
+  unique (laureat_id, student_id)
+);
+
+-- ---------------------------------------------------------------------
+-- Invitations à postuler : un lauréat invite un étudiant sur une de SES offres.
+-- L'étudiant postule (candidature normale) ou décline.
+-- ---------------------------------------------------------------------
+create table if not exists public.invitations (
+  id uuid primary key default gen_random_uuid(),
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  offer_id uuid not null references public.offers(id) on delete cascade,
+  message text check (char_length(message) <= 600),
+  status text not null default 'envoyee' check (status in ('envoyee','declinee')),
+  created_at timestamptz default now(),
+  unique (offer_id, student_id)
+);
+
+create or replace function public.protect_invitation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_status text;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    if not exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then
+      raise exception 'Seul un lauréat peut inviter un étudiant.';
+    end if;
+    if not exists (select 1 from public.offers where id = new.offer_id and author_id = auth.uid()) then
+      raise exception 'Tu ne peux inviter que sur tes propres offres.';
+    end if;
+    new.laureat_id := auth.uid(); new.status := 'envoyee'; new.created_at := now();
+    return new;
+  end if;
+  v_status := new.status;
+  new := old;
+  if auth.uid() = old.student_id and v_status = 'declinee' then new.status := 'declinee'; end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_invitation on public.invitations;
+create trigger trg_protect_invitation before insert or update on public.invitations
+  for each row execute function public.protect_invitation();
+
+-- ---------------------------------------------------------------------
+-- Annonces de l'administration (bandeau sur l'accueil)
+-- ---------------------------------------------------------------------
+create table if not exists public.annonces (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid references public.profiles(id) on delete set null,
+  texte text not null check (char_length(texte) between 3 and 280),
+  lien text check (lien ~* '^https://[^\s]+$' and char_length(lien) <= 300),
+  active boolean not null default true,
+  created_at timestamptz default now()
+);
+-- Annonces : un public, comme les événements de l'agenda (l'accueil ne montre à chacun que la sienne, 14 jours)
+alter table public.annonces add column if not exists public text not null default 'tous';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'annonces_public_check') then
+    alter table public.annonces add constraint annonces_public_check check (public in ('tous', 'etudiants', 'laureats'));
+  end if;
+end $$;
+
+-- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non, compte créé par code ou non.
+-- Avec le code à 6 chiffres, demander un code crée déjà le compte, avec un mot de passe tiré au hasard par Supabase
+-- et une connexion notée dans la seconde : « par_code » (posé par le site à la demande du code) et la dernière
+-- connexion permettent de ne pas compter une adresse tapée sans que le code soit jamais entré.
+drop function if exists public.admin_comptes();
+create function public.admin_comptes()
+returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean, par_code boolean)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  -- L'administration d'une école : les comptes de son école seulement (un compte sans profil n'a pas encore d'école)
+  return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id),
+    coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
+    from auth.users u
+    where public.super_admin() or exists (select 1 from public.profiles p where p.id = u.id and p.ecole = public.mon_ecole())
+    order by u.created_at desc;
+end $$;
+revoke all on function public.admin_comptes() from public;
+grant execute on function public.admin_comptes() to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Bravos sur le fil des réussites
+-- ---------------------------------------------------------------------
+create table if not exists public.kudos (
+  id uuid primary key default gen_random_uuid(),
+  placement_id uuid not null references public.placements(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (placement_id, user_id)
+);
+
+-- ---------------------------------------------------------------------
+-- Attestations de contribution : les chiffres sont calculés par la base,
+-- à partir des seules actions confirmées par les étudiants.
+-- ---------------------------------------------------------------------
+create table if not exists public.attestations (
+  id uuid primary key default gen_random_uuid(),
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  stats jsonb not null default '{}',
+  created_at timestamptz default now()
+);
+
+create or replace function public.protect_attestation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  if auth.uid() is not null and not public.is_admin() then
+    if not exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then
+      raise exception 'Seul un lauréat peut obtenir une attestation.';
+    end if;
+    new.laureat_id := auth.uid();
+  end if;
+  v := new.laureat_id;
+  new.stats := jsonb_build_object(
+    'mentorats', (select count(*) from public.mentorships where mentor_id = v and status = 'terminee'),
+    'recrutes',  (select count(*) from public.placements where laureat_id = v and status = 'confirme'),
+    'reponses',  (select count(*) from public.answers where author_id = v));
+  new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_protect_attestation on public.attestations;
+create trigger trg_protect_attestation before insert on public.attestations
+  for each row execute function public.protect_attestation();
+
+-- Vérification publique d'une attestation par son lien (sans compte)
+create or replace function public.attestation_publique(p_id uuid)
+returns table (id uuid, full_name text, filiere text, promo int, stats jsonb, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select a.id, p.full_name, p.filiere, p.promo, a.stats, a.created_at
+  from public.attestations a join public.profiles p on p.id = a.laureat_id
+  where a.id = p_id;
+$$;
+revoke all on function public.attestation_publique(uuid) from public;
+grant execute on function public.attestation_publique(uuid) to anon, authenticated;
+
+-- =====================================================================
+--  Phase 2 : réseau pro, recrutement, communauté, confidentialité,
+--  notifications sur le téléphone et résumé hebdomadaire par email.
+-- =====================================================================
+
+-- Profils : secteur (annuaire pro), consentement, résumé par email, langue, parrainage
+alter table public.profiles add column if not exists secteur text;
+alter table public.profiles add column if not exists consent_at timestamptz;
+alter table public.profiles add column if not exists emails_hebdo boolean not null default true;
+alter table public.profiles add column if not exists langue text not null default 'fr';
+alter table public.profiles add column if not exists parrain_dispo boolean not null default false;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_langue_check') then
+    alter table public.profiles add constraint profiles_langue_check check (langue in ('fr','ar'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_secteur_len') then
+    alter table public.profiles add constraint profiles_secteur_len check (char_length(secteur) <= 60);
+  end if;
+end $$;
+
+-- Offres : réservées aux lauréats (audience), relance douce après 3 semaines sans activité
+alter table public.offers add column if not exists audience text not null default 'etudiants';
+alter table public.offers add column if not exists verifiee_at timestamptz;
+alter table public.offers add column if not exists relance_at timestamptz;
+-- Origine d'une offre (portée par un lauréat, ou partagée) : règles dans la section « Origine des offres », en fin de fichier.
+-- La colonne est ajoutée ici parce que des fonctions plus bas la lisent (fondateurs, ambassadeurs).
+alter table public.offers add column if not exists origine text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'offers_audience_check') then
+    alter table public.offers add constraint offers_audience_check check (audience in ('etudiants','laureats'));
+  end if;
+end $$;
+
+-- Questions routées : une question sur une entreprise ou un pays va d'abord aux lauréats concernés
+alter table public.questions add column if not exists entreprise text;
+alter table public.questions add column if not exists pays text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'questions_cible_len') then
+    alter table public.questions add constraint questions_cible_len check (char_length(entreprise) <= 80 and char_length(pays) <= 60);
+  end if;
+end $$;
+
+-- Nom d'entreprise comparable : « Renault Group Maroc » et « Renault » donnent « renault »
+create or replace function public.cle_entreprise(t text) returns text
+language sql immutable as $$
+  select nullif(trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
+    lower(translate(coalesce(t, ''), 'ÀÂÄÁÃÉÈÊËÍÎÏÌÓÔÖÒÕÚÛÜÙÇÑàâäáãéèêëíîïìóôöòõúûüùçñ', 'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn')),
+    '\(.*?\)', ' ', 'g'), '[^a-z0-9]+', ' ', 'g'),
+    '\m(group|groupe|maroc|morocco|sa|sas|sarl|ltd|inc|the|le|la|les|de|du|des|corporation|operations|international)\M', ' ', 'g'),
+    '\s+', ' ', 'g')), '');
+$$;
+-- « Meknès » = « meknes » : villes et pays comparés sans accents ni majuscules
+create or replace function public.cle_lieu(t text) returns text
+language sql immutable as $$
+  select nullif(regexp_replace(lower(trim(translate(coalesce(t, ''), 'ÀÂÄÁÃÉÈÊËÍÎÏÌÓÔÖÒÕÚÛÜÙÇÑàâäáãéèêëíîïìóôöòõúûüùçñ', 'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn'))), '\s+', ' ', 'g'), '');
+$$;
+create or replace function public.meme_entreprise(a text, b text) returns boolean
+language sql immutable as $$
+  select public.cle_entreprise(a) is not null and public.cle_entreprise(b) is not null and (
+    public.cle_entreprise(a) = public.cle_entreprise(b)
+    or public.cle_entreprise(a) like public.cle_entreprise(b) || ' %'
+    or public.cle_entreprise(b) like public.cle_entreprise(a) || ' %');
+$$;
+
+create or replace function public.saison_courante() returns int
+language sql stable as $$
+  select case when extract(month from now()) >= 9 then extract(year from now())::int else extract(year from now())::int - 1 end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- Groupes : par parcours (clé « filiere:… »), par ville et « à l'étranger » (par pays).
+-- Chacun est membre des groupes de son parcours, de sa ville et de son pays,
+-- et peut en suivre d'autres (ex. un étudiant qui vise la France).
+-- groupe = 'filiere:…', 'ville:…' ou 'pays:…' (en minuscules, sans accents)
+-- ---------------------------------------------------------------------
+create table if not exists public.groupe_messages (
+  id uuid primary key default gen_random_uuid(),
+  groupe text not null check (groupe ~ '^(filiere|ville|pays):.+' and char_length(groupe) <= 80),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(body) between 1 and 1500),
+  created_at timestamptz default now()
+);
+create index if not exists groupe_messages_groupe on public.groupe_messages (groupe, created_at desc);
+
+create table if not exists public.groupe_membres (
+  id uuid primary key default gen_random_uuid(),
+  groupe text not null check (groupe ~ '^(filiere|ville|pays):.+' and char_length(groupe) <= 80),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (groupe, user_id)
+);
+
+-- Le groupe « filière » réunit désormais tout un parcours (étudiants des filières actuelles et lauréats des
+-- anciennes appellations) : les anciens groupes de filière passent dans le groupe de leur parcours.
+do $$
+declare r record;
+begin
+  for r in select * from (values ('filiere:genie mecanique', 'filiere:mecanique'), ('filiere:genie energetique', 'filiere:mecanique'),
+      ('filiere:genie industriel', 'filiere:electro-industriel'), ('filiere:genie electromecanique', 'filiere:electro-industriel'),
+      ('filiere:mecatronique', 'filiere:electro-industriel'), ('filiere:genie informatique & ia', 'filiere:informatique'),
+      ('filiere:genie civil', 'filiere:civil')) t(ancien, nouveau) loop
+    update public.groupe_messages set groupe = r.nouveau where groupe = r.ancien;
+    update public.groupe_membres g set groupe = r.nouveau where g.groupe = r.ancien
+      and not exists (select 1 from public.groupe_membres x where x.user_id = g.user_id and x.groupe = r.nouveau);
+    delete from public.groupe_membres where groupe = r.ancien;  -- doublons : déjà membres du groupe du parcours
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Cafés ENSAM : une rencontre dans une ville, on s'inscrit en un clic
+-- ---------------------------------------------------------------------
+create table if not exists public.cafes (
+  id uuid primary key default gen_random_uuid(),
+  organisateur_id uuid not null references public.profiles(id) on delete cascade,
+  ville text not null check (char_length(ville) between 2 and 60),
+  pays text not null default 'Maroc' check (char_length(pays) between 2 and 60),
+  lieu text not null check (char_length(lieu) between 2 and 140),
+  date_at timestamptz not null,
+  message text check (char_length(message) <= 600),
+  places int check (places between 2 and 200),
+  annule boolean not null default false,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.cafe_participants (
+  id uuid primary key default gen_random_uuid(),
+  cafe_id uuid not null references public.cafes(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (cafe_id, user_id)
+);
+
+create or replace function public.protect_cafe() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.cafes%rowtype;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    new.organisateur_id := auth.uid(); new.annule := false; new.created_at := now();
+    if new.date_at < now() then raise exception 'Choisis une date à venir.'; end if;
+    return new;
+  end if;
+  v := new; new := old;
+  if auth.uid() = old.organisateur_id then
+    new.lieu := v.lieu; new.message := v.message; new.places := v.places; new.annule := v.annule;
+    if v.date_at is distinct from old.date_at then
+      if v.date_at < now() then raise exception 'Choisis une date à venir.'; end if;
+      new.date_at := v.date_at;
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_cafe on public.cafes;
+create trigger trg_protect_cafe before insert or update on public.cafes
+  for each row execute function public.protect_cafe();
+
+-- L'organisateur est inscrit d'office à son café
+create or replace function public.cafe_organisateur() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.cafe_participants (cafe_id, user_id) values (new.id, new.organisateur_id) on conflict do nothing;
+  return null;
+end $$;
+drop trigger if exists trg_cafe_organisateur on public.cafes;
+create trigger trg_cafe_organisateur after insert on public.cafes
+  for each row execute function public.cafe_organisateur();
+
+create or replace function public.protect_cafe_participant() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c public.cafes%rowtype;
+begin
+  if auth.uid() is not null and not public.is_admin() then new.user_id := auth.uid(); end if;
+  select * into c from public.cafes where id = new.cafe_id;
+  if c.organisateur_id = new.user_id then return new; end if;
+  if c.annule then raise exception 'Ce café est annulé.'; end if;
+  if c.date_at < now() then raise exception 'Ce café a déjà eu lieu.'; end if;
+  if c.places is not null and (select count(*) from public.cafe_participants where cafe_id = c.id) >= c.places then
+    raise exception 'Ce café est complet.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_cafe_participant on public.cafe_participants;
+create trigger trg_protect_cafe_participant before insert on public.cafe_participants
+  for each row execute function public.protect_cafe_participant();
+
+-- ---------------------------------------------------------------------
+-- Vitrine des startups fondées par des lauréats
+-- ---------------------------------------------------------------------
+create table if not exists public.startups (
+  id uuid primary key default gen_random_uuid(),
+  fondateur_id uuid not null references public.profiles(id) on delete cascade,
+  nom text not null check (char_length(nom) between 2 and 80),
+  pitch text not null check (char_length(pitch) between 10 and 400),
+  secteur text check (char_length(secteur) <= 60),
+  ville text check (char_length(ville) <= 60),
+  pays text default 'Maroc' check (char_length(pays) <= 60),
+  site text check (site ~* '^https://[^\s]+$' and char_length(site) <= 300),
+  recrute boolean not null default false,
+  created_at timestamptz default now()
+);
+
+-- ---------------------------------------------------------------------
+-- Défis de saison, lancés par l'administration (« Octobre : 50 stages pour les 4A »).
+-- La progression est calculée à partir des réussites, mentorats, offres et réponses.
+-- mesure : reussites | stages | pfe | etranger | emplois | mentorats | offres | reponses
+-- ---------------------------------------------------------------------
+create table if not exists public.defis (
+  id uuid primary key default gen_random_uuid(),
+  titre text not null check (char_length(titre) between 4 and 120),
+  mesure text not null check (mesure in ('reussites','stages','pfe','etranger','emplois','mentorats','offres','reponses')),
+  niveau int check (niveau between 3 and 6),
+  cible int not null check (cible between 1 and 10000),
+  debut date not null,
+  fin date not null,
+  created_at timestamptz default now(),
+  check (fin >= debut)
+);
+
+-- ---------------------------------------------------------------------
+-- Parrainage : chaque 3A reçoit un parrain lauréat volontaire de sa filière
+-- (3 filleuls au plus par saison). Attribution automatique : à l'inscription,
+-- quand un lauréat se porte volontaire, et chaque matin.
+-- ---------------------------------------------------------------------
+create table if not exists public.parrainages (
+  id uuid primary key default gen_random_uuid(),
+  filleul_id uuid not null references public.profiles(id) on delete cascade,
+  parrain_id uuid not null references public.profiles(id) on delete cascade,
+  saison int not null,
+  created_at timestamptz default now(),
+  unique (filleul_id, saison)
+);
+
+create or replace function public.donner_parrain(p_etudiant uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_p public.profiles%rowtype; v_parrain uuid;
+begin
+  select * into v_p from public.profiles where id = p_etudiant;
+  if v_p.id is null or v_p.role <> 'etudiant' or v_p.promo <> v_s + 3 then return null; end if;
+  select parrain_id into v_parrain from public.parrainages where filleul_id = p_etudiant and saison = v_s;
+  if v_parrain is not null then return v_parrain; end if;
+  select l.id into v_parrain from public.profiles l
+    where l.role = 'laureat' and l.ecole = v_p.ecole and l.parrain_dispo and public.proximite_filiere(l.filiere, v_p.filiere) > 0
+      and (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s) < 3
+    order by public.proximite_filiere(l.filiere, v_p.filiere) desc, l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
+    limit 1;
+  if v_parrain is null then return null; end if;
+  insert into public.parrainages (filleul_id, parrain_id, saison) values (p_etudiant, v_parrain, v_s)
+    on conflict (filleul_id, saison) do nothing;
+  return (select parrain_id from public.parrainages where filleul_id = p_etudiant and saison = v_s);
+end $$;
+revoke all on function public.donner_parrain(uuid) from public, anon, authenticated;
+
+-- Appelé par un étudiant de 3A qui n'a pas encore de parrain
+create or replace function public.mon_parrain() returns uuid
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return null; end if;
+  return public.donner_parrain(auth.uid());
+end $$;
+revoke all on function public.mon_parrain() from public, anon;
+grant execute on function public.mon_parrain() to authenticated;
+
+create or replace function public.attribuer_parrains() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; v_s int := public.saison_courante();
+begin
+  if auth.uid() is not null and not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  for r in select p.id from public.profiles p where p.role = 'etudiant' and p.promo = v_s + 3
+      and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = v_s)
+      order by p.created_at loop
+    if public.donner_parrain(r.id) is not null then n := n + 1; end if;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.attribuer_parrains() from public, anon;
+grant execute on function public.attribuer_parrains() to authenticated;
+
+-- Nouveau 3A : un parrain tout de suite ; nouveau volontaire : les 3A qui attendent sont servis
+create or replace function public.parrainage_auto() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.role = 'etudiant' and (tg_op = 'INSERT' or new.promo is distinct from old.promo or new.filiere is distinct from old.filiere) then
+    perform public.donner_parrain(new.id);
+  elsif new.role = 'laureat' and new.parrain_dispo and (tg_op = 'INSERT' or not coalesce(old.parrain_dispo, false)) then
+    perform public.donner_parrain(p.id) from public.profiles p
+      where p.role = 'etudiant' and p.ecole = new.ecole and public.proximite_filiere(p.filiere, new.filiere) > 0 and p.promo = public.saison_courante() + 3
+        and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = public.saison_courante());
+  end if;
+  return null;
+exception when others then return null;  -- l'attribution ne doit jamais bloquer l'enregistrement d'un profil
+end $$;
+drop trigger if exists trg_parrainage_auto on public.profiles;
+create trigger trg_parrainage_auto after insert or update of role, promo, filiere, parrain_dispo on public.profiles
+  for each row execute function public.parrainage_auto();
+
+-- ---------------------------------------------------------------------
+-- Confidentialité : supprimer son compte soi-même (toutes ses données partent avec)
+-- ---------------------------------------------------------------------
+create or replace function public.supprimer_mon_compte() returns void
+language plpgsql security definer set search_path = public as $$
+declare v uuid := auth.uid();
+begin
+  if v is null then raise exception 'Connecte-toi d’abord.'; end if;
+  delete from public.profiles where id = v;
+  delete from auth.users where id = v;
+end $$;
+revoke all on function public.supprimer_mon_compte() from public, anon;
+grant execute on function public.supprimer_mon_compte() to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Notifications sur le téléphone (Web Push) et résumé hebdomadaire par email.
+-- Les envois sont faits par la fonction Supabase « notifier » (supabase/functions/notifier).
+-- Tables privées : aucune règle de lecture, seule la fonction (clé de service) y accède.
+-- ---------------------------------------------------------------------
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null unique check (endpoint ~* '^https://' and char_length(endpoint) <= 1000),
+  p256dh text not null check (char_length(p256dh) <= 200),
+  auth text not null check (char_length(auth) <= 100),
+  created_at timestamptz default now()
+);
+create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
+-- La santé de chaque abonnement, tenue par la fonction « notifier » (push_resultats, plus bas) : la dernière réponse de son
+-- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro) :
+-- combien, le dernier (refus_at) et le premier de la série (refus_depuis)
+alter table public.push_subscriptions add column if not exists dernier_code int;
+alter table public.push_subscriptions add column if not exists dernier_envoi_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus int not null default 0;
+alter table public.push_subscriptions add column if not exists refus_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus_depuis timestamptz;
+
+create table if not exists public.push_queue (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  data jsonb not null default '{}',
+  created_at timestamptz default now()
+);
+-- Une notification reste en file jusqu'à ce que la fonction confirme son envoi (push_faits) : prise (pris_at), elle n'est
+-- reprise qu'après 2 minutes sans confirmation, 3 essais au plus (relancer_push, section « Notifications qui arrivent »)
+alter table public.push_queue add column if not exists pris_at timestamptz;
+alter table public.push_queue add column if not exists essais int not null default 0;
+
+-- Journal des notifications (7 jours, taches_quotidiennes) : ce qu'est devenue chacune, jamais son contenu.
+-- code : la réponse du service de push pour le meilleur des téléphones du membre (201 acceptée), 404 ou 410 téléphone
+-- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
+-- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
+-- -3 abandonnée après au moins un essai (3 essais, ou un jour, sans succès), -4 jetée par la fonction (type inconnu, rien
+-- à dire), -5 expirée sans avoir jamais été essayée (un jour en file, ou une notification programmée que la fonction ne
+-- prend qu'après 21:30, nuit calme : la fonction ou la tâche de chaque minute en panne).
+-- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
+create table if not exists public.push_journal (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  kind text not null,
+  code int not null,
+  at timestamptz not null default now()
+);
+create index if not exists push_journal_user on public.push_journal (user_id, at desc);
+alter table public.push_journal enable row level security;
+
+-- Une ligne au journal : n'échoue jamais (une notification perdue ne bloque pas, son trou dans le journal non plus)
+create or replace function public.noter_push(p_user uuid, p_kind text, p_code int) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null or coalesce(p_kind, '') = '' or p_code is null then return; end if;
+  insert into public.push_journal (user_id, kind, code) values (p_user, left(p_kind, 40), p_code);
+exception when others then raise warning 'noter_push : %', sqlerrm;
+end $$;
+revoke all on function public.noter_push(uuid, text, int) from public, anon, authenticated;
+
+-- Adresses d'abonnement mortes : téléphone parti (404, 410), ou trois refus définitifs d'affilée alors que le même service
+-- de push accepte les autres (push_resultats). Un appareil qui redonne l'une d'elles n'est pas réinscrit
+-- (abonner_push_etat répond 'mort') : il se réabonne, avec une adresse neuve.
+-- Gardées 90 jours (taches_quotidiennes). Aucune règle de lecture : seuls la base et la fonction y touchent.
+create table if not exists public.push_morts (
+  endpoint text primary key,
+  at timestamptz not null default now()
+);
+alter table public.push_morts enable row level security;
+
+-- Réglages internes : adresse du projet, clé publique, secret d'appel de la fonction, clés VAPID
+create table if not exists public.app_secrets (
+  cle text primary key,
+  valeur text not null
+);
+insert into public.app_secrets (cle, valeur)
+  values ('notifier_secret', md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text))
+  on conflict (cle) do nothing;
+
+-- Lien de désabonnement et date du dernier résumé envoyé, par membre
+create table if not exists public.notif_etat (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  token uuid not null default gen_random_uuid() unique,
+  resume_at timestamptz
+);
+
+create table if not exists public.rappels_envoyes (
+  id uuid primary key references public.mentorships(id) on delete cascade,
+  rdv_at timestamptz,
+  created_at timestamptz default now()
+);
+
+-- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
+-- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
+-- abonner_push_etat répond 'ok', ou 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle
+-- n'est pas réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
+create or replace function public.abonner_push_etat(p_endpoint text, p_p256dh text, p_auth text) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
+  if p_endpoint !~* '^https://' then raise exception 'Abonnement invalide.'; end if;
+  if exists (select 1 from public.push_morts where endpoint = p_endpoint) then return 'mort'; end if;
+  insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
+    on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+      created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
+    where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
+  return 'ok';
+end $$;
+revoke all on function public.abonner_push_etat(text, text, text) from public, anon;
+grant execute on function public.abonner_push_etat(text, text, text) to authenticated;
+-- abonner_push, sans réponse comme avant (l'ancien site, et les mise-a-jour.sql d'autres branches qui la redéfinissent) :
+-- la même chose, une adresse morte n'est simplement pas réinscrite. Une base qui a reçu la première version de ce chantier
+-- (abonner_push rendait du texte) la voit retirée puis recréée, avec les mêmes droits.
+do $$ begin
+  if exists (select 1 from pg_proc where oid = to_regprocedure('public.abonner_push(text,text,text)') and prorettype <> 'void'::regtype) then
+    drop function public.abonner_push(text, text, text);
+  end if;
+end $$;
+create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.abonner_push_etat(p_endpoint, p_p256dh, p_auth);
+end $$;
+revoke all on function public.abonner_push(text, text, text) from public, anon;
+grant execute on function public.abonner_push(text, text, text) to authenticated;
+
+-- Lien « Se désabonner » des emails : marche sans être connecté
+create or replace function public.se_desabonner(p_token uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  select user_id into v from public.notif_etat where token = p_token;
+  if v is null then return false; end if;
+  update public.profiles set emails_hebdo = false where id = v;
+  return true;
+end $$;
+revoke all on function public.se_desabonner(uuid) from public;
+grant execute on function public.se_desabonner(uuid) to anon, authenticated;
+
+-- Membres à qui envoyer le résumé aujourd'hui (une fois par semaine chacun, 250 par jour au plus)
+create or replace function public.destinataires_resume(p_max int default 250)
+returns table (id uuid, email text, langue text, token uuid)
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  return query
+    select p.id, u.email::text, p.langue, n.token
+    from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
+    where p.emails_hebdo and u.email is not null
+      and (n.resume_at is null or n.resume_at < now() - interval '6 days 12 hours')
+      and p.created_at < now() - interval '2 days'
+      -- Pas le lendemain d'un email de rappel (rappels_visite, plus bas) : le résumé attend un jour
+      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.email_at > now() - interval '24 hours')
+    order by n.resume_at nulls first, p.created_at
+    limit greatest(1, least(p_max, 290));
+end $$;
+revoke all on function public.destinataires_resume(int) from public, anon, authenticated;
+
+-- Appel de la fonction « notifier » (si l'extension pg_net et l'adresse du projet sont là). La clé publique part aussi en
+-- apikey : la passerelle de Supabase l'attend avec les nouvelles clés (sb_publishable_…), qui ne sont pas des jetons.
+-- Rien n'est bloqué si l'appel échoue, mais l'erreur se lit dans Logs > Postgres (« appeler_notifier : … »).
+create or replace function public.appeler_notifier(p_job text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_url text; v_key text; v_secret text; v_entetes jsonb;
+begin
+  select valeur into v_url from public.app_secrets where cle = 'projet_url';
+  select valeur into v_key from public.app_secrets where cle = 'anon_key';
+  select valeur into v_secret from public.app_secrets where cle = 'notifier_secret';
+  if v_url is null or v_key is null then
+    raise warning 'appeler_notifier : projet_url ou anon_key absent de app_secrets (« % » non appelé)', p_job;
+    return;
+  end if;
+  v_entetes := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'apikey', v_key, 'x-notifier', v_secret);
+  -- 60 s d'attente : envoyer des emails prend plus que les 5 s par défaut de pg_net, qui coupait l'appel
+  begin
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job),
+      headers := v_entetes, timeout_milliseconds := 60000);
+  exception when undefined_function then  -- pg_net ancien, sans délai réglable
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job), headers := v_entetes);
+  end;
+exception when others then raise warning 'appeler_notifier : %', sqlerrm;  -- pas de pg_net, ou fonction pas encore déployée
+end $$;
+revoke all on function public.appeler_notifier(text) from public, anon, authenticated;
+
+-- Met une notification en file pour un membre, seulement s'il l'a activée sur un téléphone
+-- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle).
+-- Sinon rien ne part, mais le journal dit pourquoi : -1 aucun téléphone abonné, -2 catégorie coupée.
+create or replace function public.pousser(p_user uuid, p_kind text, p_data jsonb default '{}') returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null or p_user = auth.uid() then return; end if;
+  if not exists (select 1 from public.push_subscriptions where user_id = p_user) then
+    perform public.noter_push(p_user, p_kind, -1);
+  elsif public.push_voulu(p_user, p_kind) then
+    insert into public.push_queue (user_id, kind, data) values (p_user, p_kind, coalesce(p_data, '{}'));
+  else
+    perform public.noter_push(p_user, p_kind, -2);
+  end if;
+exception when others then raise warning 'pousser : %', sqlerrm;  -- une notification ne doit jamais bloquer l'action du membre
+end $$;
+revoke all on function public.pousser(uuid, text, jsonb) from public, anon, authenticated;
+
+create or replace function public.push_queue_envoi() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  -- Un seul appel par transaction : la fonction vide toute la file d'un coup, après la validation
+  if coalesce(current_setting('ensam.push_appele', true), '') = '1' then return null; end if;
+  -- Rien en file (personne d'abonné, ou des notifications que leurs destinataires ne veulent pas) : pas d'appel
+  if not exists (select 1 from public.push_queue) then return null; end if;
+  perform set_config('ensam.push_appele', '1', true);
+  perform public.appeler_notifier('push');
+  return null;
+end $$;
+drop trigger if exists trg_push_queue on public.push_queue;
+create trigger trg_push_queue after insert on public.push_queue
+  for each statement execute function public.push_queue_envoi();
+
+-- La fonction « notifier » prend les notifications en attente (sans doublon si deux envois se croisent). Elles restent
+-- en file, marquées prises : la fonction confirme celles qui sont parties (push_faits) ; les autres sont reprises après
+-- 2 minutes (une panne du service de push, un appel coupé), 3 essais au plus.
+create or replace function public.prendre_push(p_max int default 300)
+returns table (id bigint, user_id uuid, kind text, data jsonb, langue text)
+language sql security definer set search_path = public as $$
+  with pris as (
+    update public.push_queue q set pris_at = now(), essais = q.essais + 1
+    where q.id in (select x.id from public.push_queue x
+        where x.essais < 3 and (x.pris_at is null or x.pris_at < now() - interval '2 minutes')
+        order by x.id limit p_max for update skip locked)
+    returning q.*)
+  select pris.id, pris.user_id, pris.kind, pris.data, coalesce(p.langue, 'fr') from pris left join public.profiles p on p.id = pris.user_id order by pris.id;
+$$;
+revoke all on function public.prendre_push(int) from public, anon, authenticated;
+
+-- Envoyées (ou sans espoir : plus de téléphone, type inconnu) : retirées de la file
+create or replace function public.push_faits(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  delete from public.push_queue where id = any(coalesce(p_ids, '{}'::bigint[]));
+$$;
+revoke all on function public.push_faits(bigint[]) from public, anon, authenticated;
+
+-- Après chaque tour d'envoi, la fonction dit ce que chaque téléphone a répondu : p = [{ id, code, recu, refus }]
+-- (code : sa dernière réponse ; recu : au moins une notification acceptée ; refus : un refus définitif 400, 401 ou 403,
+-- sans rien d'accepté ; « Tester » n'en envoie jamais). Accepté : la série de refus s'arrête. Rend les abonnements retirés.
+--   · Téléphone parti (404, 410) : l'abonnement est retiré et son adresse notée (push_morts).
+--   · Troisième refus définitif d'affilée : retiré et noté seulement si le même service de push (service_push) a accepté
+--     un envoi vers un autre abonnement depuis le premier refus de la série : c'est bien ce téléphone qu'il refuse (par
+--     exemple un abonnement fait avec une ancienne clé). Sinon, la plateforme est sans doute en cause (clé VAPID,
+--     signature) : rien n'est retiré, tout repart quand elle est réparée, et Logs > Postgres le dit, une fois.
+--   · 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- La preuve se lit sur plusieurs tours, pas dans un seul : un message ou une candidature part seul dans son tour.
+create or replace function public.push_resultats(p jsonb) returns uuid[]
+language plpgsql security definer set search_path = public as $$
+declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[]; v_gardes text;
+begin
+  update public.push_subscriptions s set dernier_code = r.code, dernier_envoi_at = now(),
+      refus = case when coalesce(r.recu, false) then 0 when coalesce(r.refus, false) then s.refus + 1 else s.refus end,
+      refus_depuis = case when coalesce(r.recu, false) then null
+        when coalesce(r.refus, false) then case when s.refus = 0 then now() else coalesce(s.refus_depuis, s.refus_at, now()) end
+        else s.refus_depuis end,
+      refus_at = case when coalesce(r.refus, false) and not coalesce(r.recu, false) then now() else s.refus_at end
+    from jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean)
+    where s.id = r.id;
+  with lus as (
+    select distinct on (s.id) s.id, s.endpoint, s.refus, s.refus_depuis, r.code from public.push_subscriptions s
+      join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+  ), morts as (
+    select l.id, l.endpoint from lus l
+    where l.code in (404, 410)
+       or (l.refus >= 3 and exists (select 1 from public.push_subscriptions o
+         where o.id <> l.id and o.dernier_code between 200 and 299 and o.dernier_envoi_at >= l.refus_depuis
+           and public.service_push(o.endpoint) = public.service_push(l.endpoint)))
+  ), notees as (
+    insert into public.push_morts (endpoint) select endpoint from morts
+      on conflict (endpoint) do update set at = now()
+  ), retirees as (
+    delete from public.push_subscriptions s using morts m where s.id = m.id returning s.id
+  )
+  select coalesce(array_agg(id), '{}') into v from retirees;
+  -- Gardés au troisième refus d'affilée, sans qu'aucun autre téléphone du même service accepte : dit une fois
+  select string_agg(distinct public.service_push(s.endpoint), ', ') into v_gardes from public.push_subscriptions s
+    join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+    where coalesce(r.refus, false) and not coalesce(r.recu, false) and s.refus = 3;
+  if v_gardes is not null then
+    raise warning 'push_resultats : des téléphones refusent trois fois de suite et aucun autre du même service n''accepte (%) : gardés, la clé de la plateforme est sans doute en cause', v_gardes;
+  end if;
+  return v;
+end $$;
+revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
+
+-- Prises par la fonction mais pas essayées (plus le temps : aucun envoi ne commence après 45 s) : rendues à la file tout de
+-- suite, sans leur compter d'essai, pour l'appel suivant
+create or replace function public.push_rendues(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  update public.push_queue set pris_at = null, essais = greatest(essais - 1, 0)
+  where id = any(coalesce(p_ids, '{}'::bigint[])) and pris_at is not null;
+$$;
+revoke all on function public.push_rendues(bigint[]) from public, anon, authenticated;
+
+-- Ce qui déclenche une notification sur le téléphone
+create or replace function public.notif_evenements() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_nom text; v_auteur uuid; v_titre text; r record;
+begin
+  if tg_table_name = 'mentorships' then
+    if tg_op = 'INSERT' then
+      if new.mentor_id is not null then
+        perform public.pousser(new.mentor_id, 'mentorat_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'sujet', new.sujet, 'm', new.id));
+      end if;
+    else
+      if old.status = 'demande' and new.status = 'acceptee' then
+        perform public.pousser(new.student_id, 'mentorat_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
+      elsif old.status = 'acceptee' and new.status = 'acceptee' and new.rdv_at is distinct from old.rdv_at then
+        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
+      elsif old.status = 'acceptee' and new.status = 'annulee' then
+        -- Qui annule est nommé ; si c'est le lauréat, l'étudiant reçoit un lien pour proposer d'autres horaires
+        perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule',
+          jsonb_strip_nulls(jsonb_build_object('sujet', new.sujet, 'm', new.id,
+            'nom', case when auth.uid() in (new.student_id, new.mentor_id) then (select full_name from public.profiles where id = auth.uid()) end,
+            'pour', case when auth.uid() = new.mentor_id then 'demandeur' when auth.uid() = new.student_id then 'mentor' end)));
+      end if;
+      if old.merci is null and new.merci is not null and new.mentor_id is not null then
+        perform public.pousser(new.mentor_id, 'merci', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'm', new.id));
+      end if;
+      -- « Je serai là » : l'étudiant confirme sa présence au rendez-vous fixé, le lauréat le sait (mentorships.confirme_at)
+      if old.confirme_at is null and new.confirme_at is not null and new.status = 'acceptee' and new.mentor_id is not null then
+        perform public.pousser(new.mentor_id, 'mentorat_presence', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = new.student_id), ' ', 1), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
+      end if;
+    end if;
+  elsif tg_table_name = 'applications' then
+    if tg_op = 'INSERT' and new.offer_id is not null then
+      select author_id into v_auteur from public.offers where id = new.offer_id;
+      perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre,
+        'offre', new.offer_id, 'n', (select count(*) from public.applications a where a.offer_id = new.offer_id and a.status = 'postule')));
+    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu')
+      and not (old.status = 'retenu' and new.status = 'entretien') then
+      -- Retour de « retenu » à « entretien » : un recrutement annulé, pas un nouvel entretien
+      perform public.pousser(new.student_id, 'candidature_statut', jsonb_strip_nulls(jsonb_build_object('titre', new.titre, 'statut', new.status, 'offre', new.offer_id)));
+    end if;
+  elsif tg_table_name = 'placements' then
+    if tg_op = 'INSERT' and new.status = 'en_attente' then
+      perform public.pousser(new.student_id, 'recrutement_a_confirmer', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'entreprise', new.entreprise, 'aide', new.aide, 'p', new.id));
+    elsif tg_op = 'UPDATE' and old.status = 'en_attente' and new.status = 'confirme' then
+      perform public.pousser(new.laureat_id, 'recrutement_confirme', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'entreprise', new.entreprise, 'aide', new.aide, 'p', new.id));
+    end if;
+  elsif tg_table_name = 'invitations' then
+    perform public.pousser(new.student_id, 'invitation', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', (select titre from public.offers where id = new.offer_id), 'offre', new.offer_id));
+  elsif tg_table_name = 'answers' then
+    select author_id, titre into v_auteur, v_titre from public.questions where id = new.question_id;
+    -- Jamais pour son propre geste (même depuis l'éditeur SQL, où auth.uid() est vide)
+    if v_auteur is distinct from new.author_id then
+      perform public.pousser(v_auteur, 'reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id), 'titre', v_titre,
+        'q', new.question_id, 'n', greatest(1, (select count(*) from public.answers a where a.question_id = new.question_id
+          and a.author_id <> v_auteur and a.created_at > public.derniere_visite(v_auteur)))));
+    end if;
+  elsif tg_table_name = 'questions' then
+    if coalesce(new.entreprise, '') <> '' or coalesce(new.pays, '') <> '' then
+      insert into public.push_queue (user_id, kind, data)
+      select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre, 'q', new.id)
+      from public.profiles p
+      where p.role = 'laureat' and p.id <> new.author_id and p.ecole = new.ecole
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
+        and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
+          or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
+      order by public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = new.author_id)) desc,
+        public.derniere_visite(p.id) desc nulls last
+      limit 40;
+    end if;
+  elsif tg_table_name = 'parrainages' then
+    perform public.pousser(new.parrain_id, 'filleul', jsonb_build_object('nom', (select full_name from public.profiles where id = new.filleul_id), 'filleul', new.filleul_id));
+    perform public.pousser(new.filleul_id, 'parrain', jsonb_build_object('nom', (select full_name from public.profiles where id = new.parrain_id)));
+  elsif tg_table_name = 'cafes' then
+    insert into public.push_queue (user_id, kind, data)
+    select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at, 'id', new.id)
+    from public.profiles p
+    -- Écoles : celle du café (l'administration reçoit tout, comme dans push_filtre)
+    where p.id <> new.organisateur_id and (p.ecole = new.ecole or p.role = 'admin') and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
+    order by public.derniere_visite(p.id) desc nulls last
+    limit 200;
+  end if;
+  return null;
+exception when others then raise warning 'notif_evenements : %', sqlerrm; return null;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['mentorships','applications','placements','invitations','answers','questions','parrainages','cafes'] loop
+    execute format('drop trigger if exists trg_notif on public.%I', t);
+  end loop;
+end $$;
+create trigger trg_notif after insert or update on public.mentorships for each row execute function public.notif_evenements();
+create trigger trg_notif after insert or update on public.applications for each row execute function public.notif_evenements();
+create trigger trg_notif after insert or update on public.placements for each row execute function public.notif_evenements();
+create trigger trg_notif after insert on public.invitations for each row execute function public.notif_evenements();
+create trigger trg_notif after insert on public.answers for each row execute function public.notif_evenements();
+create trigger trg_notif after insert on public.questions for each row execute function public.notif_evenements();
+create trigger trg_notif after insert on public.parrainages for each row execute function public.notif_evenements();
+create trigger trg_notif after insert on public.cafes for each row execute function public.notif_evenements();
+
+-- Rappel avant chaque rendez-vous : rappels_rdv, section « Rappels 15 minutes avant un rendez-vous », à la fin
+
+-- Relance douce : « Ton offre est-elle toujours ouverte ? » après 3 semaines sans activité
+create or replace function public.relances_offres() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in select o.id, o.author_id, o.titre from public.offers o
+      where o.status = 'ouverte' and o.origine is distinct from 'partagee'
+        and greatest(o.created_at, coalesce(o.verifiee_at, o.created_at),
+              coalesce((select max(a.created_at) from public.applications a where a.offer_id = o.id), o.created_at),
+              coalesce((select max(c.created_at) from public.comments c where c.offer_id = o.id), o.created_at)) < now() - interval '21 days'
+        and (o.relance_at is null or o.relance_at < now() - interval '21 days') loop
+    update public.offers set relance_at = now() where id = r.id;
+    perform public.pousser(r.author_id, 'relance_offre', jsonb_build_object('titre', r.titre, 'offre', r.id));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.relances_offres() from public, anon, authenticated;
+
+create or replace function public.taches_quotidiennes() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.relances_offres();
+  perform public.attribuer_parrains();
+  perform public.appeler_notifier('resume');
+end $$;
+revoke all on function public.taches_quotidiennes() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.destinataires_resume(int) to service_role;
+    grant execute on function public.prendre_push(int) to service_role;
+    grant execute on function public.push_faits(bigint[]) to service_role;
+    grant execute on function public.push_resultats(jsonb) to service_role;
+    grant execute on function public.push_rendues(bigint[]) to service_role;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Sécurité ligne par ligne (RLS)
+-- Règle générale : tout membre connecté lit, chacun écrit ce qui lui appartient,
+-- l'admin modère tout.
+-- ---------------------------------------------------------------------
+alter table public.profiles           enable row level security;
+alter table public.offers             enable row level security;
+alter table public.comments           enable row level security;
+alter table public.reactions          enable row level security;
+alter table public.applications       enable row level security;
+alter table public.placements         enable row level security;
+alter table public.mentorships        enable row level security;
+alter table public.questions          enable row level security;
+alter table public.answers            enable row level security;
+alter table public.votes              enable row level security;
+alter table public.shortlists         enable row level security;
+alter table public.invitations        enable row level security;
+alter table public.liens_rdv          enable row level security;
+alter table public.annonces           enable row level security;
+alter table public.kudos              enable row level security;
+alter table public.attestations       enable row level security;
+alter table public.groupe_messages    enable row level security;
+alter table public.groupe_membres     enable row level security;
+alter table public.cafes              enable row level security;
+alter table public.cafe_participants  enable row level security;
+alter table public.startups           enable row level security;
+alter table public.defis              enable row level security;
+alter table public.parrainages        enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.push_queue         enable row level security;
+alter table public.app_secrets        enable row level security;
+alter table public.notif_etat         enable row level security;
+alter table public.rappels_envoyes    enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['profiles','offers','comments','reactions','applications','placements','mentorships','questions','answers','votes',
+                       'shortlists','invitations','kudos','attestations','liens_rdv','annonces',
+                       'groupe_messages','groupe_membres','cafes','cafe_participants','startups','defis','parrainages','push_subscriptions'] loop
+    execute format('drop policy if exists "lecture membres" on public.%I', t);
+    execute format('drop policy if exists "ecriture proprietaire" on public.%I', t);
+    execute format('drop policy if exists "modif proprietaire" on public.%I', t);
+    execute format('drop policy if exists "suppression proprietaire" on public.%I', t);
+  end loop;
+end $$;
+
+-- Lecture
+-- Profils : la table complète n'est lisible que par soi-même et l'administration ;
+-- les membres lisent la vue « profils » (Phase 3), qui respecte la visibilité choisie par chacun
+create policy "lecture membres" on public.profiles     for select to authenticated using (id = auth.uid() or public.is_admin());
+-- Les offres « entre lauréats » ne sont visibles que des lauréats (et de l'administration)
+create policy "lecture membres" on public.offers       for select to authenticated using (
+  audience = 'etudiants' or author_id = auth.uid() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('laureat','admin')));
+create policy "lecture membres" on public.comments     for select to authenticated using (exists (select 1 from public.offers o where o.id = comments.offer_id));
+create policy "lecture membres" on public.reactions    for select to authenticated using (true);
+create policy "lecture membres" on public.placements   for select to authenticated using (true);
+create policy "lecture membres" on public.mentorships  for select to authenticated using (true);
+create policy "lecture membres" on public.questions    for select to authenticated using (true);
+create policy "lecture membres" on public.answers      for select to authenticated using (true);
+create policy "lecture membres" on public.votes        for select to authenticated using (true);
+-- Les candidatures sont privées : l'étudiant, l'auteur de l'offre et l'admin
+create policy "lecture membres" on public.applications for select to authenticated using (
+  student_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.offers o where o.id = offer_id and o.author_id = auth.uid())
+);
+
+-- Création
+create policy "ecriture proprietaire" on public.profiles     for insert to authenticated with check (id = auth.uid());
+create policy "ecriture proprietaire" on public.offers       for insert to authenticated with check (author_id = auth.uid());
+create policy "ecriture proprietaire" on public.comments     for insert to authenticated with check (author_id = auth.uid());
+create policy "ecriture proprietaire" on public.reactions    for insert to authenticated with check (user_id = auth.uid());
+create policy "ecriture proprietaire" on public.applications for insert to authenticated with check (student_id = auth.uid());
+create policy "ecriture proprietaire" on public.placements   for insert to authenticated with check (student_id = auth.uid() or laureat_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.mentorships  for insert to authenticated with check (student_id = auth.uid());
+create policy "ecriture proprietaire" on public.questions    for insert to authenticated with check (author_id = auth.uid());
+create policy "ecriture proprietaire" on public.answers      for insert to authenticated with check (author_id = auth.uid());
+create policy "ecriture proprietaire" on public.votes        for insert to authenticated with check (user_id = auth.uid());
+
+-- Modification
+create policy "modif proprietaire" on public.profiles     for update to authenticated using (id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.offers       for update to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.comments     for update to authenticated using (author_id = auth.uid());
+create policy "modif proprietaire" on public.applications for update to authenticated using (
+  student_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.offers o where o.id = offer_id and o.author_id = auth.uid())
+);
+create policy "modif proprietaire" on public.placements   for update to authenticated using (student_id = auth.uid() or laureat_id = auth.uid() or public.is_admin());
+-- Une demande ouverte à tous peut être prise par un lauréat (le premier qui choisit un horaire l'emporte)
+create policy "modif proprietaire" on public.mentorships  for update to authenticated using (student_id = auth.uid() or mentor_id = auth.uid() or public.is_admin() or (mentor_id is null and status = 'demande'));
+create policy "modif proprietaire" on public.questions    for update to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.answers      for update to authenticated using (author_id = auth.uid());
+
+-- Suppression
+create policy "suppression proprietaire" on public.profiles     for delete to authenticated using (id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.offers       for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.comments     for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.reactions    for delete to authenticated using (user_id = auth.uid());
+create policy "suppression proprietaire" on public.applications for delete to authenticated using (student_id = auth.uid());
+create policy "suppression proprietaire" on public.placements   for delete to authenticated using (student_id = auth.uid() or (laureat_id = auth.uid() and status = 'en_attente') or public.is_admin());
+create policy "suppression proprietaire" on public.mentorships  for delete to authenticated using (student_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.questions    for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.answers      for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.votes        for delete to authenticated using (user_id = auth.uid());
+
+-- Nouvelles tables : vivier, bravos, attestations, liens de visio, annonces
+-- Shortlist : privée au lauréat
+create policy "lecture membres" on public.shortlists for select to authenticated using (laureat_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.shortlists for insert to authenticated with check (laureat_id = auth.uid());
+create policy "modif proprietaire" on public.shortlists for update to authenticated using (laureat_id = auth.uid());
+create policy "suppression proprietaire" on public.shortlists for delete to authenticated using (laureat_id = auth.uid());
+-- Invitations : le lauréat qui invite et l'étudiant invité
+create policy "lecture membres" on public.invitations for select to authenticated using (laureat_id = auth.uid() or student_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.invitations for insert to authenticated with check (laureat_id = auth.uid());
+create policy "modif proprietaire" on public.invitations for update to authenticated using (student_id = auth.uid() or laureat_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.invitations for delete to authenticated using (laureat_id = auth.uid() or public.is_admin());
+-- Liens de visio : l'étudiant et le lauréat du rendez-vous ; le lauréat peut mettre son propre lien (Meet, Teams…)
+create policy "lecture membres" on public.liens_rdv for select to authenticated using (public.is_admin()
+  or exists (select 1 from public.mentorships m where m.id = liens_rdv.id and (m.student_id = auth.uid() or m.mentor_id = auth.uid())));
+create policy "ecriture proprietaire" on public.liens_rdv for insert to authenticated with check (
+  exists (select 1 from public.mentorships m where m.id = liens_rdv.id and m.mentor_id = auth.uid()));
+create policy "modif proprietaire" on public.liens_rdv for update to authenticated using (
+  exists (select 1 from public.mentorships m where m.id = liens_rdv.id and m.mentor_id = auth.uid()));
+-- Annonces : tout le monde les lit, l'administration les écrit
+create policy "lecture membres" on public.annonces for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.annonces for insert to authenticated with check (public.is_admin());
+create policy "modif proprietaire" on public.annonces for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.annonces for delete to authenticated using (public.is_admin());
+-- Bravos
+create policy "lecture membres" on public.kudos for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.kudos for insert to authenticated with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.kudos for delete to authenticated using (user_id = auth.uid());
+-- Attestations : le lauréat ; la vérification publique passe par attestation_publique()
+create policy "lecture membres" on public.attestations for select to authenticated using (laureat_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.attestations for insert to authenticated with check (laureat_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.attestations for delete to authenticated using (laureat_id = auth.uid() or public.is_admin());
+
+-- Phase 2
+-- Groupes : tout le monde lit, chacun écrit ses messages et choisit les groupes qu'il suit
+create policy "lecture membres" on public.groupe_messages for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.groupe_messages for insert to authenticated with check (author_id = auth.uid());
+create policy "suppression proprietaire" on public.groupe_messages for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "lecture membres" on public.groupe_membres for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.groupe_membres for insert to authenticated with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.groupe_membres for delete to authenticated using (user_id = auth.uid());
+-- Cafés : l'organisateur gère son café, chacun s'inscrit et se désinscrit
+create policy "lecture membres" on public.cafes for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.cafes for insert to authenticated with check (organisateur_id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.cafes for update to authenticated using (organisateur_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.cafes for delete to authenticated using (organisateur_id = auth.uid() or public.is_admin());
+create policy "lecture membres" on public.cafe_participants for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.cafe_participants for insert to authenticated with check (user_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.cafe_participants for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+-- Startups : publiées par des lauréats
+create policy "lecture membres" on public.startups for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.startups for insert to authenticated with check (
+  fondateur_id = auth.uid() and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('laureat','admin')));
+create policy "modif proprietaire" on public.startups for update to authenticated using (fondateur_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.startups for delete to authenticated using (fondateur_id = auth.uid() or public.is_admin());
+-- Défis : lancés par l'administration
+create policy "lecture membres" on public.defis for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.defis for insert to authenticated with check (public.is_admin());
+create policy "modif proprietaire" on public.defis for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.defis for delete to authenticated using (public.is_admin());
+-- Parrainages : visibles du parrain et du filleul ; créés par la base (mon_parrain, attribuer_parrains)
+create policy "lecture membres" on public.parrainages for select to authenticated using (filleul_id = auth.uid() or parrain_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.parrainages for insert to authenticated with check (public.is_admin());
+create policy "suppression proprietaire" on public.parrainages for delete to authenticated using (public.is_admin());
+-- Abonnements aux notifications : chacun voit et retire les siens (l'ajout passe par abonner_push)
+create policy "lecture membres" on public.push_subscriptions for select to authenticated using (user_id = auth.uid());
+create policy "suppression proprietaire" on public.push_subscriptions for delete to authenticated using (user_id = auth.uid());
+-- push_queue, app_secrets, notif_etat, rappels_envoyes : aucune règle, donc inaccessibles depuis le site
+
+-- ---------------------------------------------------------------------
+-- Temps réel : la plateforme se met à jour toute seule chez tout le monde
+-- ---------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['profiles','offers','comments','reactions','applications','placements','mentorships','questions','answers','votes',
+                       'shortlists','invitations','kudos','attestations','liens_rdv','annonces',
+                       'groupe_messages','groupe_membres','cafes','cafe_participants','startups','defis','parrainages'] loop
+      if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Tâches automatiques (Supabase : extensions pg_net et pg_cron)
+--   chaque minute     : rappel 15 min avant chaque rendez-vous, notifications restées en file (taches_minute, à la fin)
+--   chaque matin      : relance douce des offres, parrains des 3A, résumé hebdomadaire par email
+-- Sans ces extensions, la plateforme marche normalement, sans ces envois.
+-- ---------------------------------------------------------------------
+do $$ begin
+  begin create extension if not exists pg_net; exception when others then raise notice 'pg_net indisponible : %', sqlerrm; end;
+  begin create extension if not exists pg_cron; exception when others then raise notice 'pg_cron indisponible : %', sqlerrm; end;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-rappels', '* * * * *', 'select public.taches_minute()');
+    perform cron.schedule('ensam-quotidien', '0 8 * * *', 'select public.taches_quotidiennes()');
+  end if;
+end $$;
+
+-- =====================================================================
+--  Phase 3 : CV en PDF et relecture, banque d'entretiens, avis de stage,
+--  guide de l'étranger, alertes d'offres, coordonnées après accord,
+--  visibilité du profil, signalements, limites anti-spam,
+--  enquête d'insertion et liste officielle des étudiants.
+-- =====================================================================
+
+-- Profils : CV déposé (chemin dans le stockage privé « cv »), visibilité choisie, alertes
+alter table public.profiles add column if not exists cv_path text;
+alter table public.profiles add column if not exists cv_maj timestamptz;
+alter table public.profiles add column if not exists visibilite jsonb not null default '{}';
+alter table public.profiles add column if not exists alertes_offres boolean not null default true;
+alter table public.profiles add column if not exists alertes_email boolean not null default true;
+alter table public.profiles add column if not exists emails_messages boolean not null default true;
+-- Lauréat qui cherche un emploi : reçoit les offres « Jeunes diplômés » et entre lauréats, visible dans la Vitrine
+alter table public.profiles add column if not exists en_recherche boolean not null default false;
+-- Photo de profil (stockage privé « photos », vue par les membres connectés)
+alter table public.profiles add column if not exists photo_path text;
+
+-- visibilite : { travail, lieu, linkedin, presentation, cv } -> tous | laureats | contacts
+create or replace function public.visibilite_valide(v jsonb) returns boolean
+language sql immutable as $$
+  select jsonb_typeof(coalesce(v, '{}')) = 'object' and not exists (
+    select 1 from jsonb_each(coalesce(v, '{}')) e
+    where e.key not in ('travail','lieu','linkedin','presentation','cv') or e.value #>> '{}' not in ('tous','laureats','contacts'));
+$$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_visibilite_check') then
+    alter table public.profiles add constraint profiles_visibilite_check check (public.visibilite_valide(visibilite));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_cv_path_check') then
+    alter table public.profiles add constraint profiles_cv_path_check check (cv_path is null or (split_part(cv_path, '/', 1) = id::text and cv_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80}\.pdf$'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_photo_path_check') then
+    alter table public.profiles add constraint profiles_photo_path_check check (photo_path is null or (split_part(photo_path, '/', 1) = id::text and photo_path ~ '^[0-9a-f-]{36}/photo-[0-9]{1,16}\.(webp|jpg|png)$'));
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Notifications sur le téléphone : chacun choisit ce qu'il reçoit, par catégorie (Mon profil > Notifications).
+-- notif_push ne garde que les choix faits par le membre ({ "offres": true, "reseau": false }) ;
+-- une catégorie absente suit le défaut de son rôle (push_defaut). Mêmes règles que logic.js (PUSH_KINDS, pushDefaut).
+-- Un seul filtre pour toutes les notifications : le trigger trg_push_filtre sur push_queue.
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists notif_push jsonb not null default '{}'::jsonb;
+create or replace function public.notif_push_valide(v jsonb) returns boolean
+language sql immutable as $$
+  select jsonb_typeof(coalesce(v, '{}')) = 'object' and not exists (
+    select 1 from jsonb_each(coalesce(v, '{}')) e
+    where e.key not in ('messages','match','demandes','candidatures','mentorat','offres','reseau','rappels') or jsonb_typeof(e.value) <> 'boolean');
+$$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_notif_push_check') then
+    alter table public.profiles add constraint profiles_notif_push_check check (public.notif_push_valide(notif_push));
+  end if;
+end $$;
+
+-- Catégorie de chaque type de notification (un type inconnu : vie du réseau)
+create or replace function public.push_categorie(p_kind text) returns text
+language sql immutable as $$
+  select case
+    -- Un entretien proposé dans une discussion (message 'rdv'), sa réponse et son rappel sont des messages : couper
+    -- « Match » ne fait jamais rater un entretien
+    when p_kind in ('message','rdv_message','rdv_reponse','rappel_entretien') then 'messages'
+    -- La veille d'un entretien proposé dans une discussion (section « Nouvelles notifications », en fin de fichier)
+    when p_kind = 'entretien_demain' then 'messages'
+    -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
+    when p_kind in ('match','match_interet','match_jour') then 'match'
+    -- Un intérêt qui attend une réponse depuis la veille
+    when p_kind = 'match_attente' then 'match'
+    when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
+    -- Une demande du parcours toujours sans aide ; sa propre demande mise en pause après 60 jours
+    when p_kind in ('demande_attente','demande_pause') then 'demandes'
+    when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
+    when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
+                    'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
+    -- Le rendez-vous de demain, l'échange qui vient d'avoir lieu, la présence confirmée par l'étudiant
+    when p_kind in ('rdv_demain','apres_rdv','mentorat_presence') then 'mentorat'
+    when p_kind = 'offre_alerte' then 'offres'
+    -- Une offre mise de côté qui ferme bientôt
+    when p_kind = 'offre_bientot' then 'offres'
+    when p_kind = 'rappel_visite' then 'rappels'
+    -- Le résumé du dimanche
+    when p_kind = 'semaine' then 'rappels'
+    when p_kind = 'signalement' then 'admin'
+    -- Vie du réseau, dites ici pour qu'on les retrouve : l'agenda de demain, une réponse utile, un bravo, les groupes du jour
+    when p_kind in ('agenda_demain','reponse_utile','bravo','groupe_jour') then 'reseau'
+    else 'reseau' end;
+$$;
+
+-- Défaut d'une catégorie selon le profil : tout est activé pour tout le monde (Match compris), nouvelles offres comprises (un lauréat
+-- reçoit celles de sa filière, qu'il cherche un emploi ou non : alerte_offre). Seule exception, un choix déjà fait :
+-- l'ancienne case « M'alerter » décochée (alertes_offres = false) garde les offres coupées. Admin : signalements toujours.
+create or replace function public.push_defaut(p_cat text, p public.profiles) returns boolean
+language sql immutable as $$
+  select case p_cat
+    when 'admin' then p.role = 'admin'
+    when 'offres' then coalesce(p.alertes_offres, true)
+    else true end;
+$$;
+
+-- Ce membre veut-il ce type de notification ? Son choix s'il en a fait un, sinon le défaut de son rôle.
+-- En plpgsql : appelée dans un bloc « exception » (push_filtre, pousser), une fonction en sql serait
+-- réanalysée à chaque ligne, et publier une offre pour beaucoup d'abonnés deviendrait lent.
+create or replace function public.push_voulu(p_user uuid, p_kind text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare c text := public.push_categorie(p_kind); p public.profiles;
+begin
+  if c = 'admin' then return true; end if;
+  select * into p from public.profiles where id = p_user;
+  if not found then return true; end if;
+  if jsonb_typeof(p.notif_push -> c) = 'boolean' then return (p.notif_push ->> c)::boolean; end if;
+  return coalesce(public.push_defaut(c, p), true);
+end $$;
+revoke all on function public.push_voulu(uuid, text) from public, anon, authenticated;
+
+-- Filtre central : couvre pousser() et les envois groupés (offres, demandes, agenda…). Dans le doute, la notification part.
+-- Une notification retirée parce que le membre a coupé sa catégorie est notée au journal (-2).
+create or replace function public.push_filtre() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.push_voulu(new.user_id, new.kind) is false then
+    perform public.noter_push(new.user_id, new.kind, -2);
+    return null;
+  end if;
+  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements,
+  -- et ce qu'elle fait notifie le membre concerné, quelle que soit son école). Les envois à plusieurs filtrent
+  -- eux-mêmes l'école avant leur plafond (limit), sinon d'autres écoles prendraient les places.
+  if auth.uid() is not null and not public.is_admin() and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
+      and d.ecole is distinct from (select e.ecole from public.profiles e where e.id = auth.uid())) then return null; end if;
+  return new;
+exception when others then raise warning 'push_filtre : %', sqlerrm; return new;  -- dans le doute, la notification part
+end $$;
+drop trigger if exists trg_push_filtre on public.push_queue;
+create trigger trg_push_filtre before insert on public.push_queue
+  for each row execute function public.push_filtre();
+
+-- ---------------------------------------------------------------------
+-- Nouvelles notifications (1/2) : l'heure, la nuit calme et le budget du jour (suite en fin de fichier)
+--   · Heures UTC = heure du Maroc (depuis le 20/09/2026) ; les tâches pg_cron sont en UTC.
+--   · horloge() : l'heure qui décide du calendrier (heure du jour, date du jour, lundi). En ligne, c'est now() ; le banc
+--     d'essai la fixe (réglage ensam.horloge) pour que les tests ne dépendent pas de l'heure où ils tournent. Les durées
+--     écoulées (20 h, 7 jours…) se mesurent toujours avec now(), comme les dates des lignes.
+--   · Nuit calme, de 21:30 à 08:00 : rien de programmé, et un envoi à beaucoup publié le soir attend 08:00 (push_nuit).
+--     Les notifications entre personnes (message, match, candidature, réponse, bravo…) partent toujours tout de suite.
+--   · Budget : au plus 3 notifications programmées par membre et par jour (jour UTC). Les DURES (un engagement, une
+--     personne qui attend) partent toujours mais comptent ; les DOUCES partent s'il reste de la place, jamais la nuit.
+-- ---------------------------------------------------------------------
+create or replace function public.horloge() returns timestamptz
+language sql stable as $$
+  select coalesce(nullif(current_setting('ensam.horloge', true), '')::timestamptz, now());
+$$;
+revoke all on function public.horloge() from public, anon, authenticated;
+
+create or replace function public.heure_calme(p_at timestamptz default null) returns boolean
+language sql stable as $$
+  select (coalesce(p_at, public.horloge()) at time zone 'UTC')::time >= time '21:30'
+      or (coalesce(p_at, public.horloge()) at time zone 'UTC')::time < time '08:00';
+$$;
+revoke all on function public.heure_calme(timestamptz) from public, anon, authenticated;
+
+-- Ce qui a été programmé pour chaque membre (une ligne par notification programmée). Lu par le serveur seulement ;
+-- purgé après 8 jours (matin_push).
+create table if not exists public.notif_programme (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  at timestamptz not null default now()
+);
+create index if not exists notif_programme_user_at on public.notif_programme (user_id, at);
+alter table public.notif_programme enable row level security;
+
+-- DURES : un engagement (rendez-vous, entretien, événement de demain, échange qui vient d'avoir lieu) ou une personne
+-- qui attend (match_attente). Tout le reste, un type inconnu compris : DOUCE.
+create or replace function public.programme_classe(p_kind text) returns text
+language sql immutable as $$
+  select case when p_kind in ('rdv_demain','entretien_demain','agenda_demain','apres_rdv','match_attente') then 'dure' else 'douce' end;
+$$;
+revoke all on function public.programme_classe(text) from public, anon, authenticated;
+
+-- Vrai (et noté) si ce membre peut recevoir maintenant cette notification programmée ; faux sinon, et toujours faux pour
+-- l'administration, y compris quand elle regarde l'application en lauréat (admin_ok). Un seul verrou pour toutes les tâches, gardé jusqu'à la fin de la transaction : deux tâches
+-- simultanées ne dépassent pas le budget. Pas un verrou par membre : une tâche qui passe sur des milliers de membres en
+-- garderait des milliers (table des verrous pleine pour toute la base) et deux tâches pourraient s'interbloquer.
+-- Elle écrit : à n'appeler que sur les lignes déjà retenues par les autres conditions (CTE matérialisée), jamais dans un
+-- filtre qui en écarte.
+create or replace function public.programme_place(p_user uuid, p_kind text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+begin
+  if p_user is null or p_kind is null then return false; end if;
+  if not exists (select 1 from public.profiles p where p.id = p_user and p.role in ('etudiant','laureat')
+                   and not coalesce(p.admin_ok, false)) then return false; end if;
+  perform pg_advisory_xact_lock(hashtext('ensam:programme_place'));
+  if public.programme_classe(p_kind) = 'douce' then
+    if public.heure_calme() then return false; end if;
+    if (select count(*) from public.notif_programme n
+        where n.user_id = p_user and n.at >= v_debut and n.at < v_debut + interval '1 day') >= 3 then
+      return false;
+    end if;
+  end if;
+  insert into public.notif_programme (user_id, kind, at) values (p_user, p_kind, public.horloge());
+  return true;
+end $$;
+revoke all on function public.programme_place(uuid, text) from public, anon, authenticated;
+
+-- Envois à beaucoup publiés la nuit : rangés ici au lieu de la file, remis dans la file à 08:00 (liberer_nuit)
+create table if not exists public.push_nuit (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  data jsonb not null default '{}',
+  created_at timestamptz default now()
+);
+alter table public.push_nuit enable row level security;
+
+-- Après trg_push_filtre (ordre alphabétique des noms) : ne reste que ce que le membre veut. Une relecture demandée à un
+-- relecteur choisi est entre deux personnes : elle part tout de suite. Le jour, rien ne change ; dans le doute, elle part.
+create or replace function public.push_nuit_filtre() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.heure_calme() then return new; end if;
+  begin
+    if new.kind = 'relecture_demande' and coalesce(new.data ->> 'r', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+      if exists (select 1 from public.relectures_cv r where r.id = (new.data ->> 'r')::uuid and r.reviewer_id = new.user_id) then
+        return new;
+      end if;
+    end if;
+    insert into public.push_nuit (user_id, kind, data) values (new.user_id, new.kind, new.data);
+    return null;
+  exception when others then return new;
+  end;
+end $$;
+revoke all on function public.push_nuit_filtre() from public, anon, authenticated;
+drop trigger if exists trg_push_nuit on public.push_queue;
+create trigger trg_push_nuit before insert on public.push_queue
+  for each row when (new.kind in ('offre_alerte','annonce','evenement','evenement_annule','evenement_deplace','cafe','promo_nouveau',
+    'mentorat_ouvert','question_routee','demande_nouvelle','demande_large','relecture_demande','verifier_pair','enquete'))
+  execute function public.push_nuit_filtre();
+
+-- À 08:00 (matin_push) : les envois de la nuit reprennent la file, dans leur ordre, et repassent par le filtre des
+-- catégories. Ce qui n'est plus vrai le matin ne part pas : offre fermée, demande fermée ou prise, événement ou café
+-- annulé ou déjà commencé, mentorat ou relecture déjà pris, camarade déjà vérifié, question ou annonce retirée. Plus d'un
+-- jour : abandonné. Un événement ou un café corrigé dans la nuit part avec son heure et son lieu du matin (relus ici).
+create or replace function public.liberer_nuit() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  if public.heure_calme() then return 0; end if;
+  delete from public.push_nuit where created_at < now() - interval '1 day';
+  with partis as (delete from public.push_nuit returning *)
+  insert into public.push_queue (user_id, kind, data)
+  select x.user_id, x.kind, case
+      when x.kind in ('evenement', 'evenement_deplace') then coalesce((select x.data || jsonb_build_object('titre', e.titre, 'debut', e.debut, 'lieu', e.lieu)
+        from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data)
+      when x.kind = 'cafe' then coalesce((select x.data || jsonb_build_object('date_at', c.date_at, 'lieu', c.lieu, 'ville', c.ville)
+        from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data)
+      else x.data end
+  from partis x
+  where case x.kind
+      when 'offre_alerte' then coalesce((select o.status = 'ouverte' from public.offers o where o.id = (x.data ->> 'offre')::uuid), x.data ->> 'offre' is null)
+      when 'demande_nouvelle' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
+      when 'demande_large' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
+      when 'evenement' then coalesce((select not e.annule and e.debut > public.horloge() from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'evenement_deplace' then coalesce((select not e.annule and e.debut > public.horloge() from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'cafe' then coalesce((select not c.annule and c.date_at > public.horloge() from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'mentorat_ouvert' then coalesce((select m.status = 'demande' and m.mentor_id is null from public.mentorships m where m.id = (x.data ->> 'm')::uuid), x.data ->> 'm' is null)
+      when 'relecture_demande' then coalesce((select r.status = 'demandee' from public.relectures_cv r where r.id = (x.data ->> 'r')::uuid), x.data ->> 'r' is null)
+      when 'verifier_pair' then coalesce((select not l.verified from public.profiles l where l.id = (x.data ->> 'de')::uuid), x.data ->> 'de' is null)
+      when 'question_routee' then coalesce((select true from public.questions q where q.id = (x.data ->> 'q')::uuid), x.data ->> 'q' is null)
+      when 'annonce' then coalesce((select coalesce(a.active, true) from public.annonces a where a.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      else true end
+  order by x.id;
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke all on function public.liberer_nuit() from public, anon, authenticated;
+
+-- Niveau d'un membre (même calcul que le site : 3, 4, 5 ; 6 = jeune diplômé ; 7 = plus ancien)
+create or replace function public.niveau_de(p_promo int, p_saison int) returns int
+language sql immutable as $$
+  select case when p_promo is null then 7
+    when p_saison + 6 - p_promo <= 0 then 1
+    when p_saison + 6 - p_promo <= 5 then p_saison + 6 - p_promo
+    when p_promo = p_saison then 6 else 7 end;
+$$;
+
+-- Nom comparable : « EL AMRANI Salma » et « Salma El-Amrani » donnent « amrani el salma »
+create or replace function public.cle_nom(t text) returns text
+language sql immutable as $$
+  select nullif(array_to_string(array(
+    select x from unnest(regexp_split_to_array(regexp_replace(lower(translate(coalesce(t, ''),
+      'ÀÂÄÁÃÉÈÊËÍÎÏÌÓÔÖÒÕÚÛÜÙÇÑàâäáãéèêëíîïìóôöòõúûüùçñ', 'AAAAAEEEEIIIIOOOOOUUUUCNaaaaaeeeeiiiiooooouuuucn')), '[^a-z]+', ' ', 'g'), ' ')) x
+    where x <> '' order by x), ' '), '');
+$$;
+
+-- ---------------------------------------------------------------------
+-- Coordonnées personnelles : visibles seulement après accord
+--   par soi-même, l'administration, et les personnes « en relation » :
+--   une demande de contact acceptée (dans un sens ou dans l'autre),
+--   ou l'auteur d'une offre à laquelle l'étudiant a postulé.
+-- ---------------------------------------------------------------------
+create table if not exists public.coordonnees (
+  id uuid primary key references public.profiles(id) on delete cascade,
+  telephone text check (char_length(telephone) <= 30),
+  email text check (char_length(email) <= 120),
+  contact text check (char_length(contact) <= 200),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.demandes_contact (
+  id uuid primary key default gen_random_uuid(),
+  demandeur_id uuid not null references public.profiles(id) on delete cascade,
+  cible_id uuid not null references public.profiles(id) on delete cascade,
+  message text check (char_length(message) <= 300),
+  status text not null default 'envoyee' check (status in ('envoyee','acceptee','refusee')),
+  created_at timestamptz default now(),
+  repondu_at timestamptz,
+  unique (demandeur_id, cible_id),
+  check (demandeur_id <> cible_id)
+);
+
+create or replace function public.en_relation(p_viewer uuid, p_owner uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select p_viewer is not null and p_owner is not null and (
+    exists (select 1 from public.demandes_contact d where d.status = 'acceptee'
+      and ((d.demandeur_id = p_viewer and d.cible_id = p_owner) or (d.demandeur_id = p_owner and d.cible_id = p_viewer)))
+    or exists (select 1 from public.applications a join public.offers o on o.id = a.offer_id
+      where a.student_id = p_owner and o.author_id = p_viewer)
+    or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id
+      where x.status = 'acceptee' and ((d.auteur_id = p_owner and x.laureat_id = p_viewer) or (d.auteur_id = p_viewer and x.laureat_id = p_owner))));
+$$;
+
+create or replace function public.protect_demande_contact() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_status text;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    new.demandeur_id := auth.uid(); new.status := 'envoyee'; new.repondu_at := null; new.created_at := now();
+    if new.cible_id = auth.uid() then raise exception 'Choisis un autre membre que toi.'; end if;
+    return new;
+  end if;
+  v_status := new.status;
+  new := old;
+  -- Seule la personne contactée répond ; elle peut aussi retirer plus tard son accord
+  if auth.uid() = old.cible_id and v_status in ('acceptee','refusee') and v_status <> old.status then
+    new.status := v_status; new.repondu_at := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_demande_contact on public.demandes_contact;
+create trigger trg_protect_demande_contact before insert or update on public.demandes_contact
+  for each row execute function public.protect_demande_contact();
+
+-- Le champ « contact » du profil (lisible par tous) part dans les coordonnées privées,
+-- y compris quand une ancienne version du site l'envoie encore.
+insert into public.coordonnees (id, contact)
+  select id, left(trim(contact), 200) from public.profiles where coalesce(trim(contact), '') <> ''
+  on conflict (id) do nothing;
+update public.profiles set contact = null where contact is not null;
+
+create or replace function public.contact_vers_coordonnees() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(trim(new.contact), '') <> '' then
+    insert into public.coordonnees (id, contact) values (new.id, left(trim(new.contact), 200))
+      on conflict (id) do update set contact = excluded.contact, updated_at = now();
+  end if;
+  if new.contact is not null then update public.profiles set contact = null where id = new.id; end if;
+  return null;
+end $$;
+drop trigger if exists trg_contact_vers_coordonnees on public.profiles;
+create trigger trg_contact_vers_coordonnees after insert or update of contact on public.profiles
+  for each row when (new.contact is not null) execute function public.contact_vers_coordonnees();
+
+create or replace function public.coordonnees_maj() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  if tg_op = 'UPDATE' then new.created_at := old.created_at; end if;
+  return new;
+end $$;
+drop trigger if exists trg_coordonnees_maj on public.coordonnees;
+create trigger trg_coordonnees_maj before insert or update on public.coordonnees
+  for each row execute function public.coordonnees_maj();
+
+-- Page Match (section « Match », en fin de fichier) : un étudiant choisit d'apparaître ou non dans les cartes des lauréats.
+-- Ajoutée ici parce que la vue « profils », juste en dessous, l'expose.
+alter table public.profiles add column if not exists match_visible boolean not null default true;
+
+-- ---------------------------------------------------------------------
+-- Visibilité du profil : chaque membre choisit qui voit son travail, sa ville,
+-- son LinkedIn, sa présentation et son CV. Le nom, le rôle, la filière, la promo
+-- et le pays restent visibles des membres (le réseau en a besoin pour fonctionner).
+-- La table profiles n'est plus lisible directement que par soi-même et l'administration :
+-- les autres passent par la vue « profils », qui masque ce qui doit l'être.
+-- ---------------------------------------------------------------------
+create or replace function public.voit_champ(p_owner uuid, p_vis jsonb, p_champ text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare a text := coalesce(p_vis ->> p_champ, case p_champ when 'cv' then 'laureats' else 'tous' end);
+begin
+  if auth.uid() is null then return false; end if;
+  if p_owner = auth.uid() or a = 'tous' then return true; end if;
+  if public.is_admin() then return true; end if;
+  if a = 'laureats' and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
+  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
+  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
+     and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
+  -- CV de l'étudiant : le lauréat qui a un match avec lui le lit (page Match, section « Match » en fin de fichier ;
+  -- peut_voir_cv, pour le stockage « cv », passe aussi par ici)
+  if p_champ = 'cv' and exists (select 1 from public.matchs m where m.etudiant_id = p_owner and m.laureat_id = auth.uid()) then return true; end if;
+  return public.en_relation(auth.uid(), p_owner);
+end $$;
+
+-- =====================================================================
+--  Écoles : chaque école a son réseau, dans la même base (première partie, la seconde est à la fin du fichier).
+--  ecoles.ouverte : false tant que l'administration ne l'a pas ouverte ; personne ne peut y entrer de lui-même.
+--  ENSAM Meknès est l'école de tous les membres et de toutes les données d'avant.
+-- =====================================================================
+create table if not exists public.ecoles (
+  slug text primary key check (slug ~ '^[a-z0-9-]{2,40}$'),
+  nom text not null check (char_length(nom) between 2 and 120),
+  ouverte boolean not null default false,
+  created_at timestamptz not null default now()
+);
+insert into public.ecoles (slug, nom, ouverte) values ('ensam-meknes', 'ENSAM Meknès', true) on conflict (slug) do nothing;
+alter table public.ecoles enable row level security;
+
+alter table public.profiles add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+create index if not exists profiles_ecole on public.profiles (ecole);
+
+create or replace function public.mon_ecole() returns text
+language sql stable security definer set search_path = public as $$
+  select ecole from public.profiles where id = auth.uid();
+$$;
+revoke all on function public.mon_ecole() from public, anon;
+grant execute on function public.mon_ecole() to authenticated, service_role;
+
+-- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau
+drop policy if exists "lecture" on public.ecoles;
+create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+drop policy if exists "administration" on public.ecoles;
+create policy "administration" on public.ecoles for all to authenticated using (public.super_admin()) with check (public.super_admin());
+
+-- L'école d'un membre ne se choisit qu'à l'inscription, parmi les écoles ouvertes ; ensuite seule l'administration la change
+create or replace function public.protect_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or public.super_admin() then return new; end if;
+  if tg_op = 'UPDATE' then
+    if new.ecole is distinct from old.ecole then raise exception 'L’école d’un compte ne se change pas.' using errcode = '42501'; end if;
+  elsif not exists (select 1 from public.ecoles e where e.slug = new.ecole and e.ouverte) then
+    raise exception 'Le réseau de cette école n’est pas encore ouvert.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_ecole on public.profiles;
+create trigger trg_protect_ecole before insert or update of ecole on public.profiles
+  for each row execute function public.protect_ecole();
+
+-- Une photo est rangée dans le dossier de son propriétaire (son id)
+create or replace function public.photo_de_mon_ecole(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  if public.super_admin() then return true; end if;
+  begin v := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
+  return (select ecole from public.profiles where id = v) is not distinct from public.mon_ecole();
+end $$;
+revoke all on function public.photo_de_mon_ecole(text) from public, anon;
+grant execute on function public.photo_de_mon_ecole(text) to authenticated;
+
+create or replace view public.profils with (security_barrier = true) as
+select p.id, p.full_name, p.role, p.filiere, p.promo,
+  case when public.voit_champ(p.id, p.visibilite, 'travail') then p.entreprise end as entreprise,
+  case when public.voit_champ(p.id, p.visibilite, 'travail') then p.poste end as poste,
+  case when public.voit_champ(p.id, p.visibilite, 'lieu') then p.ville end as ville,
+  p.pays,
+  case when public.voit_champ(p.id, p.visibilite, 'presentation') then p.bio end as bio,
+  case when public.voit_champ(p.id, p.visibilite, 'presentation') then p.competences else '{}'::text[] end as competences,
+  case when public.voit_champ(p.id, p.visibilite, 'linkedin') then p.linkedin end as linkedin,
+  null::text as contact,
+  case when public.voit_champ(p.id, p.visibilite, 'cv') then p.cv_url end as cv_url,
+  case when public.voit_champ(p.id, p.visibilite, 'presentation') then p.disponibilite end as disponibilite,
+  p.mentor_dispo, p.mentor_sujets, p.vitrine, p.verified, p.created_at,
+  case when public.voit_champ(p.id, p.visibilite, 'travail') then p.secteur end as secteur,
+  case when p.id = auth.uid() then p.consent_at end as consent_at,
+  case when p.id = auth.uid() then p.emails_hebdo end as emails_hebdo,
+  p.langue, p.parrain_dispo,
+  case when public.voit_champ(p.id, p.visibilite, 'cv') then p.cv_path end as cv_path,
+  case when public.voit_champ(p.id, p.visibilite, 'cv') then p.cv_maj end as cv_maj,
+  case when p.id = auth.uid() then p.visibilite else '{}'::jsonb end as visibilite,
+  case when p.id = auth.uid() then p.alertes_offres end as alertes_offres,
+  case when p.id = auth.uid() then p.alertes_email end as alertes_email,
+  case when p.id = auth.uid() then p.emails_messages end as emails_messages,
+  p.en_recherche, p.photo_path,
+  case when p.id = auth.uid() then p.notif_push end as notif_push,
+  p.match_visible, p.admin_ok, p.ecole
+from public.profiles p
+where auth.uid() is not null and (p.ecole = (select public.mon_ecole()) or (select public.super_admin()));
+revoke all on public.profils from public, anon;
+grant select on public.profils to authenticated;
+
+-- Une ligne par table dont la vue publique change : le site s'abonne à cette petite table
+-- (le temps réel ne passe pas par les vues) et recharge la vue concernée.
+create table if not exists public.maj_tables (
+  cle text primary key check (char_length(cle) <= 40),
+  maj timestamptz not null default now()
+);
+create or replace function public.signaler_maj() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.maj_tables (cle, maj) values (tg_argv[0], now()) on conflict (cle) do update set maj = now();
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_maj_tables on public.profiles;
+create trigger trg_maj_tables after insert or update or delete on public.profiles
+  for each statement execute function public.signaler_maj('profiles');
+
+-- ---------------------------------------------------------------------
+-- Relecture de CV par un lauréat (à un lauréat précis ou à tous), avec des commentaires
+-- ---------------------------------------------------------------------
+create table if not exists public.relectures_cv (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  reviewer_id uuid references public.profiles(id) on delete set null,
+  cv_path text not null check (char_length(cv_path) <= 200),
+  message text check (char_length(message) <= 600),
+  status text not null default 'demandee' check (status in ('demandee','en_cours','rendue','annulee')),
+  synthese text check (char_length(synthese) <= 2000),
+  merci text check (char_length(merci) <= 800),
+  note int check (note between 1 and 5),
+  created_at timestamptz default now(),
+  pris_at timestamptz,
+  rendue_at timestamptz
+);
+create index if not exists relectures_cv_ouvertes on public.relectures_cv (created_at) where reviewer_id is null and status = 'demandee';
+
+create table if not exists public.relecture_commentaires (
+  id uuid primary key default gen_random_uuid(),
+  relecture_id uuid not null references public.relectures_cv(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  section text not null default 'general' check (section in ('general','profil','formation','experience','projets','competences','langues','mise_en_page')),
+  body text not null check (char_length(body) between 1 and 1500),
+  created_at timestamptz default now()
+);
+create index if not exists relecture_commentaires_relecture on public.relecture_commentaires (relecture_id);
+
+create or replace function public.protect_relecture() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.relectures_cv%rowtype; v_role text;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  select role into v_role from public.profiles where id = auth.uid();
+  if tg_op = 'INSERT' then
+    new.student_id := auth.uid();
+    select cv_path into new.cv_path from public.profiles where id = auth.uid();
+    if new.cv_path is null then raise exception 'Dépose d’abord ton CV en PDF dans ton profil.'; end if;
+    if new.reviewer_id = auth.uid() then raise exception 'Choisis un autre lauréat que toi.'; end if;
+    if new.reviewer_id is not null and not exists (select 1 from public.profiles where id = new.reviewer_id and role = 'laureat') then
+      raise exception 'Choisis un lauréat.';
+    end if;
+    if (select count(*) from public.relectures_cv where student_id = auth.uid() and status in ('demandee','en_cours')) >= 2 then
+      raise exception 'Tu as déjà 2 relectures en cours. Attends un retour avant d’en demander une autre.';
+    end if;
+    new.status := 'demandee'; new.synthese := null; new.merci := null; new.note := null;
+    new.pris_at := null; new.rendue_at := null; new.created_at := now();
+    return new;
+  end if;
+  v := new;
+  new := old;
+  -- Un lauréat prend une demande ouverte à tous
+  if old.reviewer_id is null and old.status = 'demandee' and v.reviewer_id = auth.uid() and auth.uid() <> old.student_id then
+    if v_role is distinct from 'laureat' then raise exception 'Seul un lauréat peut relire un CV.'; end if;
+    new.reviewer_id := auth.uid();
+  end if;
+  if new.reviewer_id = auth.uid() and auth.uid() <> old.student_id then
+    if old.status in ('demandee','en_cours') then
+      new.synthese := v.synthese;
+      if v.reviewer_id is null then
+        new.reviewer_id := null; new.status := 'demandee'; new.pris_at := null;   -- passer la main : la demande redevient ouverte à tous
+      elsif v.status = 'rendue' then
+        if coalesce(trim(v.synthese), '') = '' and not exists (select 1 from public.relecture_commentaires c where c.relecture_id = old.id and c.author_id = auth.uid()) then
+          raise exception 'Ajoute au moins un commentaire avant de rendre la relecture.';
+        end if;
+        new.status := 'rendue'; new.rendue_at := now(); new.pris_at := coalesce(old.pris_at, now());
+      elsif old.status = 'demandee' then
+        new.status := 'en_cours'; new.pris_at := now();
+      end if;
+    end if;
+    return new;
+  end if;
+  if auth.uid() = old.student_id then
+    if old.status in ('demandee','en_cours') and v.status = 'annulee' then new.status := 'annulee'; end if;
+    if old.status = 'demandee' then new.message := v.message; end if;
+    if old.status = 'rendue' then new.merci := v.merci; new.note := v.note; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_relecture on public.relectures_cv;
+create trigger trg_protect_relecture before insert or update on public.relectures_cv
+  for each row execute function public.protect_relecture();
+
+create or replace function public.protect_relecture_commentaire() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare r public.relectures_cv%rowtype;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  select * into r from public.relectures_cv where id = new.relecture_id;
+  new.author_id := auth.uid(); new.created_at := now();
+  if r.id is null or r.status = 'annulee' then raise exception 'Cette relecture n’est plus ouverte.'; end if;
+  if auth.uid() = r.reviewer_id and r.status in ('demandee','en_cours','rendue') then return new; end if;
+  if auth.uid() = r.student_id and r.reviewer_id is not null then new.section := 'general'; return new; end if;
+  raise exception 'Seuls l’étudiant et le lauréat qui relit peuvent commenter.';
+end $$;
+drop trigger if exists trg_protect_relecture_commentaire on public.relecture_commentaires;
+create trigger trg_protect_relecture_commentaire before insert on public.relecture_commentaires
+  for each row execute function public.protect_relecture_commentaire();
+
+-- Lecture d'un CV déposé : soi-même, l'administration, le lauréat qui le relit (ou tout lauréat
+-- pour une demande ouverte à tous), sinon selon la visibilité choisie pour « CV »
+create or replace function public.peut_voir_cv(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v_owner uuid; v_vis jsonb;
+begin
+  if auth.uid() is null then return false; end if;
+  begin v_owner := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
+  if v_owner = auth.uid() or public.is_admin() then return true; end if;
+  if (select ecole from public.profiles where id = v_owner) is distinct from public.mon_ecole() then return false; end if;
+  if exists (select 1 from public.relectures_cv r where r.cv_path = p_name and r.status <> 'annulee'
+      and (r.reviewer_id = auth.uid() or (r.reviewer_id is null and r.status = 'demandee'
+        and exists (select 1 from public.profiles l where l.id = auth.uid() and l.role = 'laureat')))) then
+    return true;
+  end if;
+  select visibilite into v_vis from public.profiles where id = v_owner and cv_path = p_name;
+  if not found then return false; end if;
+  return public.voit_champ(v_owner, v_vis, 'cv');
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Banque d'entretiens : les questions posées, par entreprise, partagées après l'entretien
+-- Avis de stage : note et conseils pour les promos suivantes
+-- (anonymes si l'auteur le souhaite : la vue publique masque alors l'auteur)
+-- ---------------------------------------------------------------------
+create table if not exists public.entretiens (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  entreprise text not null check (char_length(entreprise) between 2 and 80),
+  poste text check (char_length(poste) <= 100),
+  type text not null default 'stage' check (type in ('stage','pfe','etranger','emploi')),
+  saison int check (saison between 2000 and 2100),
+  format text check (format in ('presentiel','visio','telephone','test_ecrit','autre')),
+  questions text[] not null default '{}' check (cardinality(questions) between 1 and 20 and char_length(array_to_string(questions, '')) <= 4000),
+  deroulement text check (char_length(deroulement) <= 2000),
+  conseils text check (char_length(conseils) <= 1500),
+  difficulte int check (difficulte between 1 and 5),
+  resultat text check (resultat in ('retenu','refuse','attente','inconnu')),
+  anonyme boolean not null default false,
+  offer_id uuid references public.offers(id) on delete set null,
+  created_at timestamptz default now()
+);
+create index if not exists entretiens_entreprise on public.entretiens (public.cle_entreprise(entreprise));
+
+create table if not exists public.avis_stage (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  entreprise text not null check (char_length(entreprise) between 2 and 80),
+  ville text check (char_length(ville) <= 60),
+  pays text default 'Maroc' check (char_length(pays) <= 60),
+  type text not null default 'stage' check (type in ('stage','pfe','etranger','emploi')),
+  saison int not null check (saison between 2000 and 2100),
+  poste text check (char_length(poste) <= 100),
+  note int not null check (note between 1 and 5),
+  note_encadrement int check (note_encadrement between 1 and 5),
+  note_apprentissage int check (note_apprentissage between 1 and 5),
+  note_ambiance int check (note_ambiance between 1 and 5),
+  gratification text check (gratification in ('non','symbolique','correcte','bonne')),
+  conseils text check (char_length(conseils) <= 1500),
+  recommande boolean,
+  anonyme boolean not null default true,
+  placement_id uuid references public.placements(id) on delete set null,
+  verifie boolean not null default false,
+  created_at timestamptz default now()
+);
+create unique index if not exists avis_stage_un_par_saison on public.avis_stage (author_id, coalesce(public.cle_entreprise(entreprise), lower(entreprise)), saison);
+
+create or replace function public.protect_entretien() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.entretiens%rowtype;
+begin
+  new.questions := array(select left(trim(x), 300) from unnest(coalesce(new.questions, '{}')) x where trim(x) <> '' limit 20);
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    new.author_id := auth.uid(); new.created_at := now();
+    if new.offer_id is not null and not exists (select 1 from public.applications a where a.offer_id = new.offer_id and a.student_id = auth.uid()) then
+      new.offer_id := null;
+    end if;
+    return new;
+  end if;
+  v := new; new := old;
+  new.poste := v.poste; new.format := v.format; new.questions := v.questions; new.deroulement := v.deroulement;
+  new.conseils := v.conseils; new.difficulte := v.difficulte; new.resultat := v.resultat; new.anonyme := v.anonyme;
+  return new;
+end $$;
+drop trigger if exists trg_protect_entretien on public.entretiens;
+create trigger trg_protect_entretien before insert or update on public.entretiens
+  for each row execute function public.protect_entretien();
+
+-- Un avis est « vérifié » quand il correspond à une réussite confirmée par l'étudiant et le lauréat
+create or replace function public.protect_avis() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.avis_stage%rowtype;
+begin
+  if auth.uid() is not null and not public.is_admin() then
+    if tg_op = 'INSERT' then
+      new.author_id := auth.uid(); new.created_at := now();
+    else
+      v := new; new := old;
+      new.ville := v.ville; new.pays := v.pays; new.poste := v.poste; new.note := v.note;
+      new.note_encadrement := v.note_encadrement; new.note_apprentissage := v.note_apprentissage; new.note_ambiance := v.note_ambiance;
+      new.gratification := v.gratification; new.conseils := v.conseils; new.recommande := v.recommande; new.anonyme := v.anonyme;
+    end if;
+  end if;
+  if new.placement_id is not null and not exists (select 1 from public.placements p where p.id = new.placement_id and p.student_id = new.author_id) then
+    new.placement_id := null;
+  end if;
+  if new.placement_id is null then
+    select p.id into new.placement_id from public.placements p
+      where p.student_id = new.author_id and p.saison = new.saison and p.status <> 'refuse' and public.meme_entreprise(p.entreprise, new.entreprise)
+      order by (p.status = 'confirme') desc limit 1;
+  end if;
+  new.verifie := exists (select 1 from public.placements p where p.id = new.placement_id and p.status = 'confirme');
+  return new;
+end $$;
+drop trigger if exists trg_protect_avis on public.avis_stage;
+create trigger trg_protect_avis before insert or update on public.avis_stage
+  for each row execute function public.protect_avis();
+
+alter table public.entretiens add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+alter table public.avis_stage add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create or replace view public.entretiens_publics with (security_barrier = true) as
+select e.id,
+  case when e.anonyme and e.author_id is distinct from auth.uid() and not public.is_admin() then null else e.author_id end as author_id,
+  e.entreprise, e.poste, e.type, e.saison, e.format, e.questions, e.deroulement, e.conseils, e.difficulte, e.resultat, e.anonyme,
+  case when e.anonyme and e.author_id is distinct from auth.uid() and not public.is_admin() then null else e.offer_id end as offer_id,
+  e.created_at
+from public.entretiens e
+where auth.uid() is not null and (e.ecole = (select public.mon_ecole()) or (select public.super_admin()));
+revoke all on public.entretiens_publics from public, anon;
+grant select on public.entretiens_publics to authenticated;
+
+create or replace view public.avis_publics with (security_barrier = true) as
+select a.id,
+  case when a.anonyme and a.author_id is distinct from auth.uid() and not public.is_admin() then null else a.author_id end as author_id,
+  a.entreprise, a.ville, a.pays, a.type, a.saison, a.poste, a.note, a.note_encadrement, a.note_apprentissage, a.note_ambiance,
+  a.gratification, a.conseils, a.recommande, a.anonyme,
+  case when a.anonyme and a.author_id is distinct from auth.uid() and not public.is_admin() then null else a.placement_id end as placement_id,
+  a.verifie, a.created_at
+from public.avis_stage a
+where auth.uid() is not null and (a.ecole = (select public.mon_ecole()) or (select public.super_admin()));
+revoke all on public.avis_publics from public, anon;
+grant select on public.avis_publics to authenticated;
+
+drop trigger if exists trg_maj_tables on public.entretiens;
+create trigger trg_maj_tables after insert or update or delete on public.entretiens
+  for each statement execute function public.signaler_maj('entretiens');
+drop trigger if exists trg_maj_tables on public.avis_stage;
+create trigger trg_maj_tables after insert or update or delete on public.avis_stage
+  for each statement execute function public.signaler_maj('avis_stage');
+
+-- ---------------------------------------------------------------------
+-- Guide de l'étranger : une page par pays et par rubrique, écrite par les lauréats
+-- qui y vivent (pays du profil), avec l'historique des versions.
+-- ---------------------------------------------------------------------
+create table if not exists public.guide_pays (
+  id uuid primary key default gen_random_uuid(),
+  pays text not null check (char_length(pays) between 2 and 60),
+  pays_cle text generated always as (public.cle_lieu(pays)) stored,
+  section text not null check (section in ('campus_france','visa','convention','logement','budget','stage','vie')),
+  contenu text not null check (char_length(contenu) between 1 and 4000),
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz default now(),
+  created_at timestamptz default now(),
+  unique (pays_cle, section)
+);
+
+create table if not exists public.guide_pays_historique (
+  id uuid primary key default gen_random_uuid(),
+  guide_id uuid not null references public.guide_pays(id) on delete cascade,
+  contenu text not null,
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz,
+  created_at timestamptz default now()
+);
+create index if not exists guide_pays_historique_guide on public.guide_pays_historique (guide_id, created_at desc);
+
+create or replace function public.protect_guide() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' then
+    new.pays := old.pays; new.section := old.section; new.created_at := old.created_at;
+    if new.contenu is distinct from old.contenu then
+      insert into public.guide_pays_historique (guide_id, contenu, updated_by, updated_at) values (old.id, old.contenu, old.updated_by, old.updated_at);
+    end if;
+  end if;
+  if auth.uid() is not null and not public.is_admin() then
+    if public.cle_lieu(new.pays) = 'maroc' or not exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'laureat' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)) then
+      raise exception 'Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.';
+    end if;
+  end if;
+  new.updated_by := coalesce(auth.uid(), new.updated_by); new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_protect_guide on public.guide_pays;
+create trigger trg_protect_guide before insert or update on public.guide_pays
+  for each row execute function public.protect_guide();
+
+-- ---------------------------------------------------------------------
+-- Signalements : n'importe quel membre signale un contenu ; l'administration décide
+-- ---------------------------------------------------------------------
+create table if not exists public.signalements (
+  id uuid primary key default gen_random_uuid(),
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  cible_type text not null check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture')),
+  cible_id uuid not null,
+  motif text not null check (motif in ('spam','arnaque','inapproprie','faux','harcelement','donnees','autre')),
+  details text check (char_length(details) <= 600),
+  status text not null default 'ouvert' check (status in ('ouvert','traite','rejete')),
+  traite_par uuid references public.profiles(id) on delete set null,
+  traite_at timestamptz,
+  created_at timestamptz default now(),
+  unique (auteur_id, cible_type, cible_id)
+);
+
+create or replace function public.protect_signalement() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.auteur_id := auth.uid(); end if;
+    new.status := 'ouvert'; new.traite_par := null; new.traite_at := null; new.created_at := now();
+    return new;
+  end if;
+  if new.status is distinct from old.status then new.traite_par := auth.uid(); new.traite_at := now(); end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_signalement on public.signalements;
+create trigger trg_protect_signalement before insert or update on public.signalements
+  for each row execute function public.protect_signalement();
+
+-- ---------------------------------------------------------------------
+-- Réglages de l'administration : domaines de l'email de l'école
+-- (ex. « edu.umi.ac.ma »), et s'il est obligatoire pour l'inscription des étudiants.
+-- Lisibles sans compte (l'écran d'inscription les affiche).
+-- ---------------------------------------------------------------------
+create table if not exists public.reglages (
+  cle text primary key check (cle in ('domaines_ecole','email_ecole_obligatoire')),
+  valeur jsonb not null,
+  updated_at timestamptz default now()
+);
+
+create or replace function public.domaines_ecole() returns text[]
+language sql stable security definer set search_path = public as $$
+  select coalesce(array(select lower(trim(x)) from jsonb_array_elements_text(
+    (select valeur from public.reglages where cle = 'domaines_ecole' and jsonb_typeof(valeur) = 'array')) x where trim(x) <> ''), '{}');
+$$;
+
+-- Domaines et email obligatoire d'une école : ENSAM Meknès garde ses réglages (Administration > Réglages), les autres
+-- écoles ont les leurs dans ecoles (seconde partie « Écoles », plus bas)
+create or replace function public.domaines_de(p_ecole text) returns text[]
+language plpgsql stable security definer set search_path = public as $$
+declare v text[];
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then return public.domaines_ecole(); end if;
+  execute 'select coalesce(domaines, ''{}'') from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, '{}');
+exception when undefined_column or undefined_table then return '{}';
+end $$;
+revoke all on function public.domaines_de(text) from public, anon, authenticated;
+
+create or replace function public.email_obligatoire_de(p_ecole text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v boolean;
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then
+    return exists (select 1 from public.reglages where cle = 'email_ecole_obligatoire' and valeur = 'true'::jsonb);
+  end if;
+  execute 'select email_obligatoire from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, false);
+exception when undefined_column or undefined_table then return false;
+end $$;
+revoke all on function public.email_obligatoire_de(text) from public, anon, authenticated;
+
+drop function if exists public.email_ecole(uuid);
+create or replace function public.email_ecole(p_id uuid, p_ecole text default null) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from auth.users u, unnest(public.domaines_de(p_ecole)) d
+    where u.id = p_id and (lower(u.email) like '%@' || d or lower(u.email) like '%.' || d));
+$$;
+revoke all on function public.email_ecole(uuid, text) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Vérification d'un lauréat par deux lauréats déjà vérifiés de la même promo
+-- (l'administration peut toujours vérifier ou retirer la vérification)
+-- ---------------------------------------------------------------------
+create table if not exists public.verifications_pairs (
+  id uuid primary key default gen_random_uuid(),
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  verificateur_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (laureat_id, verificateur_id),
+  check (laureat_id <> verificateur_id)
+);
+
+create or replace function public.pairs_valides(p_id uuid, p_promo int) returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from public.verifications_pairs v join public.profiles x on x.id = v.verificateur_id
+  where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo;
+$$;
+
+create or replace function public.protect_verification_pair() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c public.profiles%rowtype; v public.profiles%rowtype;
+begin
+  if auth.uid() is not null and not public.is_admin() then new.verificateur_id := auth.uid(); end if;
+  new.created_at := now();
+  select * into c from public.profiles where id = new.laureat_id;
+  select * into v from public.profiles where id = new.verificateur_id;
+  if c.role is distinct from 'laureat' then raise exception 'Seul un profil de lauréat peut être confirmé.'; end if;
+  if v.role is distinct from 'laureat' or not v.verified or v.promo <> c.promo then
+    raise exception 'Seul un lauréat vérifié de la même promo peut confirmer ce profil.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_verification_pair on public.verifications_pairs;
+create trigger trg_protect_verification_pair before insert on public.verifications_pairs
+  for each row execute function public.protect_verification_pair();
+
+-- Après chaque confirmation : la règle de vérification est réévaluée (dans protect_profile)
+create or replace function public.apres_verification_pair() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.profiles set verified = verified where id = new.laureat_id and not verified;
+  perform public.pousser(new.laureat_id, 'verification_pair', jsonb_build_object(
+    'nom', (select full_name from public.profiles where id = new.verificateur_id),
+    'n', public.pairs_valides(new.laureat_id, (select promo from public.profiles where id = new.laureat_id))));
+  return null;
+end $$;
+drop trigger if exists trg_apres_verification_pair on public.verifications_pairs;
+create trigger trg_apres_verification_pair after insert on public.verifications_pairs
+  for each row execute function public.apres_verification_pair();
+
+-- Un nouveau lauréat non vérifié : ses camarades de promo déjà vérifiés sont prévenus (5 au plus)
+create or replace function public.nouveau_laureat() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.role = 'laureat' and not new.verified then
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo, 'de', new.id)
+    from public.profiles x
+    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.ecole = new.ecole and x.id <> new.id
+      and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
+    order by public.derniere_visite(x.id) desc nulls last
+    limit 5;
+  end if;
+  return null;
+exception when others then raise warning 'nouveau_laureat : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_nouveau_laureat on public.profiles;
+create trigger trg_nouveau_laureat after insert on public.profiles
+  for each row execute function public.nouveau_laureat();
+
+-- ---------------------------------------------------------------------
+-- Agenda de l'école, publié par l'administration : forum, conférences, portes ouvertes…
+-- Chacun peut dire « J'y vais ».
+-- ---------------------------------------------------------------------
+create table if not exists public.evenements (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid references public.profiles(id) on delete set null,
+  titre text not null check (char_length(titre) between 3 and 140),
+  type text not null default 'autre' check (type in ('forum','conference','portes_ouvertes','atelier','soutenance','autre')),
+  debut timestamptz not null,
+  fin timestamptz,
+  lieu text check (char_length(lieu) <= 140),
+  lien text check (lien ~* '^https://[^\s]+$' and char_length(lien) <= 300),
+  description text check (char_length(description) <= 2000),
+  public text not null default 'tous' check (public in ('tous','etudiants','laureats')),
+  annule boolean not null default false,
+  created_at timestamptz default now(),
+  check (fin is null or fin >= debut)
+);
+create index if not exists evenements_debut on public.evenements (debut);
+
+create table if not exists public.evenement_participants (
+  id uuid primary key default gen_random_uuid(),
+  evenement_id uuid not null references public.evenements(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (evenement_id, user_id)
+);
+
+create or replace function public.protect_evenement_participant() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare e public.evenements%rowtype;
+begin
+  if auth.uid() is not null and not public.is_admin() then new.user_id := auth.uid(); end if;
+  select * into e from public.evenements where id = new.evenement_id;
+  if e.annule then raise exception 'Cet événement est annulé.'; end if;
+  if coalesce(e.fin, e.debut) < now() then raise exception 'Cet événement est déjà passé.'; end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_evenement_participant on public.evenement_participants;
+create trigger trg_protect_evenement_participant before insert on public.evenement_participants
+  for each row execute function public.protect_evenement_participant();
+
+create or replace function public.notif_evenement() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_kind text;
+begin
+  if tg_op = 'INSERT' or (not old.annule and new.annule) or new.debut is distinct from old.debut then
+    v_kind := case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end;
+    insert into public.push_queue (user_id, kind, data)
+    select p.id, v_kind,
+      -- L'événement sous ses deux clés : id (lue par la fonction notifier de ce lot, comme pour les autres types) et
+      -- evenement (celle de la fonction d'avant) ; quelle que soit la version de la fonction, chaque événement a sa ligne
+      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'id', new.id, 'evenement', new.id)
+    from public.profiles p
+    -- Écoles : celle de l'événement (l'administration reçoit tout, comme dans push_filtre)
+    where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
+      and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
+      and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
+    order by public.derniere_visite(p.id) desc nulls last
+    limit 2000;
+  end if;
+  return null;
+exception when others then raise warning 'notif_evenement : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.evenements;
+create trigger trg_notif after insert or update on public.evenements for each row execute function public.notif_evenement();
+
+-- ---------------------------------------------------------------------
+-- Enquête d'insertion automatique : invitation (email + téléphone) à l'ouverture
+-- de chaque vague, puis un seul rappel 3 semaines après si pas de réponse.
+--   6 mois  : du 1er janvier au 30 juin qui suivent l'année du diplôme
+--   12 mois : du 1er juillet qui suit jusqu'au 31 mars d'après
+-- ---------------------------------------------------------------------
+alter table public.notif_etat add column if not exists enquete_vague int;
+alter table public.notif_etat add column if not exists enquete_at timestamptz;
+alter table public.notif_etat add column if not exists enquete_rappel_at timestamptz;
+
+create or replace function public.vague_ouverte(p_promo int, p_jour date default current_date) returns int
+language sql immutable as $$
+  select case when p_jour >= make_date(p_promo + 1, 1, 1) and p_jour < make_date(p_promo + 1, 7, 1) then 6
+              when p_jour >= make_date(p_promo + 1, 7, 1) and p_jour < make_date(p_promo + 2, 4, 1) then 12 end;
+$$;
+
+create or replace function public.enquetes_a_inviter(p_max int default 100)
+returns table (id uuid, email text, langue text, token uuid, vague int, rappel boolean, email_ok boolean)
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  return query
+    select p.id, u.email::text, p.langue, n.token, public.vague_ouverte(p.promo),
+      (n.enquete_vague is not distinct from public.vague_ouverte(p.promo)) as rappel,
+      (p.emails_hebdo and u.email is not null) as email_ok
+    from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
+    where p.role <> 'admin' and (p.role = 'laureat' or public.niveau_de(p.promo, public.saison_courante()) >= 6)
+      and public.vague_ouverte(p.promo) is not null
+      and not exists (select 1 from public.enquetes_insertion e where e.user_id = p.id and e.vague = public.vague_ouverte(p.promo))
+      and (n.enquete_vague is distinct from public.vague_ouverte(p.promo)
+        or (n.enquete_rappel_at is null and n.enquete_at < now() - interval '21 days'))
+    order by n.enquete_at nulls first
+    limit greatest(0, least(p_max, 150));
+end $$;
+revoke all on function public.enquetes_a_inviter(int) from public, anon, authenticated;
+
+-- Marque les invitations parties et prévient aussi sur le téléphone
+create or replace function public.enquetes_invitees(p_lignes jsonb) returns int
+language plpgsql security definer set search_path = public as $$
+declare x jsonb; n int := 0; v uuid; g int;
+begin
+  for x in select * from jsonb_array_elements(coalesce(p_lignes, '[]')) loop
+    v := (x ->> 'id')::uuid; g := (x ->> 'vague')::int;
+    if coalesce((x ->> 'rappel')::boolean, false) then
+      update public.notif_etat set enquete_rappel_at = now() where user_id = v;
+    else
+      update public.notif_etat set enquete_vague = g, enquete_at = now(), enquete_rappel_at = null where user_id = v;
+    end if;
+    perform public.pousser(v, 'enquete', jsonb_build_object('vague', g));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.enquetes_invitees(jsonb) from public, anon, authenticated;
+
+create or replace function public.taches_quotidiennes() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.relances_offres();
+  perform public.attribuer_parrains();
+  -- Durées de conservation : un échec ne bloque pas les emails du jour
+  begin perform public.conservation_quotidienne(); exception when others then raise warning 'Conservation : %', sqlerrm; end;
+  -- Journal des notifications (push_journal, section « Notifications sur le téléphone ») et historique des tâches de
+  -- pg_cron : 7 jours ; adresses d'abonnement mortes (push_morts) : 90 jours
+  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then raise warning 'push_journal : %', sqlerrm; end;
+  begin delete from public.push_morts where at < now() - interval '90 days'; exception when others then raise warning 'push_morts : %', sqlerrm; end;
+  begin delete from cron.job_run_details where end_time < now() - interval '7 days'; exception when others then null; end;
+  perform public.appeler_notifier('resume');
+  perform public.appeler_notifier('enquetes');
+  perform public.appeler_notifier('relances');
+  perform public.appeler_notifier('inactifs');
+end $$;
+revoke all on function public.taches_quotidiennes() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.enquetes_a_inviter(int) to service_role;
+    grant execute on function public.enquetes_invitees(jsonb) to service_role;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Taux d'insertion par promo et filière, pour les rapports officiels et l'accréditation
+-- (administration seulement) : effectif de la liste officielle, inscrits, répondants à l'enquête,
+-- en poste, en recherche, en études, à l'étranger, délai médian, satisfaction.
+-- Une école à la fois : celle de l'administrateur, ou celle qu'il choisit (p_ecole).
+-- ---------------------------------------------------------------------
+-- L'école visée par une fonction de l'administration : celle demandée (elle doit exister), sinon la sienne.
+-- Un membre reste toujours dans la sienne, quoi qu'il demande.
+create or replace function public.ecole_visee(p_ecole text default null) returns text
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_ecole is null or not public.super_admin() then return coalesce(public.mon_ecole(), 'ensam-meknes'); end if;
+  if not exists (select 1 from public.ecoles e where e.slug = p_ecole) then raise exception 'École inconnue : %.', p_ecole; end if;
+  return p_ecole;
+end $$;
+revoke all on function public.ecole_visee(text) from public, anon, authenticated;
+
+drop function if exists public.rapport_insertion();
+create or replace function public.rapport_insertion(p_ecole text default null)
+returns table (promo int, filiere text, vague int, effectif int, inscrits int, repondants int, en_poste int, recherche int, etudes int, etranger int,
+  taux_insertion numeric, taux_reponse numeric, delai_median numeric, satisfaction numeric, lien_formation numeric)
+language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  return query
+  with cohortes as (
+    select p.promo, p.filiere, count(*)::int as inscrits from public.profiles p
+    where p.role <> 'admin' and p.ecole = v_ecole and p.promo <= extract(year from now())::int and p.promo >= extract(year from now())::int - 6
+    group by p.promo, p.filiere),
+  vagues as (select c.*, v.vague from cohortes c cross join (values (6), (12)) v(vague)),
+  rep as (
+    select e.promo, e.filiere, e.vague, count(*)::int n,
+      count(*) filter (where e.situation in ('emploi','entrepreneur','volontariat'))::int ep,
+      count(*) filter (where e.situation = 'recherche')::int rch,
+      count(*) filter (where e.situation = 'etudes')::int etu,
+      count(*) filter (where e.situation in ('emploi','entrepreneur','volontariat') and public.cle_lieu(e.pays) is not null and public.cle_lieu(e.pays) <> 'maroc')::int etr,
+      (percentile_cont(0.5) within group (order by e.delai_mois))::numeric med,
+      round(avg(e.satisfaction)::numeric, 1) sat, round(avg(e.lien_formation)::numeric, 1) lf
+    from public.enquetes_insertion e where e.ecole = v_ecole group by e.promo, e.filiere, e.vague),
+  liste as (select l.promo, public.cle_lieu(l.filiere) f, count(*)::int n from public.liste_officielle l where l.ecole = v_ecole group by l.promo, public.cle_lieu(l.filiere))
+  select v.promo, v.filiere, v.vague, li.n, v.inscrits, coalesce(r.n, 0), coalesce(r.ep, 0), coalesce(r.rch, 0), coalesce(r.etu, 0), coalesce(r.etr, 0),
+    case when coalesce(r.n, 0) - coalesce(r.etu, 0) > 0 then round(r.ep::numeric / (r.n - r.etu), 3) end,
+    case when coalesce(li.n, v.inscrits) > 0 then round(coalesce(r.n, 0)::numeric / coalesce(li.n, v.inscrits), 3) end,
+    r.med, r.sat, r.lf
+  from vagues v
+  left join rep r on r.promo = v.promo and r.filiere = v.filiere and r.vague = v.vague
+  left join liste li on li.promo = v.promo and li.f = public.cle_lieu(v.filiere)
+  where r.n is not null or v.promo <= extract(year from now())::int - 1
+  order by v.promo desc, v.filiere, v.vague;
+end $$;
+revoke all on function public.rapport_insertion(text) from public, anon;
+grant execute on function public.rapport_insertion(text) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Sécurité ligne par ligne (suite)
+-- ---------------------------------------------------------------------
+alter table public.reglages               enable row level security;
+alter table public.verifications_pairs    enable row level security;
+alter table public.evenements             enable row level security;
+alter table public.evenement_participants enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['reglages','verifications_pairs','evenements','evenement_participants'] loop
+    execute format('drop policy if exists "lecture membres" on public.%I', t);
+    execute format('drop policy if exists "ecriture proprietaire" on public.%I', t);
+    execute format('drop policy if exists "modif proprietaire" on public.%I', t);
+    execute format('drop policy if exists "suppression proprietaire" on public.%I', t);
+  end loop;
+end $$;
+-- Réglages : lisibles par tous (même sans compte), modifiés par l'administration
+create policy "lecture membres" on public.reglages for select to anon, authenticated using (true);
+create policy "ecriture proprietaire" on public.reglages for insert to authenticated with check (public.is_admin());
+create policy "modif proprietaire" on public.reglages for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.reglages for delete to authenticated using (public.is_admin());
+grant select on public.reglages to anon;
+-- Confirmations entre lauréats : visibles des membres ; on retire la sienne
+create policy "lecture membres" on public.verifications_pairs for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.verifications_pairs for insert to authenticated with check (verificateur_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.verifications_pairs for delete to authenticated using (verificateur_id = auth.uid() or public.is_admin());
+-- Agenda : tout le monde lit, l'administration publie ; chacun s'inscrit et se désinscrit
+create policy "lecture membres" on public.evenements for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.evenements for insert to authenticated with check (public.is_admin());
+create policy "modif proprietaire" on public.evenements for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.evenements for delete to authenticated using (public.is_admin());
+create policy "lecture membres" on public.evenement_participants for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.evenement_participants for insert to authenticated with check (user_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.evenement_participants for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['reglages','verifications_pairs','evenements','evenement_participants'] loop
+      if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Limites anti-spam : nombre de publications par personne et par période,
+-- et pas deux fois exactement le même texte en 24 h. L'administration n'est pas limitée.
+-- limiter(colonne de l'auteur, maximum, période[, colonne du texte])
+-- ---------------------------------------------------------------------
+create or replace function public.limiter() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare n int; v_col text := tg_argv[0]; v_max int := tg_argv[1]::int; v_par interval := tg_argv[2]::interval;
+  v_txt text := case when tg_nargs > 3 then tg_argv[3] end;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  execute format('select count(*) from public.%I where %I = $1 and created_at > now() - $2', tg_table_name, v_col) into n using auth.uid(), v_par;
+  if n >= v_max then raise exception 'Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.'; end if;
+  if v_txt is not null and coalesce(trim(to_jsonb(new) ->> v_txt), '') <> '' then
+    execute format('select count(*) from public.%I where %I = $1 and lower(trim(%I)) = lower(trim($2)) and created_at > now() - interval ''1 day''', tg_table_name, v_col, v_txt)
+      into n using auth.uid(), to_jsonb(new) ->> v_txt;
+    if n > 0 then raise exception 'Tu as déjà publié exactement ce texte.'; end if;
+  end if;
+  return new;
+end $$;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+      ('offers', 'author_id', '10', '1 day', 'titre'),
+      ('comments', 'author_id', '40', '1 day', 'body'),
+      ('questions', 'author_id', '5', '1 day', 'titre'),
+      ('answers', 'author_id', '30', '1 day', 'body'),
+      ('groupe_messages', 'author_id', '60', '1 day', 'body'),
+      ('invitations', 'laureat_id', '30', '1 day', null),
+      ('applications', 'student_id', '10', '1 day', null),
+      ('mentorships', 'student_id', '6', '1 day', null),
+      ('cafes', 'organisateur_id', '3', '1 day', null),
+      ('startups', 'fondateur_id', '3', '1 day', null),
+      ('entretiens', 'author_id', '10', '1 day', null),
+      ('avis_stage', 'author_id', '10', '1 day', null),
+      ('demandes_contact', 'demandeur_id', '5', '1 day', null),
+      ('signalements', 'auteur_id', '10', '1 day', null),
+      ('relectures_cv', 'student_id', '4', '1 day', null),
+      ('relecture_commentaires', 'author_id', '60', '1 hour', null),
+      ('evenement_participants', 'user_id', '30', '1 day', null),
+      ('verifications_pairs', 'verificateur_id', '20', '1 day', null)
+    ) as t(tbl, col, mx, par, txt) loop
+    execute format('drop trigger if exists trg_limite on public.%I', r.tbl);
+    if r.txt is null then
+      execute format('create trigger trg_limite before insert on public.%I for each row execute function public.limiter(%L, %L, %L)', r.tbl, r.col, r.mx, r.par);
+    else
+      execute format('create trigger trg_limite before insert on public.%I for each row execute function public.limiter(%L, %L, %L, %L)', r.tbl, r.col, r.mx, r.par, r.txt);
+    end if;
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Enquête d'insertion des lauréats, à 6 et à 12 mois après le diplôme.
+-- Réponses individuelles : la personne et l'administration seulement.
+-- Résultats : agrégés par stats_insertion(), sans détail sous 5 réponses.
+-- ---------------------------------------------------------------------
+create table if not exists public.enquetes_insertion (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  vague int not null check (vague in (6, 12)),
+  promo int not null check (promo between 1990 and 2040),
+  filiere text,
+  situation text not null check (situation in ('emploi','entrepreneur','recherche','etudes','volontariat','autre')),
+  contrat text check (contrat in ('cdi','cdd','anapec','freelance','stage','autre')),
+  secteur text check (char_length(secteur) <= 60),
+  entreprise text check (char_length(entreprise) <= 80),
+  pays text check (char_length(pays) <= 60),
+  ville text check (char_length(ville) <= 60),
+  delai_mois int check (delai_mois between 0 and 36),
+  salaire text check (salaire in ('lt6','6_10','10_15','15_20','20_30','gt30','nsp')),
+  lien_formation int check (lien_formation between 1 and 5),
+  satisfaction int check (satisfaction between 1 and 5),
+  canal text check (canal in ('reseau_ensam','plateforme','linkedin','stage','candidature','concours','autre')),
+  commentaire text check (char_length(commentaire) <= 600),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (user_id, vague)
+);
+
+-- L'école de la réponse, celle de la personne (protect_enquete) : elle reste quand la réponse est anonymisée (user_id vide)
+alter table public.enquetes_insertion add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create index if not exists enquetes_insertion_ecole on public.enquetes_insertion (ecole, promo, vague);
+create or replace function public.protect_enquete() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p public.profiles%rowtype;
+begin
+  -- Seul le serveur (aucun membre connecté) détache une réponse de son compte : voir anonymiser_enquetes
+  if tg_op = 'UPDATE' then
+    if auth.uid() is not null or new.user_id is not null then new.user_id := old.user_id; end if;
+    new.vague := old.vague; new.created_at := old.created_at;
+    -- L'école suit le compte tant que la réponse y est attachée (seule l'administration change l'école d'un compte),
+    -- et ne bouge plus une fois la réponse anonymisée
+    new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), old.ecole);
+  end if;
+  if auth.uid() is not null and not public.is_admin() then
+    if tg_op = 'INSERT' then new.user_id := auth.uid(); new.created_at := now(); end if;
+    select * into p from public.profiles where id = new.user_id;
+    if p.role is distinct from 'laureat' and public.niveau_de(p.promo, public.saison_courante()) < 6 then raise exception 'L’enquête s’adresse aux lauréats.'; end if;
+    new.promo := p.promo; new.filiere := p.filiere;
+  end if;
+  if tg_op = 'INSERT' then new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), new.ecole, 'ensam-meknes'); end if;
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_protect_enquete on public.enquetes_insertion;
+create trigger trg_protect_enquete before insert or update on public.enquetes_insertion
+  for each row execute function public.protect_enquete();
+
+drop function if exists public.stats_insertion();
+create or replace function public.stats_insertion(p_ecole text default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare r jsonb; m int := case when public.is_admin() then 1 else 5 end; v_ecole text;
+begin
+  if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  with e as (select * from public.enquetes_insertion x where x.ecole = v_ecole),
+  g as (
+    select e.promo, e.vague, count(*) as n,
+      count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) as en_poste,
+      count(*) filter (where situation = 'recherche') as recherche,
+      count(*) filter (where situation = 'etudes') as etudes,
+      count(*) filter (where situation in ('emploi','entrepreneur','volontariat') and public.cle_lieu(pays) is not null and public.cle_lieu(pays) <> 'maroc') as etranger,
+      percentile_cont(0.5) within group (order by delai_mois) as delai_median,
+      round(avg(lien_formation)::numeric, 1) as lien_formation,
+      round(avg(satisfaction)::numeric, 1) as satisfaction
+    from e group by e.promo, e.vague)
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'promo', g.promo, 'vague', g.vague, 'n', g.n, 'en_poste', g.en_poste, 'recherche', g.recherche, 'etudes', g.etudes,
+      'etranger', g.etranger, 'delai_median', g.delai_median, 'lien_formation', g.lien_formation, 'satisfaction', g.satisfaction,
+      'canaux', (select jsonb_object_agg(c, k) from (select canal c, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and canal is not null group by canal) t),
+      'secteurs', case when g.n >= m then (select jsonb_object_agg(s, k) from (select secteur s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and secteur is not null group by secteur having count(*) >= least(m, 2)) t) end,
+      'salaires', case when g.n >= m then (select jsonb_object_agg(s, k) from (select salaire s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and salaire is not null and salaire <> 'nsp' group by salaire) t) end,
+      'filieres', (select jsonb_object_agg(f, jsonb_build_object('n', k, 'en_poste', ep)) from (
+          select filiere f, count(*) k, count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) ep
+          from e x where x.promo = g.promo and x.vague = g.vague and filiere is not null group by filiere having count(*) >= m) t)
+    ) order by g.promo desc, g.vague), '[]'::jsonb) into r
+  from g where g.n >= m;  -- en dessous de 5 réponses, seuls les chiffres de l'administration existent
+  return r;
+end $$;
+revoke all on function public.stats_insertion(text) from public, anon;
+grant execute on function public.stats_insertion(text) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Liste officielle des étudiants (fournie par l'école, importée par l'administration).
+-- Un membre qui y figure (même email, ou même nom et même promo) est vérifié tout seul.
+-- ---------------------------------------------------------------------
+create table if not exists public.liste_officielle (
+  id uuid primary key default gen_random_uuid(),
+  nom text not null check (char_length(nom) between 2 and 120),
+  email text check (char_length(email) <= 160),
+  promo int not null check (promo between 1990 and 2040),
+  filiere text check (char_length(filiere) <= 80),
+  matricule text check (char_length(matricule) <= 40),
+  created_at timestamptz default now()
+);
+alter table public.liste_officielle add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+drop index if exists public.liste_officielle_nom_promo;
+create unique index if not exists liste_officielle_ecole_nom_promo on public.liste_officielle (ecole, (public.cle_nom(nom)), promo);
+create index if not exists liste_officielle_email on public.liste_officielle (email);
+
+-- p_ecole : l'école du compte, passée par qui appelle. À l'inscription (protect_profile, avant l'insert), la ligne du profil
+-- n'existe pas encore : sans elle, l'inscrit d'une autre école serait comparé à la liste d'ENSAM Meknès.
+drop function if exists public.dans_liste(uuid, text, int);
+create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int, p_ecole text default null) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.liste_officielle l
+    where l.ecole = coalesce(p_ecole, (select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
+      and ((l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
+       or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id))));
+$$;
+revoke all on function public.dans_liste(uuid, text, int, text) from public, anon, authenticated;
+
+drop function if exists public.importer_liste(jsonb, boolean);
+create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false, p_ecole text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}'; v_ecole text;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  if jsonb_typeof(p_lignes) <> 'array' or jsonb_array_length(p_lignes) > 5000 then raise exception 'Liste invalide (5000 lignes au plus).'; end if;
+  if p_remplacer then
+    select coalesce(array_agg(distinct (e ->> 'promo')::int), '{}') into v_promos from jsonb_array_elements(p_lignes) e where (e ->> 'promo') ~ '^\d{4}$';
+    delete from public.liste_officielle where promo = any(v_promos) and ecole = v_ecole;
+  end if;
+  for x in select * from jsonb_array_elements(p_lignes) loop
+    v_nom := left(regexp_replace(trim(coalesce(x ->> 'nom', '')), '\s+', ' ', 'g'), 120);
+    v_promo := case when (x ->> 'promo') ~ '^\d{4}$' then (x ->> 'promo')::int end;
+    v_email := nullif(lower(trim(coalesce(x ->> 'email', ''))), '');
+    if v_email is not null and v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then v_email := null; end if;
+    if char_length(v_nom) < 2 or public.cle_nom(v_nom) is null or v_promo is null or v_promo not between 1990 and 2040 then n_rej := n_rej + 1; continue; end if;
+    insert into public.liste_officielle (ecole, nom, email, promo, filiere, matricule)
+      values (v_ecole, v_nom, left(v_email, 160), v_promo, nullif(left(trim(coalesce(x ->> 'filiere', '')), 80), ''), nullif(left(trim(coalesce(x ->> 'matricule', '')), 40), ''))
+      on conflict (ecole, (public.cle_nom(nom)), promo) do update set
+        email = coalesce(excluded.email, liste_officielle.email),
+        filiere = coalesce(excluded.filiere, liste_officielle.filiere),
+        matricule = coalesce(excluded.matricule, liste_officielle.matricule);
+    n_ok := n_ok + 1;
+  end loop;
+  update public.profiles p set verified = true
+    where not p.verified and p.role <> 'admin' and p.ecole = v_ecole and public.dans_liste(p.id, p.full_name, p.promo, p.ecole);
+  get diagnostics n_verif = row_count;
+  return jsonb_build_object('importes', n_ok, 'rejetes', n_rej, 'verifies', n_verif);
+end $$;
+revoke all on function public.importer_liste(jsonb, boolean, text) from public, anon;
+grant execute on function public.importer_liste(jsonb, boolean, text) to authenticated;
+
+-- Couverture : combien d'étudiants de la liste sont inscrits, par promo et filière (une école : la sienne, ou p_ecole)
+drop function if exists public.couverture_liste();
+create or replace function public.couverture_liste(p_ecole text default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare r jsonb; v_ecole text;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  with m as (
+    select l.promo, coalesce(l.filiere, '') as filiere, exists (
+      select 1 from public.profiles p left join auth.users u on u.id = p.id
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom)))) as inscrit
+    from public.liste_officielle l where l.ecole = v_ecole)
+  select coalesce(jsonb_agg(jsonb_build_object('promo', promo, 'filiere', filiere, 'total', total, 'inscrits', inscrits) order by promo desc, filiere), '[]'::jsonb) into r
+  from (select promo, filiere, count(*) total, count(*) filter (where inscrit) inscrits from m group by promo, filiere) t;
+  return r;
+end $$;
+revoke all on function public.couverture_liste(text) from public, anon;
+grant execute on function public.couverture_liste(text) to authenticated;
+
+-- Qui manque encore (pour que les ambassadeurs de promo les invitent)
+drop function if exists public.manquants_liste(int);
+create or replace function public.manquants_liste(p_promo int, p_ecole text default null) returns table (nom text, email text, filiere text)
+language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  return query select l.nom, l.email, l.filiere from public.liste_officielle l
+    where l.ecole = v_ecole and l.promo = p_promo and not exists (
+      select 1 from public.profiles p left join auth.users u on u.id = p.id
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom))))
+    order by l.filiere nulls last, l.nom;
+end $$;
+revoke all on function public.manquants_liste(int, text) from public, anon;
+grant execute on function public.manquants_liste(int, text) to authenticated;
+
+-- Vider la liste d'une promo, dans une seule école (la sienne, ou p_ecole) ; les comptes déjà vérifiés le restent
+create or replace function public.vider_liste(p_promo int, p_ecole text default null) returns int
+language plpgsql security definer set search_path = public as $$
+declare v_ecole text; n int;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  if p_promo is null then raise exception 'Choisis une promo.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  delete from public.liste_officielle where ecole = v_ecole and promo = p_promo;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.vider_liste(int, text) from public, anon;
+grant execute on function public.vider_liste(int, text) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Alertes d'offres : dès qu'une offre de son année et de sa filière est publiée,
+-- notification sur le téléphone tout de suite, et email groupé (une fois par heure
+-- au plus, 3 par jour au plus et par personne, 150 par jour pour toute la plateforme).
+-- ---------------------------------------------------------------------
+alter table public.notif_etat add column if not exists alerte_at timestamptz;
+alter table public.notif_etat add column if not exists alertes_n int not null default 0;
+alter table public.notif_etat add column if not exists alertes_jour date;
+
+alter table public.offers add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create or replace function public.offre_pour(o public.offers, p public.profiles, p_saison int) returns boolean
+language sql stable as $$
+  -- Un lauréat en recherche d'emploi reçoit aussi les offres « Jeunes diplômés » et celles entre lauréats
+  select o.status = 'ouverte' and o.author_id <> p.id and o.ecole = p.ecole
+    and p.role in ('etudiant','laureat')
+    and public.filiere_ok(o.filieres, p.filiere)
+    and case when coalesce(o.audience, 'etudiants') = 'laureats' then p.role = 'laureat' and coalesce(p.en_recherche, false)
+      else public.niveau_de(p.promo, p_saison) = any(coalesce(o.annees, '{}'))
+        or (p.role = 'laureat' and coalesce(p.en_recherche, false) and 6 = any(coalesce(o.annees, '{}'))) end;
+$$;
+
+-- Nouvelle offre (portée, classique ou partagée par un lauréat) : une notification à chacun de ceux qu'elle concerne
+-- (offre_pour : son année et sa filière ; un lauréat en recherche, les offres « Jeunes diplômés » et entre lauréats).
+-- Règle simple pour les lauréats : chaque lauréat reçoit toute nouvelle offre ouverte à sa filière (ou à toutes),
+-- qu'il cherche un emploi ou non ; quand elle ne le vise pas lui-même (une offre de stage pour les étudiants…),
+-- la notification le dit (pour = 'relayer') : il peut la faire suivre. Les lauréats peuvent lire toutes les offres.
+create or replace function public.alerte_offre() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante();
+begin
+  insert into public.push_queue (user_id, kind, data)
+  select p.id, 'offre_alerte', jsonb_build_object('titre', new.titre, 'entreprise', new.entreprise, 'offre', new.id, 'origine', new.origine)
+    || case when x.pour_lui then '{}'::jsonb else '{"pour": "relayer"}'::jsonb end
+  from public.profiles p
+  cross join lateral (select coalesce(public.offre_pour(new, p, v_s), false) as pour_lui) x
+  -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (activé pour tous)
+  where (x.pour_lui or (p.role = 'laureat' and p.ecole = new.ecole and new.status = 'ouverte' and new.author_id <> p.id and public.filiere_ok(new.filieres, p.filiere)))
+    -- Le partage d'un étudiant n'envoie pas de notification : il se voit dans les offres et dans l'email des alertes
+    and not exists (select 1 from public.profiles a where a.id = new.author_id and a.role = 'etudiant')
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
+  order by x.pour_lui desc, public.derniere_visite(p.id) desc nulls last
+  limit 2000;
+  return null;
+exception when others then raise warning 'alerte_offre : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_alerte_offre on public.offers;
+create trigger trg_alerte_offre after insert on public.offers
+  for each row execute function public.alerte_offre();
+
+create or replace function public.alertes_a_envoyer(p_max int default 100)
+returns table (id uuid, email text, langue text, token uuid, offres jsonb)
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_reste int;
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  select 150 - coalesce(sum(n.alertes_n), 0) into v_reste from public.notif_etat n where n.alertes_jour = current_date;
+  if v_reste <= 0 then return; end if;
+  return query
+    select x.id, x.email, x.langue, x.token, x.offres from (
+      select p.id, u.email::text as email, p.langue, n.token, n.alerte_at,
+        (select jsonb_agg(jsonb_build_object('id', o.id, 'titre', o.titre, 'entreprise', o.entreprise, 'type', o.type, 'ville', o.ville, 'pays', o.pays, 'deadline', o.deadline, 'origine', o.origine) order by o.created_at desc)
+          from (select o2.* from public.offers o2
+            where o2.created_at > greatest(coalesce(n.alerte_at, p.created_at), p.created_at, now() - interval '3 days')
+              and public.offre_pour(o2, p, v_s)
+            order by o2.created_at desc limit 5) o) as offres
+      from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
+      where p.alertes_email and u.email is not null
+        and (n.alerte_at is null or n.alerte_at < now() - interval '50 minutes')
+        and (n.alertes_jour is distinct from current_date or n.alertes_n < 3)) x
+    where x.offres is not null
+    order by x.alerte_at nulls first
+    limit greatest(0, least(p_max, v_reste));
+end $$;
+revoke all on function public.alertes_a_envoyer(int) from public, anon, authenticated;
+
+create or replace function public.alertes_envoyees(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  update public.notif_etat set alerte_at = now(),
+    alertes_n = case when alertes_jour = current_date then alertes_n + 1 else 1 end,
+    alertes_jour = current_date
+  where user_id = any(p_ids);
+$$;
+revoke all on function public.alertes_envoyees(uuid[]) from public, anon, authenticated;
+
+create or replace function public.se_desabonner_alertes(p_token uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  select user_id into v from public.notif_etat where token = p_token;
+  if v is null then return false; end if;
+  update public.profiles set alertes_email = false where id = v;
+  return true;
+end $$;
+revoke all on function public.se_desabonner_alertes(uuid) from public;
+grant execute on function public.se_desabonner_alertes(uuid) to anon, authenticated;
+
+create or replace function public.alertes_horaires() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from public.offers where created_at > now() - interval '3 hours' and status = 'ouverte') then
+    perform public.appeler_notifier('alertes');
+  end if;
+  -- Demandes des 3 derniers jours : chaque lauréat du parcours reçoit au plus un email par jour (la base choisit qui)
+  if exists (select 1 from public.demandes where created_at > now() - interval '3 days' and status = 'ouverte') then
+    perform public.appeler_notifier('demandes');
+  end if;
+end $$;
+revoke all on function public.alertes_horaires() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.alertes_a_envoyer(int) to service_role;
+    grant execute on function public.alertes_envoyees(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Notifications des nouveautés sur le téléphone
+-- ---------------------------------------------------------------------
+create or replace function public.notif_phase3() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_nom text;
+begin
+  if tg_table_name = 'demandes_contact' then
+    if tg_op = 'INSERT' then
+      perform public.pousser(new.cible_id, 'contact_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.demandeur_id), 'c', new.id));
+    elsif old.status <> 'acceptee' and new.status = 'acceptee' then
+      perform public.pousser(new.demandeur_id, 'contact_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.cible_id), 'c', new.id));
+    end if;
+  elsif tg_table_name = 'relectures_cv' then
+    v_nom := (select full_name from public.profiles where id = new.student_id);
+    if tg_op = 'INSERT' then
+      if new.reviewer_id is not null then
+        perform public.pousser(new.reviewer_id, 'relecture_demande', jsonb_build_object('nom', v_nom, 'r', new.id));
+      else
+        -- Les plus proches de sa filière, puis les plus actifs
+        insert into public.push_queue (user_id, kind, data)
+        select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom, 'r', new.id)
+        from public.profiles l, public.profiles s
+        where s.id = new.student_id and l.role = 'laureat' and l.ecole = new.ecole and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
+          and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
+        order by public.proximite_filiere(l.filiere, s.filiere) desc, public.derniere_visite(l.id) desc nulls last
+        limit 10;
+      end if;
+    elsif old.status = 'demandee' and new.status = 'en_cours' then
+      perform public.pousser(new.student_id, 'relecture_prise', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id), 'r', new.id));
+    elsif old.status <> 'rendue' and new.status = 'rendue' then
+      perform public.pousser(new.student_id, 'relecture_rendue', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id), 'r', new.id));
+    elsif old.merci is null and new.merci is not null and new.reviewer_id is not null then
+      perform public.pousser(new.reviewer_id, 'merci', jsonb_build_object('nom', v_nom, 'r', new.id));
+    end if;
+  elsif tg_table_name = 'signalements' then
+    insert into public.push_queue (user_id, kind, data)
+    select a.id, 'signalement', jsonb_build_object('motif', new.motif, 'id', new.id)
+    from public.profiles a where a.role = 'admin' and exists (select 1 from public.push_subscriptions x where x.user_id = a.id)
+    order by public.derniere_visite(a.id) desc nulls last
+    limit 10;
+  end if;
+  return null;
+exception when others then raise warning 'notif_phase3 : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.demandes_contact;
+create trigger trg_notif after insert or update on public.demandes_contact for each row execute function public.notif_phase3();
+drop trigger if exists trg_notif on public.relectures_cv;
+create trigger trg_notif after insert or update on public.relectures_cv for each row execute function public.notif_phase3();
+drop trigger if exists trg_notif on public.signalements;
+create trigger trg_notif after insert on public.signalements for each row execute function public.notif_phase3();
+
+-- ---------------------------------------------------------------------
+-- Sécurité ligne par ligne des nouveautés
+-- ---------------------------------------------------------------------
+alter table public.coordonnees            enable row level security;
+alter table public.demandes_contact       enable row level security;
+alter table public.maj_tables             enable row level security;
+alter table public.relectures_cv          enable row level security;
+alter table public.relecture_commentaires enable row level security;
+alter table public.entretiens             enable row level security;
+alter table public.avis_stage             enable row level security;
+alter table public.guide_pays             enable row level security;
+alter table public.guide_pays_historique  enable row level security;
+alter table public.signalements           enable row level security;
+alter table public.enquetes_insertion     enable row level security;
+alter table public.liste_officielle       enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['coordonnees','demandes_contact','maj_tables','relectures_cv','relecture_commentaires','entretiens','avis_stage',
+                       'guide_pays','guide_pays_historique','signalements','enquetes_insertion','liste_officielle'] loop
+    execute format('drop policy if exists "lecture membres" on public.%I', t);
+    execute format('drop policy if exists "ecriture proprietaire" on public.%I', t);
+    execute format('drop policy if exists "modif proprietaire" on public.%I', t);
+    execute format('drop policy if exists "suppression proprietaire" on public.%I', t);
+  end loop;
+end $$;
+
+-- Coordonnées : soi-même, l'administration et les personnes en relation (demande acceptée, candidature)
+create policy "lecture membres" on public.coordonnees for select to authenticated using (id = auth.uid() or public.is_admin() or public.en_relation(auth.uid(), id));
+create policy "ecriture proprietaire" on public.coordonnees for insert to authenticated with check (id = auth.uid());
+create policy "modif proprietaire" on public.coordonnees for update to authenticated using (id = auth.uid());
+create policy "suppression proprietaire" on public.coordonnees for delete to authenticated using (id = auth.uid());
+-- Demandes de contact : les deux personnes concernées
+create policy "lecture membres" on public.demandes_contact for select to authenticated using (demandeur_id = auth.uid() or cible_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.demandes_contact for insert to authenticated with check (demandeur_id = auth.uid());
+create policy "modif proprietaire" on public.demandes_contact for update to authenticated using (cible_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.demandes_contact for delete to authenticated using ((demandeur_id = auth.uid() and status = 'envoyee') or public.is_admin());
+-- Signal de mise à jour des vues
+create policy "lecture membres" on public.maj_tables for select to authenticated using (true);
+-- Relectures : l'étudiant, le lauréat qui relit, et les lauréats pour les demandes ouvertes à tous
+create policy "lecture membres" on public.relectures_cv for select to authenticated using (
+  student_id = auth.uid() or reviewer_id = auth.uid() or public.is_admin()
+  or (reviewer_id is null and status = 'demandee' and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'laureat')));
+create policy "ecriture proprietaire" on public.relectures_cv for insert to authenticated with check (student_id = auth.uid());
+create policy "modif proprietaire" on public.relectures_cv for update to authenticated using (
+  student_id = auth.uid() or reviewer_id = auth.uid() or public.is_admin() or (reviewer_id is null and status = 'demandee'));
+create policy "suppression proprietaire" on public.relectures_cv for delete to authenticated using ((student_id = auth.uid() and status in ('demandee','annulee')) or public.is_admin());
+create policy "lecture membres" on public.relecture_commentaires for select to authenticated using (
+  public.is_admin() or exists (select 1 from public.relectures_cv r where r.id = relecture_id and (r.student_id = auth.uid() or r.reviewer_id = auth.uid())));
+create policy "ecriture proprietaire" on public.relecture_commentaires for insert to authenticated with check (author_id = auth.uid());
+create policy "suppression proprietaire" on public.relecture_commentaires for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+-- Entretiens et avis : la table est privée à l'auteur ; tout le monde lit les vues publiques
+create policy "lecture membres" on public.entretiens for select to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.entretiens for insert to authenticated with check (author_id = auth.uid());
+create policy "modif proprietaire" on public.entretiens for update to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.entretiens for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "lecture membres" on public.avis_stage for select to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.avis_stage for insert to authenticated with check (author_id = auth.uid());
+create policy "modif proprietaire" on public.avis_stage for update to authenticated using (author_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.avis_stage for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+-- Guide de l'étranger : tout le monde lit ; les lauréats du pays écrivent (contrôlé par protect_guide)
+create policy "lecture membres" on public.guide_pays for select to authenticated using (true);
+create policy "ecriture proprietaire" on public.guide_pays for insert to authenticated with check (true);
+create policy "modif proprietaire" on public.guide_pays for update to authenticated using (true);
+create policy "suppression proprietaire" on public.guide_pays for delete to authenticated using (public.is_admin());
+create policy "lecture membres" on public.guide_pays_historique for select to authenticated using (true);
+-- Signalements : l'auteur et l'administration
+create policy "lecture membres" on public.signalements for select to authenticated using (auteur_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.signalements for insert to authenticated with check (auteur_id = auth.uid());
+create policy "modif proprietaire" on public.signalements for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.signalements for delete to authenticated using ((auteur_id = auth.uid() and status = 'ouvert') or public.is_admin());
+-- Enquête d'insertion : la personne et l'administration
+create policy "lecture membres" on public.enquetes_insertion for select to authenticated using (user_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.enquetes_insertion for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.enquetes_insertion for update to authenticated using (user_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.enquetes_insertion for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+-- Liste officielle : l'administration seulement
+create policy "lecture membres" on public.liste_officielle for select to authenticated using (public.is_admin());
+create policy "ecriture proprietaire" on public.liste_officielle for insert to authenticated with check (public.is_admin());
+create policy "modif proprietaire" on public.liste_officielle for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.liste_officielle for delete to authenticated using (public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- Stockage privé des CV (PDF, 2 Mo au plus) : chacun dépose dans son dossier,
+-- la lecture suit peut_voir_cv() et passe par des liens temporaires.
+-- ---------------------------------------------------------------------
+do $$ begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('cv', 'cv', false, 2097152, array['application/pdf'])
+    on conflict (id) do update set public = false, file_size_limit = 2097152, allowed_mime_types = array['application/pdf'];
+  drop policy if exists "cv lecture" on storage.objects;
+  drop policy if exists "cv depot" on storage.objects;
+  drop policy if exists "cv remplacement" on storage.objects;
+  drop policy if exists "cv suppression" on storage.objects;
+  create policy "cv lecture" on storage.objects for select to authenticated using (bucket_id = 'cv' and public.peut_voir_cv(name));
+  create policy "cv depot" on storage.objects for insert to authenticated with check (
+    bucket_id = 'cv' and (storage.foldername(name))[1] = auth.uid()::text and lower(storage.extension(name)) = 'pdf');
+  create policy "cv remplacement" on storage.objects for update to authenticated using (bucket_id = 'cv' and (storage.foldername(name))[1] = auth.uid()::text);
+  create policy "cv suppression" on storage.objects for delete to authenticated using (
+    bucket_id = 'cv' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+exception when others then raise notice 'Stockage des CV non configuré : %', sqlerrm;
+end $$;
+
+-- Photos de profil (JPEG, PNG ou WebP, 1 Mo au plus) : chacun dépose dans son dossier,
+-- les membres connectés les voient par des liens temporaires ; l'administration peut en retirer une.
+do $$ begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('photos', 'photos', false, 1048576, array['image/jpeg','image/png','image/webp'])
+    on conflict (id) do update set public = false, file_size_limit = 1048576, allowed_mime_types = array['image/jpeg','image/png','image/webp'];
+  drop policy if exists "photos lecture" on storage.objects;
+  drop policy if exists "photos depot" on storage.objects;
+  drop policy if exists "photos suppression" on storage.objects;
+  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos' and public.photo_de_mon_ecole(name));
+  create policy "photos depot" on storage.objects for insert to authenticated with check (
+    bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text and lower(storage.extension(name)) in ('webp','jpg','png'));
+  create policy "photos suppression" on storage.objects for delete to authenticated using (
+    bucket_id = 'photos' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+exception when others then raise notice 'Stockage des photos non configuré : %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Temps réel des nouveautés
+-- ---------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['coordonnees','demandes_contact','maj_tables','relectures_cv','relecture_commentaires','guide_pays','signalements','enquetes_insertion'] loop
+      if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- Alertes d'offres par email : chaque heure (s'il y a des offres récentes)
+do $$ begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-alertes', '5 * * * *', 'select public.alertes_horaires()');
+  end if;
+end $$;
+
+-- =====================================================================
+-- Messagerie : texte, photos et messages vocaux entre deux membres déjà en lien
+-- (mentorat, candidature à une offre, coordonnées acceptées, parrainage, relecture de CV),
+-- ou avec l'administration. Les fichiers vont dans un stockage privé « chat »,
+-- rangés par auteur puis destinataire : <auteur>/<destinataire>/<fichier>.
+-- =====================================================================
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  dest_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null default 'texte' check (type in ('texte','photo','vocal')),
+  body text check (char_length(body) <= 2000),
+  fichier text check (char_length(fichier) <= 300),
+  duree int check (duree between 0 and 180),
+  largeur int check (largeur between 1 and 10000),
+  hauteur int check (hauteur between 1 and 10000),
+  onde text check (onde ~ '^[0-9]{0,64}$'),
+  lu_at timestamptz,
+  created_at timestamptz default now(),
+  check (author_id <> dest_id),
+  check (type <> 'texte' or char_length(btrim(coalesce(body, ''))) > 0),
+  check (type = 'texte' or fichier is not null)
+);
+create index if not exists messages_dest_lu on public.messages (dest_id, lu_at);
+create index if not exists messages_paire on public.messages (author_id, dest_id, created_at desc);
+-- Répondre à un message précis : la citation renvoie à un message de la même conversation.
+-- Pas de clé étrangère : un message supprimé pour les deux laisse « Message supprimé » à sa place, sans garder son texte.
+alter table public.messages add column if not exists reponse_a uuid;
+
+-- Entretien proposé dans la discussion (type 'rdv', surtout après un match de la page Match) : date, durée (15 à 120 min),
+-- lieu (vide = en visio) ou lien de visio (Jitsi créé par le site, ou Meet / Teams collé), la réponse du destinataire
+-- (repondre_rdv, plus bas : « Je serai là » = oui, « Autre horaire » = autre). body = une note facultative (500 au plus).
+alter table public.messages add column if not exists rdv_at timestamptz;
+alter table public.messages add column if not exists rdv_duree int check (rdv_duree between 15 and 120);
+alter table public.messages add column if not exists rdv_lieu text check (char_length(rdv_lieu) <= 200);
+alter table public.messages add column if not exists rdv_lien text check (rdv_lien ~* '^https://[^[:space:]]+$' and char_length(rdv_lien) <= 300);
+alter table public.messages add column if not exists rdv_reponse text check (rdv_reponse in ('oui','autre'));
+alter table public.messages drop constraint if exists messages_type_check;
+alter table public.messages add constraint messages_type_check check (type in ('texte','photo','vocal','rdv'));
+-- Un entretien n'a pas de fichier : l'ancienne règle sans nom (« un fichier, sauf pour un texte ») devient messages_fichier_requis
+do $$
+declare r record;
+begin
+  for r in select c.conname from pg_constraint c where c.conrelid = 'public.messages'::regclass and c.contype = 'c'
+      and c.conname <> 'messages_fichier_requis' and pg_get_constraintdef(c.oid) ~* 'fichier is not null' loop
+    execute format('alter table public.messages drop constraint %I', r.conname);
+  end loop;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.messages'::regclass and conname = 'messages_fichier_requis') then
+    alter table public.messages add constraint messages_fichier_requis check (type in ('texte','rdv') or fichier is not null);
+  end if;
+end $$;
+
+-- « Bloquer » : plus aucun message dans un sens ni dans l'autre
+create table if not exists public.blocages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  bloque_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (user_id, bloque_id),
+  check (user_id <> bloque_id)
+);
+
+-- Deux membres peuvent s'écrire quand un lien existe déjà entre eux, ou quand l'autre
+-- a écrit en premier. L'administration peut écrire à tout le monde. Un blocage ferme tout.
+-- Redéfinie dans la section « Match » (fin du fichier), avec le match en plus : c'est la DERNIÈRE définition qui compte.
+create or replace function public.peut_discuter(p_moi uuid, p_autre uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select p_moi is not null and p_autre is not null and p_moi <> p_autre
+    and (auth.uid() is null or auth.uid() = p_moi)
+    and exists (select 1 from public.profiles where id = p_autre)
+    and not exists (select 1 from public.blocages b
+      where (b.user_id = p_moi and b.bloque_id = p_autre) or (b.user_id = p_autre and b.bloque_id = p_moi))
+    and (
+      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin')
+      or exists (select 1 from public.messages m where m.author_id = p_autre and m.dest_id = p_moi)
+      or public.en_relation(p_moi, p_autre) or public.en_relation(p_autre, p_moi)
+      or exists (select 1 from public.mentorships m where m.mentor_id is not null and m.status in ('demande','acceptee','terminee')
+        and ((m.student_id = p_moi and m.mentor_id = p_autre) or (m.student_id = p_autre and m.mentor_id = p_moi)))
+      or exists (select 1 from public.parrainages x
+        where (x.parrain_id = p_moi and x.filleul_id = p_autre) or (x.parrain_id = p_autre and x.filleul_id = p_moi))
+      or exists (select 1 from public.relectures_cv r where r.reviewer_id is not null and r.status <> 'annulee'
+        and ((r.student_id = p_moi and r.reviewer_id = p_autre) or (r.student_id = p_autre and r.reviewer_id = p_moi)))
+      or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id where x.status in ('envoyee','acceptee')
+        and ((d.auteur_id = p_moi and x.laureat_id = p_autre) or (d.auteur_id = p_autre and x.laureat_id = p_moi))));
+$$;
+revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
+grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
+
+create or replace function public.uuid_ou_null(p text) returns uuid
+language plpgsql immutable as $$
+begin return p::uuid; exception when others then return null; end $$;
+
+create or replace function public.protect_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.messages;
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.author_id := auth.uid(); end if;
+    new.lu_at := null; new.created_at := now();
+    new.body := nullif(btrim(new.body), '');
+    if new.type = 'texte' then new.fichier := null; new.duree := null; new.largeur := null; new.hauteur := null; new.onde := null; end if;
+    if new.type = 'photo' then new.duree := null; new.onde := null; end if;
+    if new.type = 'vocal' then new.body := null; new.largeur := null; new.hauteur := null; end if;
+    -- Entretien : une date à venir (4 mois au plus), une durée, un lieu ou un lien ; jamais de fichier ; la réponse vient après
+    if new.type = 'rdv' then
+      new.fichier := null; new.duree := null; new.largeur := null; new.hauteur := null; new.onde := null; new.rdv_reponse := null;
+      new.rdv_lieu := nullif(btrim(new.rdv_lieu), ''); new.rdv_lien := nullif(btrim(new.rdv_lien), '');
+      if new.rdv_at is null or new.rdv_at <= now() or new.rdv_at > now() + interval '120 days' then
+        raise exception 'Choisis une date à venir, dans les 4 prochains mois.';
+      end if;
+      if new.rdv_duree is null then raise exception 'Choisis la durée de l’entretien.'; end if;
+      if char_length(coalesce(new.body, '')) > 500 then raise exception 'La note est trop longue (500 caractères au plus).'; end if;
+    else
+      new.rdv_at := null; new.rdv_duree := null; new.rdv_lieu := null; new.rdv_lien := null; new.rdv_reponse := null;
+    end if;
+    if new.fichier is not null and new.fichier not like new.author_id::text || '/' || new.dest_id::text || '/%' then
+      raise exception 'Fichier invalide.';
+    end if;
+    -- On ne cite qu'un message de cette conversation (sinon la citation est simplement retirée)
+    if new.reponse_a is not null and not exists (select 1 from public.messages m where m.id = new.reponse_a
+        and ((m.author_id = new.author_id and m.dest_id = new.dest_id) or (m.author_id = new.dest_id and m.dest_id = new.author_id))) then
+      new.reponse_a := null;
+    end if;
+    if auth.uid() is not null and not public.peut_discuter(new.author_id, new.dest_id) then
+      raise exception 'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.';
+    end if;
+    return new;
+  end if;
+  -- Ensuite, seule la date de lecture change, et seulement par le destinataire ; pour un entretien à venir, sa réponse aussi
+  -- (par repondre_rdv : la table n'a pas de règle de modification pour les membres)
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if auth.uid() <> old.dest_id then raise exception 'Action non autorisée pour ton compte.'; end if;
+  v := old;
+  v.lu_at := coalesce(old.lu_at, case when new.lu_at is not null then now() end);
+  if old.type = 'rdv' and new.rdv_reponse is distinct from old.rdv_reponse then
+    if old.rdv_at is null or old.rdv_at <= now() then raise exception 'Cet entretien est déjà passé.'; end if;
+    v.rdv_reponse := new.rdv_reponse;
+  end if;
+  return v;
+end $$;
+drop trigger if exists trg_protect_message on public.messages;
+create trigger trg_protect_message before insert or update on public.messages
+  for each row execute function public.protect_message();
+drop trigger if exists trg_limite on public.messages;
+create trigger trg_limite before insert on public.messages
+  for each row execute function public.limiter('author_id', '300', '1 day');
+
+create or replace function public.protect_blocage() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null then new.user_id := auth.uid(); end if;
+  new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_protect_blocage on public.blocages;
+create trigger trg_protect_blocage before insert on public.blocages
+  for each row execute function public.protect_blocage();
+
+-- Tout ce que l'autre m'a écrit est lu (ouvrir la conversation)
+create or replace function public.marquer_lus(p_de uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if auth.uid() is null then return 0; end if;
+  update public.messages set lu_at = now() where author_id = p_de and dest_id = auth.uid() and lu_at is null;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.marquer_lus(uuid) from public, anon;
+grant execute on function public.marquer_lus(uuid) to authenticated;
+
+-- Réponse à un entretien proposé : seulement le destinataire, seulement tant qu'il est à venir (« oui » = je serai là,
+-- « autre » = un autre horaire) ; on peut changer d'avis jusque-là. L'auteur est prévenu (catégorie « Messages »).
+create or replace function public.repondre_rdv(p_id uuid, p_reponse text) returns public.messages
+language plpgsql security definer set search_path = public as $$
+declare m public.messages; v_avant text;
+begin
+  if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
+  if p_reponse is null or p_reponse not in ('oui','autre') then raise exception 'Réponse invalide.'; end if;
+  select * into m from public.messages where id = p_id and type = 'rdv';
+  if m.id is null or m.dest_id <> auth.uid() then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if m.rdv_at is null or m.rdv_at <= now() then raise exception 'Cet entretien est déjà passé.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then
+    raise exception 'Vous ne pouvez plus vous écrire.';
+  end if;
+  v_avant := m.rdv_reponse;
+  update public.messages set rdv_reponse = p_reponse where id = p_id returning * into m;
+  if v_avant is distinct from p_reponse then
+    perform public.pousser(m.author_id, 'rdv_reponse', jsonb_build_object(
+      'nom', split_part((select full_name from public.profiles where id = m.dest_id), ' ', 1), 'de', m.dest_id, 'm', m.id,
+      'reponse', p_reponse, 'rdv_at', m.rdv_at));
+  end if;
+  return m;
+end $$;
+revoke all on function public.repondre_rdv(uuid, text) from public, anon;
+grant execute on function public.repondre_rdv(uuid, text) to authenticated;
+
+-- Notification sur le téléphone : une par message. Le notifier lui donne le même tag pour toute la conversation
+-- (message-<auteur>) : le téléphone remplace la précédente au lieu d'empiler, et sonne de nouveau. Elle montre le
+-- dernier message et, s'il y en a plusieurs non lus de cette personne, leur nombre (n).
+-- Calme : moins de 20 secondes après la précédente de la conversation (notif_cadence, section « Notifications pour
+-- tout »), elle remplace l'aperçu sans sonner ni vibrer ; le dernier message d'une rafale est donc toujours affiché.
+create or replace function public.notif_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_n int; v_calme boolean;
+begin
+  if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
+  -- Personne à prévenir sur un téléphone : rien ne part, le journal le dit (-1)
+  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then
+    perform public.noter_push(new.dest_id, case when new.type = 'rdv' then 'rdv_message' else 'message' end, -1);
+    return null;
+  end if;
+  -- Un entretien proposé : sa propre notification (catégorie « Messages »), la date et la durée, sans l'aperçu d'un message
+  if new.type = 'rdv' then
+    perform public.pousser(new.dest_id, 'rdv_message', jsonb_build_object(
+      'nom', split_part((select full_name from public.profiles where id = new.author_id), ' ', 1), 'de', new.author_id, 'm', new.id,
+      'rdv_at', new.rdv_at, 'duree', new.rdv_duree, 'lieu', new.rdv_lieu));
+    return null;
+  end if;
+  v_calme := not public.cadence('message:' || new.author_id || ':' || new.dest_id, interval '20 seconds');
+  select count(*) into v_n from public.messages m
+    where m.author_id = new.author_id and m.dest_id = new.dest_id and m.lu_at is null and m.created_at > now() - interval '30 days';
+  perform public.pousser(new.dest_id, 'message', jsonb_build_object(
+    'nom', (select full_name from public.profiles where id = new.author_id), 'de', new.author_id,
+    'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1), 'calme', v_calme));
+  return null;
+exception when others then raise warning 'notif_message : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.messages;
+create trigger trg_notif after insert on public.messages for each row execute function public.notif_message();
+
+-- Signalement d'un message privé : l'administration le voit alors (et seulement alors)
+alter table public.signalements drop constraint if exists signalements_cible_type_check;
+alter table public.signalements add constraint signalements_cible_type_check
+  check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande','reponse_demande'));
+
+create or replace function public.message_signale(p_id uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id);
+$$;
+
+alter table public.messages enable row level security;
+alter table public.blocages enable row level security;
+drop policy if exists "lecture membres" on public.messages;
+drop policy if exists "ecriture proprietaire" on public.messages;
+drop policy if exists "suppression proprietaire" on public.messages;
+create policy "lecture membres" on public.messages for select to authenticated using (
+  author_id = auth.uid() or dest_id = auth.uid() or (public.is_admin() and public.message_signale(id)));
+create policy "ecriture proprietaire" on public.messages for insert to authenticated with check (author_id = auth.uid());
+create policy "suppression proprietaire" on public.messages for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+drop policy if exists "lecture membres" on public.blocages;
+drop policy if exists "ecriture proprietaire" on public.blocages;
+drop policy if exists "suppression proprietaire" on public.blocages;
+create policy "lecture membres" on public.blocages for select to authenticated using (user_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.blocages for insert to authenticated with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.blocages for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- Réactions à un message : une par personne et par message, parmi quelques émojis calmes.
+-- Seules les deux personnes de la conversation les voient ; un blocage les arrête aussi.
+create table if not exists public.reactions_messages (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.messages(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  emoji text not null check (emoji in ('👍','❤️','😂','😮','🙏','👏')),
+  created_at timestamptz default now(),
+  unique (message_id, user_id)
+);
+create index if not exists reactions_messages_message on public.reactions_messages (message_id);
+
+create or replace function public.protect_reaction_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m public.messages;
+begin
+  if tg_op = 'UPDATE' then
+    new.message_id := old.message_id; new.user_id := old.user_id; new.created_at := old.created_at;
+  else
+    if auth.uid() is not null then new.user_id := auth.uid(); end if;
+    new.created_at := now();
+  end if;
+  -- Même l'administration ne réagit que dans ses propres conversations (elle ne lit pas celles des autres)
+  if auth.uid() is null then return new; end if;
+  select * into m from public.messages where id = new.message_id;
+  if m.id is null or new.user_id not in (m.author_id, m.dest_id) then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then
+    raise exception 'Vous ne pouvez plus vous écrire.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reaction_message on public.reactions_messages;
+create trigger trg_protect_reaction_message before insert or update on public.reactions_messages
+  for each row execute function public.protect_reaction_message();
+drop trigger if exists trg_limite on public.reactions_messages;
+create trigger trg_limite before insert on public.reactions_messages
+  for each row execute function public.limiter('user_id', '500', '1 day');
+
+alter table public.reactions_messages enable row level security;
+drop policy if exists "lecture conversation" on public.reactions_messages;
+drop policy if exists "ecriture proprietaire" on public.reactions_messages;
+drop policy if exists "modif proprietaire" on public.reactions_messages;
+drop policy if exists "suppression proprietaire" on public.reactions_messages;
+create policy "lecture conversation" on public.reactions_messages for select to authenticated using (
+  exists (select 1 from public.messages m where m.id = message_id and (m.author_id = auth.uid() or m.dest_id = auth.uid())));
+create policy "ecriture proprietaire" on public.reactions_messages for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.reactions_messages for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.reactions_messages for delete to authenticated using (user_id = auth.uid());
+
+-- Photos et vocaux : 5 Mo au plus ; lus par les deux personnes de la conversation seulement
+create or replace function public.peut_lire_fichier_chat(p_name text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select auth.uid() is not null and (
+    (storage.foldername(p_name))[1] = auth.uid()::text or (storage.foldername(p_name))[2] = auth.uid()::text
+    or (public.is_admin() and exists (select 1 from public.messages m where m.fichier = p_name and public.message_signale(m.id))));
+$$;
+do $$ begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('chat', 'chat', false, 5242880, array['image/jpeg','image/png','image/webp','audio/webm','audio/ogg','audio/mp4','audio/mpeg','audio/aac'])
+    on conflict (id) do update set public = false, file_size_limit = 5242880,
+      allowed_mime_types = array['image/jpeg','image/png','image/webp','audio/webm','audio/ogg','audio/mp4','audio/mpeg','audio/aac'];
+  drop policy if exists "chat lecture" on storage.objects;
+  drop policy if exists "chat depot" on storage.objects;
+  drop policy if exists "chat suppression" on storage.objects;
+  create policy "chat lecture" on storage.objects for select to authenticated using (bucket_id = 'chat' and public.peut_lire_fichier_chat(name));
+  create policy "chat depot" on storage.objects for insert to authenticated with check (
+    bucket_id = 'chat' and (storage.foldername(name))[1] = auth.uid()::text
+    and public.peut_discuter(auth.uid(), public.uuid_ou_null((storage.foldername(name))[2])));
+  create policy "chat suppression" on storage.objects for delete to authenticated using (
+    bucket_id = 'chat' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+exception when others then raise notice 'Stockage de la messagerie non configuré : %', sqlerrm;
+end $$;
+
+-- Email quand un message attend depuis 30 minutes sans être lu (un toutes les 6 heures au plus)
+alter table public.notif_etat add column if not exists messages_at timestamptz;
+
+create or replace function public.messages_a_signaler(p_max int default 100)
+returns table (id uuid, email text, langue text, token uuid, n int, noms jsonb)
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  return query
+    select p.id, u.email::text, p.langue, ne.token, count(*)::int,
+      (select jsonb_agg(x.full_name) from (select distinct a.full_name from public.messages m2 join public.profiles a on a.id = m2.author_id
+         where m2.dest_id = p.id and m2.lu_at is null and m2.created_at > now() - interval '3 days' limit 3) x)
+    from public.messages m
+      join public.profiles p on p.id = m.dest_id
+      join auth.users u on u.id = p.id
+      join public.notif_etat ne on ne.user_id = p.id
+    where m.lu_at is null and p.emails_messages and u.email is not null
+      and m.created_at < now() - interval '30 minutes' and m.created_at > now() - interval '3 days'
+      and m.created_at > coalesce(ne.messages_at, '-infinity'::timestamptz)
+      and (ne.messages_at is null or ne.messages_at < now() - interval '6 hours')
+    group by p.id, u.email, p.langue, ne.token
+    order by min(m.created_at)
+    limit greatest(0, least(p_max, 200));
+end $$;
+revoke all on function public.messages_a_signaler(int) from public, anon, authenticated;
+
+create or replace function public.messages_signales(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  update public.notif_etat set messages_at = now() where user_id = any(p_ids);
+$$;
+revoke all on function public.messages_signales(uuid[]) from public, anon, authenticated;
+
+create or replace function public.se_desabonner_messages(p_token uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  select user_id into v from public.notif_etat where token = p_token;
+  if v is null then return false; end if;
+  update public.profiles set emails_messages = false where id = v;
+  return true;
+end $$;
+revoke all on function public.se_desabonner_messages(uuid) from public;
+grant execute on function public.se_desabonner_messages(uuid) to anon, authenticated;
+
+-- Chaque heure : alertes d'offres, et emails des messages non lus
+create or replace function public.alertes_horaires() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from public.offers where created_at > now() - interval '3 hours' and status = 'ouverte') then
+    perform public.appeler_notifier('alertes');
+  end if;
+  -- Demandes des 3 derniers jours : chaque lauréat concerné reçoit au plus un email par jour (la base choisit qui).
+  -- Cette définition remplace celle de la section « Alertes » : elle doit garder tous les appels.
+  if exists (select 1 from public.demandes where created_at > now() - interval '3 days' and status = 'ouverte') then
+    perform public.appeler_notifier('demandes');
+  end if;
+  if exists (select 1 from public.messages where lu_at is null and created_at between now() - interval '3 days' and now() - interval '30 minutes') then
+    perform public.appeler_notifier('messages');
+  end if;
+  -- Demandes qui viennent de s'ouvrir à tous les lauréats : une notification aux autres lauréats, une seule fois
+  -- (section « Notifications pour tout », à la fin) ; une erreur ici n'empêche pas le reste
+  begin
+    perform public.demandes_larges_push();
+  exception when others then raise warning 'demandes_larges_push : %', sqlerrm;
+  end;
+  -- Au même passage : une demande du parcours toujours sans aide après un jour (demande_attente_push, section
+  -- « Nouvelles notifications », à la fin). Toutes deux ne font rien hors de 8 h – 21 h.
+  begin
+    perform public.demande_attente_push();
+  exception when others then raise warning 'Demandes sans aide : %', sqlerrm;
+  end;
+end $$;
+revoke all on function public.alertes_horaires() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.messages_a_signaler(int) to service_role;
+    grant execute on function public.messages_signales(uuid[]) to service_role;
+  end if;
+end $$;
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['messages','blocages','reactions_messages'] loop
+      if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Lecture des CV : une proposition fausse est signalée, par le membre ou par l'administration.
+-- On garde ce qui a été proposé, ce qui est juste et les lignes de formation lues (sans téléphone
+-- ni email), pour corriger la lecture. Visible par l'auteur, le membre concerné et l'administration.
+-- ---------------------------------------------------------------------
+create table if not exists public.retours_cv (
+  id uuid primary key default gen_random_uuid(),
+  profil_id uuid not null references public.profiles(id) on delete cascade,
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  cv_path text check (char_length(cv_path) <= 300),
+  proposition jsonb not null default '{}'::jsonb,
+  juste text check (char_length(juste) <= 300),
+  extrait text check (char_length(extrait) <= 2000),
+  status text not null default 'ouvert' check (status in ('ouvert','corrige')),
+  created_at timestamptz default now()
+);
+
+create or replace function public.protect_retour_cv() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.auteur_id := auth.uid(); end if;
+    new.status := 'ouvert'; new.created_at := now();
+    return new;
+  end if;
+  -- Ensuite, seul le statut change
+  new.profil_id := old.profil_id; new.auteur_id := old.auteur_id; new.cv_path := old.cv_path; new.proposition := old.proposition;
+  new.juste := old.juste; new.extrait := old.extrait; new.created_at := old.created_at;
+  return new;
+end $$;
+drop trigger if exists trg_protect_retour_cv on public.retours_cv;
+create trigger trg_protect_retour_cv before insert or update on public.retours_cv
+  for each row execute function public.protect_retour_cv();
+drop trigger if exists trg_limite on public.retours_cv;
+create trigger trg_limite before insert on public.retours_cv for each row execute function public.limiter('auteur_id', '10', '1 day');
+
+alter table public.retours_cv enable row level security;
+drop policy if exists "lecture membres" on public.retours_cv;
+drop policy if exists "ecriture proprietaire" on public.retours_cv;
+drop policy if exists "modif proprietaire" on public.retours_cv;
+drop policy if exists "suppression proprietaire" on public.retours_cv;
+create policy "lecture membres" on public.retours_cv for select to authenticated using (auteur_id = auth.uid() or profil_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.retours_cv for insert to authenticated with check (auteur_id = auth.uid() and (profil_id = auth.uid() or public.is_admin()));
+create policy "modif proprietaire" on public.retours_cv for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.retours_cv for delete to authenticated using (public.is_admin());
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='retours_cv') then
+    alter publication supabase_realtime add table public.retours_cv;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Rappel d'inscription : un seul email, aux comptes créés depuis plus de 24 h sans profil
+-- (envoyé par la tâche quotidienne ; on garde seulement la date d'envoi)
+-- ---------------------------------------------------------------------
+create table if not exists public.relances_inscription (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  envoye_at timestamptz not null default now()
+);
+alter table public.relances_inscription enable row level security;
+revoke all on public.relances_inscription from anon, authenticated;
+
+create or replace function public.comptes_a_relancer(p_max int default 100)
+returns table (id uuid, email text, langue text)
+language sql stable security definer set search_path = public as $$
+  select u.id, u.email::text, case when u.raw_user_meta_data->>'langue' = 'ar' then 'ar' else 'fr' end
+  from auth.users u
+  where u.email is not null
+    and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
+    -- Un code demandé mais jamais entré (adresse tapée par erreur, code pas reçu) n'est pas un compte ouvert :
+    -- seule la connexion notée à la création existe (le mot de passe, tiré au hasard par Supabase, ne dit rien)
+    and not (coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
+             and u.last_sign_in_at is not null and u.last_sign_in_at <= u.created_at + interval '5 seconds')
+    and not exists (select 1 from public.profiles p where p.id = u.id)
+    and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
+  order by u.created_at
+  limit greatest(0, least(p_max, 200));
+$$;
+revoke all on function public.comptes_a_relancer(int) from public, anon, authenticated;
+
+create or replace function public.relances_envoyees(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.relances_inscription (user_id)
+    select u.id from auth.users u where u.id = any(p_ids)
+  on conflict (user_id) do nothing;
+$$;
+revoke all on function public.relances_envoyees(uuid[]) from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.comptes_a_relancer(int) to service_role;
+    grant execute on function public.relances_envoyees(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Demandes des étudiants (tables plus haut, près des réussites)
+--   1. L'étudiant publie ce qu'il cherche (2 demandes en cours au plus, CV obligatoire).
+--      Types selon l'année : 3A/4A stage ou étranger ; 5A PFE, étranger ou emploi ;
+--      jeune diplômé ou lauréat qui cherche un emploi : emploi.
+--   2. Un lauréat propose son aide ; son message arrive aussi dans la messagerie de l'étudiant.
+--   3. L'étudiant en accepte une : match (les autres sont closes). Chacun peut arrêter :
+--      la demande se rouvre.
+--   4. Le lauréat déclare le démarrage (placements.demande_id), l'étudiant confirme :
+--      la demande est pourvue.
+-- Une demande ouverte sans nouvelle depuis 60 jours se met en pause (relancee_at) : l'étudiant la relance.
+-- ---------------------------------------------------------------------
+create or replace function public.types_demande(p_role text, p_niveau int, p_recherche boolean) returns text[]
+language sql immutable as $$
+  select case
+    when p_role = 'laureat' then case when coalesce(p_recherche, false) then '{emploi}'::text[] else '{}'::text[] end
+    when p_role is distinct from 'etudiant' then '{}'::text[]
+    when p_niveau in (3, 4) then '{stage,etranger}'::text[]
+    when p_niveau = 5 then '{pfe,etranger,emploi}'::text[]
+    when p_niveau >= 6 then '{emploi}'::text[]
+    else '{}'::text[] end;
+$$;
+
+create or replace function public.protect_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_p record; v public.demandes;
+begin
+  -- Suites automatiques (match, pourvue) : faites par la base elle-même
+  if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  if auth.uid() is null or public.is_admin() then
+    if tg_op = 'UPDATE' then new.updated_at := now(); end if;
+    return new;
+  end if;
+  select role, promo, en_recherche, cv_path into v_p from public.profiles where id = auth.uid();
+  if tg_op = 'INSERT' then
+    new.auteur_id := auth.uid();
+    if not (new.type = any(public.types_demande(v_p.role, public.niveau_de(v_p.promo, public.saison_courante()), v_p.en_recherche))) then
+      raise exception 'Ce type de demande ne correspond pas à ton année.';
+    end if;
+    if v_p.cv_path is null then raise exception 'Dépose d’abord ton CV en PDF dans ton profil.'; end if;
+    if (select count(*) from public.demandes d where d.auteur_id = auth.uid() and d.status in ('ouverte','match')) >= 2 then
+      raise exception 'Tu as déjà 2 demandes en cours. Ferme-en une avant d’en publier une autre.';
+    end if;
+    new.status := 'ouverte'; new.laureat_id := null; new.proposition_id := null; new.match_at := null;
+    new.relancee_at := now(); new.created_at := now(); new.updated_at := now();
+    return new;
+  end if;
+  -- Ensuite, seul l'auteur change sa demande
+  if auth.uid() is distinct from old.auteur_id then raise exception 'Action non autorisée pour ton compte.'; end if;
+  v := new;
+  new := old;
+  new.updated_at := now();
+  if old.status = 'ouverte' then
+    new.titre := v.titre; new.details := v.details; new.lieu := v.lieu; new.debut := v.debut; new.duree := v.duree;
+    if v.type = any(public.types_demande(v_p.role, public.niveau_de(v_p.promo, public.saison_courante()), v_p.en_recherche)) then new.type := v.type; end if;
+    if v.relancee_at is distinct from old.relancee_at then new.relancee_at := now(); end if;
+  end if;
+  if v.status is distinct from old.status then
+    if old.status in ('ouverte','match') and v.status = 'fermee' then new.status := 'fermee';
+    elsif old.status = 'match' and v.status = 'ouverte' then new.status := 'ouverte';
+    elsif old.status = 'fermee' and v.status = 'ouverte' then
+      if (select count(*) from public.demandes d where d.auteur_id = auth.uid() and d.status in ('ouverte','match')) >= 2 then
+        raise exception 'Tu as déjà 2 demandes en cours. Ferme-en une avant d’en rouvrir une autre.';
+      end if;
+      new.status := 'ouverte';
+    end if;
+    if new.status = 'ouverte' and old.status <> 'ouverte' then
+      new.laureat_id := null; new.proposition_id := null; new.match_at := null; new.relancee_at := now();
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_demande on public.demandes;
+create trigger trg_protect_demande before insert or update on public.demandes
+  for each row execute function public.protect_demande();
+
+create or replace function public.protect_proposition() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record; v public.propositions;
+begin
+  if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    select d.status, d.auteur_id into v_d from public.demandes d where d.id = new.demande_id;
+    if not exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then raise exception 'Seul un lauréat peut proposer son aide.'; end if;
+    if v_d.status is distinct from 'ouverte' then raise exception 'Cette demande n’est plus ouverte.'; end if;
+    if v_d.auteur_id = auth.uid() then raise exception 'C’est ta propre demande.'; end if;
+    if exists (select 1 from public.blocages b where (b.user_id = auth.uid() and b.bloque_id = v_d.auteur_id) or (b.user_id = v_d.auteur_id and b.bloque_id = auth.uid())) then
+      raise exception 'Action non autorisée pour ton compte.';
+    end if;
+    new.laureat_id := auth.uid(); new.status := 'envoyee'; new.repondu_at := null; new.created_at := now();
+    return new;
+  end if;
+  select d.status, d.auteur_id into v_d from public.demandes d where d.id = old.demande_id;
+  v := new;
+  new := old;
+  if auth.uid() = old.laureat_id then
+    -- Le lauréat retire son aide (avant ou après le match), la modifie tant qu'elle attend, ou la propose à nouveau
+    if v.status = 'retiree' and old.status in ('envoyee','acceptee') and v_d.status <> 'pourvue' then
+      new.status := 'retiree'; new.repondu_at := now();
+    elsif (old.status = 'envoyee' or (old.status = 'retiree' and v.status = 'envoyee')) and v_d.status = 'ouverte' then
+      new.aide := v.aide; new.entreprise := v.entreprise; new.poste := v.poste; new.message := v.message;
+      if old.status = 'retiree' then new.status := 'envoyee'; new.repondu_at := null; new.created_at := now(); end if;
+    end if;
+  elsif auth.uid() = v_d.auteur_id then
+    -- L'étudiant accepte une aide (une seule) ou dit non merci
+    if old.status = 'envoyee' and v.status = 'acceptee' then
+      if v_d.status <> 'ouverte' then raise exception 'Tu as déjà accepté une aide pour cette demande.'; end if;
+      new.status := 'acceptee'; new.repondu_at := now();
+    elsif old.status = 'envoyee' and v.status = 'declinee' then
+      new.status := 'declinee'; new.repondu_at := now();
+    end if;
+  else
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_proposition on public.propositions;
+create trigger trg_protect_proposition before insert or update on public.propositions
+  for each row execute function public.protect_proposition();
+
+-- Ce qui suit une aide proposée, acceptée ou retirée
+create or replace function public.suite_proposition() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record; v_neuve boolean; v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+  v_push text := coalesce(current_setting('ensam.sans_push_message', true), '');
+begin
+  select d.id, d.auteur_id, d.titre, d.status into v_d from public.demandes d where d.id = new.demande_id;
+  if tg_op = 'UPDATE' then v_neuve := old.status = 'retiree' and new.status = 'envoyee'; else v_neuve := true; end if;
+  if v_neuve then
+    -- Le mot du lauréat arrive aussi dans la messagerie de l'étudiant (et par email s'il ne le lit pas)
+    perform set_config('ensam.sans_push_message', 'on', true);
+    begin
+      insert into public.messages (author_id, dest_id, type, body) values (new.laureat_id, v_d.auteur_id, 'texte', left(new.message, 2000));
+    exception when others then null;
+    end;
+    perform set_config('ensam.sans_push_message', v_push, true);
+    perform public.pousser(v_d.auteur_id, 'demande_proposition', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'entreprise', new.entreprise, 'demande', v_d.id,
+      'n', (select count(*) from public.propositions y where y.demande_id = v_d.id and y.status = 'envoyee')));
+    return null;
+  end if;
+  if new.status = old.status then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  if new.status = 'acceptee' then
+    update public.demandes set status = 'match', laureat_id = new.laureat_id, proposition_id = new.id, match_at = now(), updated_at = now() where id = new.demande_id;
+    update public.propositions set status = 'close', repondu_at = now() where demande_id = new.demande_id and id <> new.id and status = 'envoyee';
+    perform public.pousser(new.laureat_id, 'demande_match', jsonb_build_object('nom', (select full_name from public.profiles where id = v_d.auteur_id), 'titre', v_d.titre, 'demande', v_d.id));
+  elsif old.status = 'acceptee' and new.status = 'retiree' then
+    update public.demandes set status = 'ouverte', laureat_id = null, proposition_id = null, match_at = null, relancee_at = now(), updated_at = now()
+      where id = new.demande_id and status = 'match' and proposition_id = new.id;
+    update public.placements set status = 'refuse' where demande_id = new.demande_id and laureat_id = new.laureat_id and status = 'en_attente';
+    perform public.pousser(v_d.auteur_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'demande', v_d.id, 'pour', 'auteur'));
+  end if;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_suite_proposition on public.propositions;
+create trigger trg_suite_proposition after insert or update on public.propositions
+  for each row execute function public.suite_proposition();
+
+-- Ce qui suit une demande arrêtée, rouverte, fermée ou pourvue
+create or replace function public.suite_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  if new.status = old.status then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  -- v_avant = 'on' : le lauréat s'est retiré (suite_proposition a déjà tout fait et prévenu l'étudiant)
+  if old.status = 'match' and new.status in ('ouverte','fermee') and v_avant is distinct from 'on' then
+    -- L'étudiant arrête le match : l'aide acceptée se termine, une déclaration en attente aussi
+    update public.propositions set status = case when new.status = 'ouverte' then 'declinee' else 'close' end, repondu_at = now()
+      where id = old.proposition_id and status = 'acceptee';
+    update public.placements set status = 'refuse' where demande_id = new.id and status = 'en_attente';
+    perform public.pousser(old.laureat_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.auteur_id), 'titre', new.titre, 'demande', new.id, 'pour', 'aidant'));
+  end if;
+  if new.status in ('fermee','pourvue') then
+    update public.propositions set status = 'close', repondu_at = now() where demande_id = new.id and status = 'envoyee';
+  end if;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_suite_demande on public.demandes;
+create trigger trg_suite_demande after update on public.demandes
+  for each row execute function public.suite_demande();
+
+-- Démarrage confirmé par l'étudiant (ou par l'administration) : la demande est pourvue
+create or replace function public.demande_reussie() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  if new.demande_id is null or new.status <> 'confirme' or (tg_op = 'UPDATE' and old.status = 'confirme') then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes set status = 'pourvue', updated_at = now() where id = new.demande_id and status in ('ouverte','match');
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_demande_reussie on public.placements;
+create trigger trg_demande_reussie after insert or update on public.placements
+  for each row execute function public.demande_reussie();
+
+-- Nouvelle demande : les lauréats du même parcours qui ont activé les notifications sont prévenus (150 au plus : même
+-- filière d'abord, puis les plus actifs ; les autres la retrouvent dans le rappel du soir et dans demande_attente)
+create or replace function public.notif_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  select full_name, filiere into v_a from public.profiles where id = new.auteur_id;
+  insert into public.push_queue (user_id, kind, data)
+  select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
+  from public.profiles p
+  where p.role = 'laureat' and p.id <> new.auteur_id and p.ecole = new.ecole and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
+    and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
+  order by public.proximite_filiere(p.filiere, v_a.filiere) desc, public.derniere_visite(p.id) desc nulls last
+  limit 150;
+  return null;
+exception when others then raise warning 'notif_demande : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.demandes;
+create trigger trg_notif after insert on public.demandes for each row execute function public.notif_demande();
+
+drop trigger if exists trg_limite on public.demandes;
+create trigger trg_limite before insert on public.demandes for each row execute function public.limiter('auteur_id', '5', '1 day', 'titre');
+drop trigger if exists trg_limite on public.propositions;
+create trigger trg_limite before insert on public.propositions for each row execute function public.limiter('laureat_id', '20', '1 day');
+
+-- Qui voit quoi : la demande, son auteur et les lauréats ; une aide, le lauréat qui la propose et l'auteur de la demande
+alter table public.demandes enable row level security;
+alter table public.propositions enable row level security;
+drop policy if exists "lecture membres" on public.demandes;
+drop policy if exists "ecriture proprietaire" on public.demandes;
+drop policy if exists "modif proprietaire" on public.demandes;
+drop policy if exists "suppression proprietaire" on public.demandes;
+create policy "lecture membres" on public.demandes for select to authenticated using (
+  auteur_id = auth.uid() or public.is_admin() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'laureat'));
+create policy "ecriture proprietaire" on public.demandes for insert to authenticated with check (auteur_id = auth.uid());
+create policy "modif proprietaire" on public.demandes for update to authenticated using (auteur_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.demandes for delete to authenticated using (
+  (auteur_id = auth.uid() and status in ('ouverte','fermee')) or public.is_admin());
+drop policy if exists "lecture membres" on public.propositions;
+drop policy if exists "ecriture proprietaire" on public.propositions;
+drop policy if exists "modif proprietaire" on public.propositions;
+drop policy if exists "suppression proprietaire" on public.propositions;
+create policy "lecture membres" on public.propositions for select to authenticated using (
+  laureat_id = auth.uid() or public.is_admin() or exists (select 1 from public.demandes d where d.id = demande_id and d.auteur_id = auth.uid()));
+create policy "ecriture proprietaire" on public.propositions for insert to authenticated with check (laureat_id = auth.uid());
+create policy "modif proprietaire" on public.propositions for update to authenticated using (
+  laureat_id = auth.uid() or public.is_admin() or exists (select 1 from public.demandes d where d.id = demande_id and d.auteur_id = auth.uid()));
+create policy "suppression proprietaire" on public.propositions for delete to authenticated using (public.is_admin());
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['demandes','propositions'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- Email aux lauréats : les demandes de leur parcours, et celles restées sans aide ; une fois par jour au plus
+alter table public.notif_etat add column if not exists demandes_at timestamptz;
+
+-- Une demande que personne de son parcours n'a prise s'ouvre à tous les lauréats : tout de suite quand l'étudiant
+-- n'a pas encore de parcours (prépa, filière non renseignée), 24 h après sa publication sinon
+create or replace function public.demande_large_le(d public.demandes) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select case when cardinality(coalesce(public.parcours_de((select a.filiere from public.profiles a where a.id = d.auteur_id)), '{}'::text[])) = 0
+    then d.created_at else d.created_at + interval '24 hours' end;
+$$;
+
+alter table public.demandes add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
+language sql stable as $$
+  select d.status = 'ouverte' and d.auteur_id <> p.id and p.role = 'laureat' and d.ecole = p.ecole
+    and d.relancee_at > now() - interval '60 days'
+    and (public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+         or public.demande_large_le(d) <= now())
+    and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = d.auteur_id) or (b.user_id = d.auteur_id and b.bloque_id = p.id));
+$$;
+
+-- Ce qu'un lauréat a déjà reçu par email : une demande ne lui est envoyée qu'une fois (lu par le serveur seulement)
+create table if not exists public.demandes_emails (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (user_id, demande_id)
+);
+alter table public.demandes_emails enable row level security;
+
+-- Les demandes à envoyer à un lauréat (5 au plus) : celles de son parcours publiées depuis le dernier email,
+-- puis celles des autres parcours encore sans aucune aide (large = true). Jamais deux fois la même.
+create or replace function public.demandes_email_pour(p_id uuid, p_depuis timestamptz) returns table (id uuid, large boolean)
+language sql stable security definer set search_path = public as $$
+  select d.id, x.prox = 0 as large
+  from public.profiles p
+  join public.demandes d on public.demande_pour(d, p)
+  join public.profiles a on a.id = d.auteur_id
+  cross join lateral (select public.proximite_filiere(p.filiere, a.filiere) as prox) x
+  where p.id = p_id and d.created_at > now() - interval '30 days'
+    and not exists (select 1 from public.demandes_emails e where e.user_id = p.id and e.demande_id = d.id)
+    and case when x.prox >= 1 then d.created_at > coalesce(p_depuis, '-infinity'::timestamptz)
+             else not exists (select 1 from public.propositions y where y.demande_id = d.id and y.status <> 'retiree') end
+  order by x.prox desc, d.created_at desc
+  limit 5;
+$$;
+revoke all on function public.demandes_email_pour(uuid, timestamptz) from public, anon, authenticated;
+
+create or replace function public.demandes_a_signaler(p_max int default 100)
+returns table (id uuid, email text, langue text, token uuid, demandes jsonb)
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante();
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  return query
+    select x.id, x.email, x.langue, x.token, x.demandes from (
+      select p.id, u.email::text as email, p.langue, n.token, n.demandes_at,
+        (select jsonb_agg(jsonb_build_object('id', d.id, 'titre', d.titre, 'type', d.type, 'lieu', d.lieu,
+            'prenom', split_part(a.full_name, ' ', 1), 'niveau', public.niveau_de(a.promo, v_s), 'role', a.role, 'filiere', a.filiere,
+            'large', c.large) order by c.large, d.created_at desc)
+          from public.demandes_email_pour(p.id, n.demandes_at) c join public.demandes d on d.id = c.id join public.profiles a on a.id = d.auteur_id) as demandes
+      from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
+      where p.role = 'laureat' and p.alertes_email and u.email is not null
+        and (n.demandes_at is null or n.demandes_at < now() - interval '20 hours')) x
+    where x.demandes is not null
+    order by x.demandes_at nulls first
+    limit greatest(0, least(p_max, 200));
+end $$;
+revoke all on function public.demandes_a_signaler(int) from public, anon, authenticated;
+
+-- Après l'envoi : ces demandes ne repartiront plus vers ces lauréats
+create or replace function public.demandes_signalees(p_ids uuid[]) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.demandes_emails (user_id, demande_id)
+    select n.user_id, c.id from public.notif_etat n cross join lateral public.demandes_email_pour(n.user_id, n.demandes_at) c
+    where n.user_id = any(p_ids)
+  on conflict do nothing;
+  update public.notif_etat set demandes_at = now() where user_id = any(p_ids);
+end $$;
+revoke all on function public.demandes_signalees(uuid[]) from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.demandes_a_signaler(int) to service_role;
+    grant execute on function public.demandes_signalees(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- « Cette semaine dans le réseau » : même calcul que poulsReseau() dans logic.js. Les relectures et les propositions
+-- ne sont pas lisibles par tous : sans cette fonction, chacun verrait un chiffre différent.
+-- Une aide va d'un lauréat vers un étudiant : rendez-vous passé, relecture rendue, recrutement confirmé, proposition acceptée.
+-- Que des totaux et les 4 lauréats les plus récents (déjà visibles dans l'annuaire), jamais qui a aidé qui.
+create or replace function public.pouls_reseau() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with brut as (
+    select m.mentor_id as l, m.student_id as s, coalesce(m.rdv_at, m.accepted_at) as at, 'rdv' as k from public.mentorships m
+      where m.mentor_id is not null and m.status = 'terminee'
+    union all select r.reviewer_id, r.student_id, r.rendue_at, 'cv' from public.relectures_cv r where r.status = 'rendue'
+    union all select p.laureat_id, p.student_id, p.confirmed_at, 'recrute' from public.placements p where p.status = 'confirme'
+    union all select x.laureat_id, d.auteur_id, x.repondu_at, 'match' from public.propositions x join public.demandes d on d.id = x.demande_id where x.status = 'acceptee'
+  ), aides as (
+    select b.* from brut b
+      join public.profiles pl on pl.id = b.l and pl.role = 'laureat'
+      join public.profiles ps on ps.id = b.s and ps.role = 'etudiant'
+    where b.at <= now() and b.at >= now() - interval '30 days' and pl.ecole = public.mon_ecole() and ps.ecole = public.mon_ecole()
+  ), fenetre as (
+    select case when (select count(distinct l) from aides where at >= now() - interval '7 days') >= 2 then 7 else 30 end as jours
+  ), f as (select a.* from aides a, fenetre w where a.at >= now() - make_interval(days => w.jours))
+  select case when auth.uid() is null then null else jsonb_build_object(
+    'jours', (select jours from fenetre),
+    'nb_aidants', (select count(distinct l) from f),
+    'nb_aides', (select count(distinct s) from f),
+    'recrutes', (select count(*) from f where k = 'recrute'),
+    'aidants', coalesce((select jsonb_agg(l order by dernier desc) from (select l, max(at) as dernier from f group by l order by dernier desc limit 4) t), '[]'::jsonb)
+  ) end;
+$$;
+revoke all on function public.pouls_reseau() from public, anon;
+grant execute on function public.pouls_reseau() to authenticated;
+
+-- Page d'entrée (visiteur sans compte) : trois totaux, jamais un nom ni une ligne.
+-- Lauréats inscrits (l'administration n'est pas comptée), leurs promos, et les entreprises où ils travaillent.
+-- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
+create or replace function public.chiffres_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles
+    where role = 'laureat' and not admin_ok and ecole = coalesce(public.mon_ecole(), 'ensam-meknes')),
+  ks as (select distinct k from l where k is not null and k <> '')
+  select jsonb_build_object(
+    'laureats', (select count(*) from l),
+    'promos', (select count(distinct promo) from l),
+    -- Une clé dont un début de mots est aussi une clé (« renault tanger med » / « renault ») ne compte pas :
+    -- comparaison par égalité sur chaque début, linéaire (un LIKE clé contre clé serait quadratique)
+    'entreprises', (select count(*) from ks) - (select count(distinct a.k) from ks a
+      cross join lateral generate_series(1, array_length(string_to_array(a.k, ' '), 1) - 1) i
+      join ks b on b.k = array_to_string((string_to_array(a.k, ' '))[1:i], ' ')));
+$$;
+revoke all on function public.chiffres_publics() from public;
+grant execute on function public.chiffres_publics() to anon, authenticated;
+
+-- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
+-- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
+create or replace function public.offre_partagee(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
+  from public.offers o where o.id = p_id;
+$$;
+revoke all on function public.offre_partagee(uuid) from public;
+grant execute on function public.offre_partagee(uuid) to anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution
+-- (même règle que classementFondateurs() dans logic.js) : une offre publiée pour les étudiants (pas « entre lauréats » ni un partage vu ailleurs ;
+-- pourvue ou fermée, elle compte ; supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant
+-- (sauf retirée par le lauréat), un mentorat accepté ou terminé avec un étudiant. Jamais l'administration.
+-- Égalité : le type (aide, mentorat, offre), puis l'id.
+-- fondateur_public : le fondateur accepte que son nom et sa photo soient sur la page d'entrée (null = pas encore demandé).
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists fondateur_public boolean;
+create index if not exists profiles_photo_fondateur on public.profiles (photo_path) where fondateur_public;
+
+create or replace function public.fondateurs_classement() returns table (id uuid, at timestamptz, type text, rang int)
+language sql stable security definer set search_path = public as $$
+  with c as (
+    select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
+      where coalesce(o.audience, 'etudiants') = 'etudiants' and o.origine is distinct from 'partagee'
+    union all select x.laureat_id, x.created_at, 'aide' from public.propositions x
+      join public.demandes d on d.id = x.demande_id
+      join public.profiles s on s.id = d.auteur_id and s.role = 'etudiant'
+      where x.status <> 'retiree'
+    union all select m.mentor_id, coalesce(m.accepted_at, m.created_at), 'mentorat' from public.mentorships m
+      join public.profiles s on s.id = m.student_id and s.role = 'etudiant'
+      where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
+  ), premiere as (
+    select distinct on (c.l) c.l, c.at, c.k from c
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+      where c.at is not null
+      order by c.l, c.at, c.k
+  )
+  select l, at, k, (row_number() over (order by at, l))::int from premiere order by at, l limit 25;
+$$;
+revoke all on function public.fondateurs_classement() from public, anon, authenticated;
+
+-- Le bandeau des fondateurs. Un membre connecté reçoit tout le classement (les profils lui sont déjà visibles) et
+-- son propre choix (mon_choix). Un visiteur sans compte reçoit les totaux, et seulement les fondateurs qui ont dit oui
+-- (prénom et nom, filière, promo, type et date de la première contribution, chemin de la photo) ; pas de champ id,
+-- mais le chemin de la photo commence par l'id du membre (photos/<id>/…) : il n'est donné que pour qui a dit oui.
+create or replace function public.fondateurs_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with f as (
+    select c.id, c.at, c.type, c.rang, p.full_name, p.filiere, p.promo, p.photo_path, p.verified, p.fondateur_public
+    from public.fondateurs_classement() c join public.profiles p on p.id = c.id
+  ), qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre)
+  select jsonb_build_object(
+    'max', 25,
+    'total', (select count(*) from f),
+    'places', greatest(0, 25 - (select count(*) from f)),
+    'mon_choix', case when q.membre then (select to_jsonb(fondateur_public) from public.profiles where id = auth.uid()) end,
+    'fondateurs', coalesce((select jsonb_agg(jsonb_build_object(
+        'id', case when q.membre then f.id end, 'rang', f.rang, 'type', f.type, 'at', f.at,
+        'nom', f.full_name, 'filiere', f.filiere, 'promo', f.promo, 'photo', f.photo_path, 'verifie', coalesce(f.verified, false))
+        order by f.rang) from f where q.membre or f.fondateur_public is true), '[]'::jsonb))
+  from qui q;
+$$;
+revoke all on function public.fondateurs_publics() from public;
+grant execute on function public.fondateurs_publics() to anon, authenticated;
+
+-- Seul le membre lui-même dit oui : l'administration peut le retirer de la page d'entrée, jamais l'y mettre
+create or replace function public.protect_fondateur_public() returns trigger
+language plpgsql as $$
+begin
+  if auth.uid() is not null and new.id is distinct from auth.uid() and new.fondateur_public is true and old.fondateur_public is distinct from true then
+    new.fondateur_public := old.fondateur_public;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_fondateur_public on public.profiles;
+create trigger trg_protect_fondateur_public before update of fondateur_public on public.profiles
+  for each row execute function public.protect_fondateur_public();
+
+-- Photos de la page d'entrée : le stockage « photos » reste privé ; un visiteur peut seulement obtenir un lien temporaire
+-- (createSignedUrl) vers la photo actuelle d'un fondateur qui a dit oui. Rien d'autre n'est lisible sans compte.
+create or replace function public.photo_fondateur_publique(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  -- D'abord le profil (index partiel, une ligne au plus) : le classement n'est calculé que pour une photo consentie
+  select p.id into v from public.profiles p where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
+  if v is null then return false; end if;
+  return exists (select 1 from public.fondateurs_classement() c where c.id = v);
+end $$;
+revoke all on function public.photo_fondateur_publique(text) from public;
+grant execute on function public.photo_fondateur_publique(text) to anon;
+do $$ begin
+  drop policy if exists "photos fondateurs publics" on storage.objects;
+  create policy "photos fondateurs publics" on storage.objects for select to anon using (bucket_id = 'photos' and public.photo_fondateur_publique(name));
+exception when others then raise notice 'Photos des fondateurs non configurées : %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Ambassadeurs de promo : pour chaque promo × filière, la plateforme propose le rôle au membre le plus actif
+-- (offres, aides proposées, mentorats, réponses, connexions récentes ; étudiant ou lauréat ; jamais l'administration).
+-- Il accepte ou refuse ; 7 jours sans réponse ou un refus : le suivant. Un seul ambassadeur en cours par promo × filière.
+-- Pas de tâche planifiée : ambassadeurs_proposer() est appelée à l'ouverture de l'appli (le groupe du membre ;
+-- tous les groupes pour l'administration). Mêmes règles que candidatsAmbassadeur() dans logic.js.
+-- statut : propose | accepte | refuse | expire (7 jours sans réponse) | retire (par lui ou par l'administration)
+-- ---------------------------------------------------------------------
+create table if not exists public.ambassadeurs (
+  id uuid primary key default gen_random_uuid(),
+  promo int not null check (promo between 1990 and 2040),
+  filiere text not null check (char_length(filiere) between 1 and 120),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  statut text not null default 'propose' check (statut in ('propose','accepte','refuse','expire','retire')),
+  par text not null default 'auto' check (par in ('auto','admin')),
+  propose_at timestamptz not null default now(),
+  repondu_at timestamptz,
+  created_at timestamptz not null default now()
+);
+-- Qui a retiré (membre, admin, systeme : changement de promo ou de filière) et le statut d'avant : chacun n'annule que son geste
+alter table public.ambassadeurs add column if not exists retire_par text check (retire_par in ('membre','admin','systeme'));
+alter table public.ambassadeurs add column if not exists statut_avant text check (statut_avant in ('propose','accepte'));
+alter table public.ambassadeurs add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+drop index if exists public.ambassadeurs_un_en_cours;
+create unique index if not exists ambassadeurs_ecole_en_cours on public.ambassadeurs (ecole, promo, filiere) where statut in ('propose','accepte');
+create index if not exists ambassadeurs_membre on public.ambassadeurs (user_id);
+-- Le classement compte l'activité de chaque membre : un index par auteur (sinon une lecture complète par membre)
+create index if not exists offers_auteur on public.offers (author_id);
+create index if not exists propositions_laureat on public.propositions (laureat_id);
+create index if not exists mentorships_mentor on public.mentorships (mentor_id);
+create index if not exists mentorships_etudiant on public.mentorships (student_id);
+create index if not exists answers_auteur on public.answers (author_id);
+create index if not exists questions_auteur on public.questions (author_id);
+-- Dernier passage sans personne à proposer, par groupe : un groupe sans candidat n'est recalculé qu'une fois par heure
+create table if not exists public.ambassadeurs_passages (
+  promo int not null,
+  filiere text not null,
+  at timestamptz not null default now(),
+  primary key (promo, filiere)
+);
+alter table public.ambassadeurs_passages add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+alter table public.ambassadeurs_passages drop constraint if exists ambassadeurs_passages_pkey;
+alter table public.ambassadeurs_passages add primary key (ecole, promo, filiere);
+alter table public.ambassadeurs_passages enable row level security;
+revoke all on public.ambassadeurs_passages from anon, authenticated;
+alter table public.ambassadeurs enable row level security;
+-- Les membres voient les ambassadeurs acceptés (badge, merci) ; chacun voit ses propres lignes ; l'administration tout
+drop policy if exists "ambassadeurs lecture" on public.ambassadeurs;
+create policy "ambassadeurs lecture" on public.ambassadeurs for select to authenticated
+  using (statut = 'accepte' or user_id = auth.uid() or public.is_admin());
+-- L'administration nomme à la main : une proposition, que le membre accepte ou non
+drop policy if exists "ambassadeurs nommer" on public.ambassadeurs;
+create policy "ambassadeurs nommer" on public.ambassadeurs for insert to authenticated
+  with check (public.is_admin() and statut = 'propose' and par = 'admin');
+drop policy if exists "ambassadeurs repondre" on public.ambassadeurs;
+create policy "ambassadeurs repondre" on public.ambassadeurs for update to authenticated
+  using (user_id = auth.uid() or public.is_admin()) with check (user_id = auth.uid() or public.is_admin());
+revoke all on public.ambassadeurs from anon, authenticated;
+grant select, insert, update on public.ambassadeurs to authenticated;
+
+-- Une nomination prend la promo, la filière et l'école du membre ; jamais un administrateur
+create or replace function public.protect_ambassadeur_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v record;
+begin
+  select promo, filiere, role, ecole into v from public.profiles where id = new.user_id;
+  if v is null or v.role not in ('etudiant','laureat') then raise exception 'Seul un étudiant ou un lauréat peut être ambassadeur' using errcode = '42501'; end if;
+  -- Un seul groupe à la fois
+  if exists (select 1 from public.ambassadeurs a where a.user_id = new.user_id and a.statut in ('propose','accepte')) then
+    raise exception 'Déjà ambassadeur ou déjà proposé' using errcode = '23505';
+  end if;
+  new.promo := v.promo; new.filiere := v.filiere; new.propose_at := now(); new.created_at := now(); new.repondu_at := null;
+  -- L'école du membre, pas celle de l'administration qui le nomme (la valeur par défaut de la colonne)
+  new.ecole := coalesce(v.ecole, new.ecole);
+  new.retire_par := null; new.statut_avant := null;
+  if current_setting('ensam.amb_systeme', true) = 'on' then new.par := 'auto'; new.statut := 'propose'; end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_ambassadeur_insert on public.ambassadeurs;
+create trigger trg_protect_ambassadeur_insert before insert on public.ambassadeurs
+  for each row execute function public.protect_ambassadeur_insert();
+
+-- Qui change quoi : le membre accepte ou refuse (dans les 7 jours), se retire ; il peut annuler son geste dans les
+-- 10 minutes (le « Annuler » du message du bas). L'administration retire, et peut annuler son retrait (retour au statut
+-- d'avant, jamais plus) ; elle n'accepte jamais à la place du membre. Chacun n'annule que son propre retrait.
+create or replace function public.protect_ambassadeur() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_frais boolean := old.repondu_at is not null and old.repondu_at > now() - interval '10 minutes';
+  v_ouvert boolean := old.propose_at > now() - interval '7 days';
+begin
+  new.id := old.id; new.promo := old.promo; new.filiere := old.filiere; new.user_id := old.user_id; new.par := old.par;
+  new.propose_at := old.propose_at; new.created_at := old.created_at;
+  if new.statut = old.statut then
+    new.repondu_at := old.repondu_at; new.retire_par := old.retire_par; new.statut_avant := old.statut_avant; return new;
+  end if;
+  if current_setting('ensam.amb_systeme', true) = 'on' or auth.uid() is null then
+    if new.statut = 'retire' and new.retire_par is null then new.retire_par := 'systeme'; new.statut_avant := old.statut; end if;
+    return new;
+  end if;
+  new.retire_par := old.retire_par; new.statut_avant := old.statut_avant;
+  if old.user_id = auth.uid() and (
+       (old.statut = 'propose' and new.statut in ('accepte','refuse') and v_ouvert)
+    or (old.statut = 'accepte' and new.statut = 'retire')
+    or (old.statut = 'refuse' and new.statut = 'propose' and v_frais and v_ouvert)
+    or (old.statut = 'retire' and new.statut = 'accepte' and v_frais and old.retire_par = 'membre')) then
+    new.repondu_at := case when new.statut = 'propose' then null else now() end;
+    if new.statut = 'retire' then new.retire_par := 'membre'; new.statut_avant := old.statut;
+    else new.retire_par := null; new.statut_avant := null; end if;
+    return new;
+  end if;
+  if public.is_admin() and old.user_id is distinct from auth.uid() then
+    if old.statut in ('propose','accepte') and new.statut = 'retire' then
+      new.repondu_at := now(); new.retire_par := 'admin'; new.statut_avant := old.statut;
+      return new;
+    end if;
+    if old.statut = 'retire' and old.retire_par = 'admin' and new.statut = old.statut_avant and v_frais then
+      new.repondu_at := case when new.statut = 'propose' then null else now() end;
+      new.retire_par := null; new.statut_avant := null;
+      return new;
+    end if;
+  end if;
+  raise exception 'Changement non autorisé' using errcode = '42501';
+end $$;
+drop trigger if exists trg_protect_ambassadeur on public.ambassadeurs;
+create trigger trg_protect_ambassadeur before update on public.ambassadeurs
+  for each row execute function public.protect_ambassadeur();
+
+-- Changer de promo, de filière ou de rôle met fin au rôle dans l'ancien groupe (jamais ambassadeur d'un groupe où l'on
+-- n'est plus, ni de deux groupes) : ses propositions et son rôle en cours passent à « retire » (par le systeme).
+create or replace function public.ambassadeur_change_groupe() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := current_setting('ensam.amb_systeme', true);
+begin
+  if new.promo is not distinct from old.promo and new.filiere is not distinct from old.filiere and new.role is not distinct from old.role then return null; end if;
+  if not exists (select 1 from public.ambassadeurs a where a.user_id = new.id and a.statut in ('propose','accepte')) then return null; end if;
+  perform set_config('ensam.amb_systeme', 'on', true);
+  update public.ambassadeurs set statut = 'retire', repondu_at = now(), retire_par = 'systeme', statut_avant = statut
+    where user_id = new.id and statut in ('propose','accepte');
+  perform set_config('ensam.amb_systeme', coalesce(v_avant, 'off'), true);
+  return null;
+end $$;
+revoke all on function public.ambassadeur_change_groupe() from public, anon, authenticated;
+drop trigger if exists trg_ambassadeur_change_groupe on public.profiles;
+create trigger trg_ambassadeur_change_groupe after update of promo, filiere, role on public.profiles
+  for each row execute function public.ambassadeur_change_groupe();
+
+-- Les membres d'un groupe qui peuvent être proposés, du plus actif au moins actif (égalité : le plus ancien inscrit).
+-- Points : offre 3 (offre partagée, vue ailleurs : 1), aide proposée 3, mentorat accepté ou terminé 3 (1 pour l'étudiant aidé), réponse 2, question 1,
+-- connexion dans les 30 derniers jours 2 (seulement pour qui a déjà agi). Rien fait, pas proposé. Déjà refusé, expiré ou retiré dans ce groupe : jamais.
+-- Déjà proposé (depuis moins de 7 jours) ou ambassadeur ailleurs : pas ici (un seul groupe à la fois).
+create or replace function public.ambassadeur_candidats(p_promo int, p_filiere text)
+returns table (id uuid, score int, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select p.id, s.score, p.created_at
+  from public.profiles p
+  cross join lateral (select (
+      3 * (select count(*) from public.offers o where o.author_id = p.id and o.origine is distinct from 'partagee')
+    + 1 * (select count(*) from public.offers o where o.author_id = p.id and o.origine = 'partagee')
+    + 3 * (select count(*) from public.propositions x where x.laureat_id = p.id and x.status <> 'retiree')
+    + 3 * (select count(*) from public.mentorships m where m.mentor_id = p.id and m.status in ('acceptee','terminee'))
+    + 1 * (select count(*) from public.mentorships m where m.student_id = p.id and m.status in ('acceptee','terminee'))
+    + 2 * (select count(*) from public.answers a where a.author_id = p.id)
+    + 1 * (select count(*) from public.questions q where q.author_id = p.id)
+  )::int as actions) x
+  -- La connexion récente départage ceux qui ont agi ; seule, elle ne suffit pas (rien fait, pas proposé)
+  cross join lateral (select x.actions + case when x.actions > 0
+      and (select u.last_sign_in_at from auth.users u where u.id = p.id) > now() - interval '30 days' then 2 else 0 end as score) s
+  where p.promo = p_promo and p.filiere = p_filiere and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes') and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
+    and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id and a.promo = p_promo and a.filiere = p_filiere
+      and (a.statut in ('refuse','expire','retire') or (a.statut = 'propose' and a.propose_at <= now() - interval '7 days')))
+    and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id
+      and (a.statut = 'accepte' or (a.statut = 'propose' and a.propose_at > now() - interval '7 days')))
+    and s.score > 0
+  order by s.score desc, p.created_at asc, p.id asc;
+$$;
+revoke all on function public.ambassadeur_candidats(int, text) from public, anon, authenticated;
+
+-- Appelée à l'ouverture de l'appli : expire les propositions de plus de 7 jours, puis propose le suivant.
+-- Renvoie le nombre de lignes changées (0 : rien à relire). Un groupe sans personne à proposer n'est recalculé
+-- qu'une fois par heure (ambassadeurs_passages) ; un groupe qui échoue (donnée inattendue) n'arrête pas les autres.
+create or replace function public.ambassadeurs_proposer() returns int
+language plpgsql security definer set search_path = public as $$
+declare g record; v_id uuid; n int := 0; k int; v_admin boolean := public.is_admin(); v_moi record;
+begin
+  if auth.uid() is null then return 0; end if;
+  select promo, filiere, role, ecole into v_moi from public.profiles where id = auth.uid();
+  if v_moi is null then return 0; end if;
+  perform set_config('ensam.amb_systeme', 'on', true);
+  for g in select distinct p.promo, p.filiere from public.profiles p
+    where p.role in ('etudiant','laureat') and p.ecole = v_moi.ecole and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
+      and (v_admin or (p.promo = v_moi.promo and p.filiere = v_moi.filiere))
+  loop
+    begin
+      update public.ambassadeurs set statut = 'expire', repondu_at = now()
+        where ecole = v_moi.ecole and promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
+      get diagnostics k = row_count; n := n + k;
+      if exists (select 1 from public.ambassadeurs a where a.ecole = v_moi.ecole and a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
+      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.ecole = v_moi.ecole and x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
+      v_id := null;
+      select c.id into v_id from public.ambassadeur_candidats(g.promo, g.filiere) c limit 1;
+      if v_id is null then
+        insert into public.ambassadeurs_passages (ecole, promo, filiere, at) values (v_moi.ecole, g.promo, g.filiere, now())
+          on conflict (ecole, promo, filiere) do update set at = excluded.at;
+        continue;
+      end if;
+      insert into public.ambassadeurs (ecole, promo, filiere, user_id) values (v_moi.ecole, g.promo, g.filiere, v_id) on conflict do nothing;
+      get diagnostics k = row_count; n := n + k;
+    exception when others then null;
+    end;
+  end loop;
+  perform set_config('ensam.amb_systeme', 'off', true);
+  return n;
+end $$;
+revoke all on function public.ambassadeurs_proposer() from public, anon;
+grant execute on function public.ambassadeurs_proposer() to authenticated;
+
+-- Les chiffres vrais d'une promo × filière : depuis toujours, et pendant le mois qui commence à p_debut.
+-- Comme chiffresPromo() dans logic.js.
+drop function if exists public.chiffres_groupe(int, text, timestamptz);
+create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz, p_ecole text default null)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')
+    and p.ecole = coalesce(p_ecole, public.mon_ecole(), 'ensam-meknes')),
+  d as (select x.updated_at, x.created_at from public.demandes x join m on m.id = x.auteur_id where x.status = 'pourvue'),
+  s as (select coalesce(x.confirmed_at, x.created_at) as t from public.placements x join m on m.id = x.student_id where x.status in ('declare','confirme'))
+  select jsonb_build_object(
+    'inscrits', (select count(*) from m),
+    'nouveaux', (select count(*) from m where m.created_at >= p_debut and m.created_at < p_debut + interval '1 month'),
+    'demandes', (select count(*) from d),
+    'demandes_mois', (select count(*) from d where coalesce(d.updated_at, d.created_at) >= p_debut and coalesce(d.updated_at, d.created_at) < p_debut + interval '1 month'),
+    'stages', (select count(*) from s),
+    'stages_mois', (select count(*) from s where s.t >= p_debut and s.t < p_debut + interval '1 month'));
+$$;
+revoke all on function public.chiffres_groupe(int, text, timestamptz, text) from public, anon, authenticated;
+
+-- L'ambassadeur (accepté) lit les chiffres de sa promo ; l'administration ceux de n'importe quel groupe
+create or replace function public.chiffres_ma_promo(p_debut timestamptz default null, p_promo int default null, p_filiere text default null)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare a record; v_debut timestamptz := coalesce(p_debut, date_trunc('month', now()));
+begin
+  if public.is_admin() and p_promo is not null and p_filiere is not null then
+    return public.chiffres_groupe(p_promo, p_filiere, v_debut) || jsonb_build_object('promo', p_promo, 'filiere', p_filiere, 'debut', v_debut);
+  end if;
+  -- Le groupe actuel du membre : un rôle d'un ancien groupe ne donne rien
+  select x.promo, x.filiere into a from public.ambassadeurs x join public.profiles p on p.id = x.user_id and p.promo = x.promo and p.filiere = x.filiere
+    where x.user_id = auth.uid() and x.statut = 'accepte' limit 1;
+  if a is null then return null; end if;
+  return public.chiffres_groupe(a.promo, a.filiere, v_debut) || jsonb_build_object('promo', a.promo, 'filiere', a.filiere, 'debut', v_debut);
+end $$;
+revoke all on function public.chiffres_ma_promo(timestamptz, int, text) from public, anon;
+grant execute on function public.chiffres_ma_promo(timestamptz, int, text) to authenticated;
+
+-- Pour le résumé de la semaine (notifier, clé de service) : chaque ambassadeur accepté et les chiffres de sa promo
+create or replace function public.chiffres_ambassadeurs(p_debut timestamptz)
+returns table (user_id uuid, promo int, filiere text, chiffres jsonb)
+language sql stable security definer set search_path = public as $$
+  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut, a.ecole)
+  from public.ambassadeurs a join public.profiles p on p.id = a.user_id and p.promo = a.promo and p.filiere = a.filiere
+  where a.statut = 'accepte';
+$$;
+revoke all on function public.chiffres_ambassadeurs(timestamptz) from public, anon, authenticated;
+grant execute on function public.chiffres_ambassadeurs(timestamptz) to service_role;
+
+-- Le temps réel suit la table (les membres voient arriver une proposition ou un nouvel ambassadeur)
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'ambassadeurs') then
+    execute 'alter publication supabase_realtime add table public.ambassadeurs';
+  end if;
+exception when others then raise notice 'Temps réel des ambassadeurs non configuré : %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Réseau vivant : les demandes de sa promo, réactions publiques et réponses sous une demande
+--   1. Un étudiant lit aussi les demandes des étudiants de son année (même niveau) : ouvertes, en match ou
+--      pourvues. Les demandes d'emploi des lauréats qui cherchent restent aux lauréats et à l'administration.
+--      Le CV, les coordonnées et les propositions d'aide restent privés : seul leur nombre se lit (demandes.nb_aides,
+--      tenu par la base : les lauréats qui ont proposé leur aide, sauf ceux qui l'ont retirée), jamais qui ni quoi.
+--   2. Réactions publiques sur une offre ou une demande (👍 ❤️ 👏 🙏 💪) : une par membre et par élément,
+--      modifiable et retirable ; on ne réagit qu'à ce qu'on peut lire, jamais à sa propre publication. Pas de points.
+--      (La table « reactions », utile / mettre de côté, reste telle quelle.)
+--   3. Réponses sous une demande : courtes (500 caractères), lues par ceux qui lisent la demande, signalables, limitées.
+--   4. Notifications : une réaction → au plus une par élément et par heure (vie du réseau) ; une réponse → demandes.
+-- Mêmes règles dans le site (reseau-vivant.js) et la démo (store.js).
+-- ---------------------------------------------------------------------
+create or replace function public.demande_lisible_promo(p_auteur uuid, p_status text) returns boolean
+language sql stable security definer set search_path = public as $$
+  -- Pas les demandes en match : la ligne dirait quel lauréat aide (laureat_id) avant l'annonce de la réussite
+  select coalesce(p_status in ('ouverte','pourvue'), false) and exists (
+    select 1 from public.profiles v join public.profiles a on a.id = p_auteur
+    where v.id = auth.uid() and v.role = 'etudiant' and a.role = 'etudiant' and a.id <> v.id
+      and public.niveau_de(v.promo, public.saison_courante()) = public.niveau_de(a.promo, public.saison_courante())
+      and not exists (select 1 from public.blocages b where (b.user_id = v.id and b.bloque_id = a.id) or (b.user_id = a.id and b.bloque_id = v.id)));
+$$;
+revoke all on function public.demande_lisible_promo(uuid, text) from public, anon;
+grant execute on function public.demande_lisible_promo(uuid, text) to authenticated;
+-- S'ajoute à « lecture membres » (l'auteur, les lauréats, l'administration)
+drop policy if exists "lecture promo" on public.demandes;
+create policy "lecture promo" on public.demandes for select to authenticated using (public.demande_lisible_promo(auteur_id, status));
+
+-- Le nombre de lauréats qui ont proposé leur aide, lisible de tous ceux qui lisent la demande
+alter table public.demandes add column if not exists nb_aides int not null default 0;
+create or replace function public.demande_nb_aides_neuf() returns trigger
+language plpgsql as $$
+begin
+  new.nb_aides := 0;
+  return new;
+end $$;
+drop trigger if exists trg_nb_aides_neuf on public.demandes;
+create trigger trg_nb_aides_neuf before insert on public.demandes for each row execute function public.demande_nb_aides_neuf();
+
+create or replace function public.compter_aides() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid := case when tg_op = 'DELETE' then old.demande_id else new.demande_id end; v_n int;
+  v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  select count(distinct x.laureat_id) into v_n from public.propositions x where x.demande_id = v_id and x.status <> 'retiree';
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes set nb_aides = v_n where id = v_id and nb_aides is distinct from v_n;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_compter_aides on public.propositions;
+create trigger trg_compter_aides after insert or update of status or delete on public.propositions
+  for each row execute function public.compter_aides();
+-- Les demandes d'avant cette mise à jour : leur nombre, une fois (relançable)
+do $$ begin
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes d set nb_aides = coalesce(x.n, 0)
+    from (select d2.id, (select count(distinct y.laureat_id)::int from public.propositions y where y.demande_id = d2.id and y.status <> 'retiree') as n from public.demandes d2) x
+    where x.id = d.id and d.nb_aides is distinct from coalesce(x.n, 0);
+  perform set_config('ensam.demande_suite', '', true);
+end $$;
+
+-- Réactions publiques
+create table if not exists public.reactions_publiques (
+  id uuid primary key default gen_random_uuid(),
+  offer_id uuid references public.offers(id) on delete cascade,
+  demande_id uuid references public.demandes(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  emoji text not null check (emoji in ('👍','❤️','👏','🙏','💪')),
+  created_at timestamptz default now(),
+  constraint reactions_publiques_une_cible check (num_nonnulls(offer_id, demande_id) = 1),
+  constraint reactions_publiques_offre_membre unique (offer_id, user_id),
+  constraint reactions_publiques_demande_membre unique (demande_id, user_id)
+);
+
+create or replace function public.protect_reaction_publique() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_auteur uuid;
+begin
+  if tg_op = 'UPDATE' then
+    -- Seul l'émoji change : jamais l'élément ni la personne
+    new.offer_id := old.offer_id; new.demande_id := old.demande_id; new.user_id := old.user_id; new.created_at := old.created_at;
+    return new;
+  end if;
+  if auth.uid() is not null then new.user_id := auth.uid(); end if;
+  new.created_at := now();
+  if auth.uid() is null then return new; end if;
+  if new.offer_id is not null then select o.author_id into v_auteur from public.offers o where o.id = new.offer_id;
+  else select d.auteur_id into v_auteur from public.demandes d where d.id = new.demande_id; end if;
+  if v_auteur = new.user_id then raise exception 'Tu ne réagis pas à ta propre publication.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = new.user_id and b.bloque_id = v_auteur) or (b.user_id = v_auteur and b.bloque_id = new.user_id)) then
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reaction_publique on public.reactions_publiques;
+create trigger trg_protect_reaction_publique before insert or update on public.reactions_publiques
+  for each row execute function public.protect_reaction_publique();
+drop trigger if exists trg_limite on public.reactions_publiques;
+create trigger trg_limite before insert on public.reactions_publiques
+  for each row execute function public.limiter('user_id', '300', '1 day');
+
+-- Une réaction sur mon offre ou ma demande : une notification au plus par élément et par heure
+-- (le téléphone remplace la précédente du même élément ; elle dit combien de réactions il y a)
+create table if not exists public.reactions_notif (
+  cible_id uuid primary key,
+  at timestamptz not null default now()
+);
+alter table public.reactions_notif enable row level security;
+create or replace function public.notif_reaction_publique() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_auteur uuid; v_titre text; v_cible uuid := coalesce(new.offer_id, new.demande_id); v_n int;
+begin
+  if new.offer_id is not null then select o.author_id, o.titre into v_auteur, v_titre from public.offers o where o.id = new.offer_id;
+  else select d.auteur_id, d.titre into v_auteur, v_titre from public.demandes d where d.id = new.demande_id; end if;
+  if v_auteur is null or v_auteur = new.user_id then return null; end if;
+  if exists (select 1 from public.reactions_notif r where r.cible_id = v_cible and r.at > now() - interval '1 hour') then return null; end if;
+  insert into public.reactions_notif (cible_id, at) values (v_cible, now()) on conflict (cible_id) do update set at = excluded.at;
+  select count(*) into v_n from public.reactions_publiques r where r.offer_id = new.offer_id or r.demande_id = new.demande_id;
+  perform public.pousser(v_auteur, 'reaction', jsonb_build_object('nom', (select full_name from public.profiles where id = new.user_id),
+    'emoji', new.emoji, 'n', v_n, 'titre', v_titre)
+    || case when new.offer_id is not null then jsonb_build_object('offre', new.offer_id) else jsonb_build_object('demande', new.demande_id) end);
+  return null;
+exception when others then raise warning 'notif_reaction_publique : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.reactions_publiques;
+create trigger trg_notif after insert on public.reactions_publiques for each row execute function public.notif_reaction_publique();
+
+alter table public.reactions_publiques enable row level security;
+drop policy if exists "lecture membres" on public.reactions_publiques;
+drop policy if exists "ecriture proprietaire" on public.reactions_publiques;
+drop policy if exists "modif proprietaire" on public.reactions_publiques;
+drop policy if exists "suppression proprietaire" on public.reactions_publiques;
+-- Lire ou réagir : seulement ce que les règles de l'offre ou de la demande laissent lire
+create policy "lecture membres" on public.reactions_publiques for select to authenticated using (
+  (reactions_publiques.offer_id is not null and exists (select 1 from public.offers o where o.id = reactions_publiques.offer_id))
+  or (reactions_publiques.demande_id is not null and exists (select 1 from public.demandes d where d.id = reactions_publiques.demande_id)));
+create policy "ecriture proprietaire" on public.reactions_publiques for insert to authenticated with check (user_id = auth.uid() and (
+  (reactions_publiques.offer_id is not null and exists (select 1 from public.offers o where o.id = reactions_publiques.offer_id))
+  or (reactions_publiques.demande_id is not null and exists (select 1 from public.demandes d where d.id = reactions_publiques.demande_id))));
+create policy "modif proprietaire" on public.reactions_publiques for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.reactions_publiques for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- Réponses sous une demande
+create table if not exists public.reponses_demandes (
+  id uuid primary key default gen_random_uuid(),
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(btrim(body)) between 2 and 500),
+  created_at timestamptz default now()
+);
+create index if not exists reponses_demandes_demande on public.reponses_demandes (demande_id);
+
+create or replace function public.protect_reponse_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record;
+begin
+  if tg_op = 'UPDATE' then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if auth.uid() is not null then new.author_id := auth.uid(); end if;
+  new.body := btrim(new.body); new.created_at := now();
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  select d.status, d.auteur_id into v_d from public.demandes d where d.id = new.demande_id;
+  if v_d.status is null or v_d.status = 'fermee' then raise exception 'Cette demande est fermée.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = new.author_id and b.bloque_id = v_d.auteur_id) or (b.user_id = v_d.auteur_id and b.bloque_id = new.author_id)) then
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reponse_demande on public.reponses_demandes;
+create trigger trg_protect_reponse_demande before insert or update on public.reponses_demandes
+  for each row execute function public.protect_reponse_demande();
+drop trigger if exists trg_limite on public.reponses_demandes;
+create trigger trg_limite before insert on public.reponses_demandes
+  for each row execute function public.limiter('author_id', '30', '1 day', 'body');
+
+-- Une réponse sous ma demande : une notification (catégorie demandes), au plus une toutes les 30 minutes par
+-- demande et par personne qui répond (supprimer puis republier ne renvoie pas de notification)
+create table if not exists public.reponses_notif (
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (demande_id, author_id)
+);
+alter table public.reponses_notif enable row level security;
+create or replace function public.notif_reponse_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record;
+begin
+  select d.id, d.auteur_id, d.titre into v_d from public.demandes d where d.id = new.demande_id;
+  if v_d.auteur_id is null or v_d.auteur_id = new.author_id then return null; end if;
+  if exists (select 1 from public.reponses_notif r where r.demande_id = new.demande_id and r.author_id = new.author_id
+      and r.at > now() - interval '30 minutes') then return null; end if;
+  insert into public.reponses_notif (demande_id, author_id, at) values (new.demande_id, new.author_id, now())
+    on conflict (demande_id, author_id) do update set at = excluded.at;
+  perform public.pousser(v_d.auteur_id, 'demande_reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
+    'titre', v_d.titre, 'texte', left(new.body, 140), 'demande', v_d.id));
+  return null;
+exception when others then raise warning 'notif_reponse_demande : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif on public.reponses_demandes;
+create trigger trg_notif after insert on public.reponses_demandes for each row execute function public.notif_reponse_demande();
+
+alter table public.reponses_demandes enable row level security;
+drop policy if exists "lecture membres" on public.reponses_demandes;
+drop policy if exists "ecriture proprietaire" on public.reponses_demandes;
+drop policy if exists "suppression proprietaire" on public.reponses_demandes;
+create policy "lecture membres" on public.reponses_demandes for select to authenticated using (
+  exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id));
+create policy "ecriture proprietaire" on public.reponses_demandes for insert to authenticated with check (
+  author_id = auth.uid() and exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id));
+-- Supprimer : sa réponse, une réponse sous sa demande, ou l'administration (après un signalement)
+create policy "suppression proprietaire" on public.reponses_demandes for delete to authenticated using (
+  author_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id and d.auteur_id = auth.uid()));
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['reactions_publiques','reponses_demandes'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+exception when others then raise notice 'Temps réel des réactions non configuré : %', sqlerrm;
+end $$;
+
+-- =====================================================================
+-- Rappels de visite : un membre absent de l'app depuis 2 jours, et que quelque chose de concret attend
+-- (messages non lus, propositions d'aide, mentorats à accepter, candidatures, demandes d'étudiants, offres),
+-- reçoit une notification avec les vrais chiffres. Puis de plus en plus espacé (4, 7, puis 14 jours entre deux
+-- rappels) ; tout repart de zéro à sa visite suivante. Sans téléphone abonné, ou absent depuis 5 jours : un email,
+-- une fois par semaine au plus, jamais le jour d'un autre email du réseau, 150 par jour pour toute la plateforme.
+-- Catégorie « rappels » de Mon profil (activée par défaut) : décochée, plus de rappel, ni notification ni email.
+-- =====================================================================
+
+-- Dernière ouverture de l'app, notée par le site au plus une fois par heure (marquer_vu).
+-- Une table à part : une mise à jour de profiles ferait recharger la liste des profils chez tous les membres.
+-- Aucune règle de lecture : seul le serveur la lit.
+create table if not exists public.visites (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  vu_at timestamptz not null default now()
+);
+alter table public.visites enable row level security;
+
+create or replace function public.marquer_vu() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return; end if;
+  insert into public.visites (user_id, vu_at)
+    select auth.uid(), now() where exists (select 1 from public.profiles where id = auth.uid())
+  on conflict (user_id) do update set vu_at = now() where visites.vu_at < now() - interval '1 hour';
+end $$;
+revoke all on function public.marquer_vu() from public, anon;
+grant execute on function public.marquer_vu() to authenticated;
+
+-- Mise en route des rappels : avant sa première visite notée, un membre est compté venu à cette date au plus tôt
+-- (personne n'est rappelé le jour qui suit l'installation sans l'avoir mérité)
+insert into public.app_secrets (cle, valeur) values ('rappels_depuis', now()::text) on conflict (cle) do nothing;
+
+create or replace function public.derniere_visite(p_id uuid) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select coalesce((select v.vu_at from public.visites v where v.user_id = p_id), greatest(
+    (select u.last_sign_in_at from auth.users u where u.id = p_id),
+    (select p.created_at from public.profiles p where p.id = p_id),
+    (select s.valeur::timestamptz from public.app_secrets s where s.cle = 'rappels_depuis')));
+$$;
+revoke all on function public.derniere_visite(uuid) from public, anon, authenticated;
+
+-- Ce qui attend ce membre (seulement les chiffres non nuls ; {} = rien, pas de rappel)
+--   messages      : messages non lus (30 derniers jours, hors membres bloqués)
+--   propositions  : aides proposées sur ses demandes ouvertes, en attente de sa réponse
+--   mentorats     : demandes de mentorat qui l'attendent (lauréat)
+--   candidatures  : candidatures reçues sur ses offres depuis sa dernière visite
+--   demandes      : demandes d'étudiants ouvertes pour lui (son parcours, ou toutes après 24 h sans aide : demande_pour),
+--                   arrivées depuis sa dernière visite, où il n'a pas déjà proposé son aide (lauréat)
+--   offres        : nouvelles offres pour lui (son année et sa filière : offre_pour) depuis sa dernière visite
+--   matchs        : matchs des 30 derniers jours qu'il n'a pas encore vus (hors membres bloqués)
+--   interets      : personnes qui lui ont dit « Intéressé » ces 7 derniers jours (son profil ; une de ses offres pour un
+--                   lauréat), sans réponse de sa part depuis (comme deckMatch), sans match ni blocage, et pas déjà rappelées
+--                   par match_attente (match_attente_notif) : un même « Intéressé » n'est rappelé qu'une fois
+--   reponses      : réponses des autres à ses questions depuis sa dernière visite
+--   evenements    : événements et cafés où il est inscrit, non annulés, dans les 2 jours (pas ceux qu'il organise)
+-- En plpgsql : elle lit les tables de Match, créées plus bas (une fonction en sql les voudrait déjà là).
+create or replace function public.rappel_contenu(p public.profiles, p_depuis timestamptz) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select coalesce(jsonb_object_agg(t.k, t.n) filter (where t.n > 0), '{}'::jsonb) from (values
+    ('messages', (select count(*) from public.messages m where m.dest_id = p.id and m.lu_at is null and m.created_at > now() - interval '30 days'
+       and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.author_id) or (b.user_id = m.author_id and b.bloque_id = p.id)))),
+    ('propositions', (select count(*) from public.propositions x join public.demandes d on d.id = x.demande_id
+       where d.auteur_id = p.id and d.status = 'ouverte' and x.status = 'envoyee')),
+    ('mentorats', (select count(*) from public.mentorships m where m.mentor_id = p.id and m.status = 'demande' and m.created_at > now() - interval '30 days')),
+    ('candidatures', (select count(*) from public.applications a join public.offers o on o.id = a.offer_id
+       where o.author_id = p.id and a.status = 'postule' and a.created_at > p_depuis)),
+    ('demandes', case when p.role = 'laureat' then (select count(*) from public.demandes d
+       where public.demande_pour(d, p)
+         and greatest(d.relancee_at, case when public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+               then d.created_at else public.demande_large_le(d) end) > p_depuis
+         and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)) else 0 end),
+    ('offres', (select count(*) from public.offers o where o.created_at > p_depuis and public.offre_pour(o, p, public.saison_courante()))),
+    -- Nouvelles clés : dans l'école du membre (une tâche de pg_cron n'a pas de membre connecté pour push_filtre)
+    ('matchs', case
+       when p.role = 'etudiant' then (select count(*) from public.matchs m join public.profiles o on o.id = m.laureat_id
+         where m.etudiant_id = p.id and m.vu_etudiant_at is null and m.created_at > now() - interval '30 days' and o.ecole = p.ecole
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.laureat_id) or (b.user_id = m.laureat_id and b.bloque_id = p.id)))
+       when p.role = 'laureat' then (select count(*) from public.matchs m join public.profiles o on o.id = m.etudiant_id
+         where m.laureat_id = p.id and m.vu_laureat_at is null and m.created_at > now() - interval '30 days' and o.ecole = p.ecole
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.etudiant_id) or (b.user_id = m.etudiant_id and b.bloque_id = p.id)))
+       else 0 end),
+    ('interets', case
+       when p.role = 'etudiant' then (select count(distinct c.user_id) from public.match_choix c join public.profiles l on l.id = c.user_id
+         where c.cible_profil = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days' and l.role = 'laureat' and l.ecole = p.ecole
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
+                             and (r.choix = 'oui' or r.updated_at >= c.updated_at))
+           and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = c.user_id)
+           and not exists (select 1 from public.match_attente_notif n where n.choix_id = c.id)
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
+       when p.role = 'laureat' then (select count(distinct c.user_id) from public.offers o
+         join public.match_choix c on c.cible_offre = o.id join public.profiles e on e.id = c.user_id
+         where o.author_id = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days'
+           and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> '' and o.ecole = p.ecole and e.ecole = p.ecole
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
+                             and (r.choix = 'oui' or r.updated_at >= c.updated_at))
+           and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = c.user_id)
+           and not exists (select 1 from public.match_attente_notif n where n.choix_id = c.id)
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
+       else 0 end),
+    ('reponses', (select count(*) from public.questions q join public.answers a on a.question_id = q.id join public.profiles r on r.id = a.author_id
+       where q.author_id = p.id and a.author_id <> p.id and a.created_at > p_depuis and r.ecole = p.ecole
+         and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = a.author_id) or (b.user_id = a.author_id and b.bloque_id = p.id)))),
+    ('evenements', (select count(*) from public.evenement_participants x join public.evenements e on e.id = x.evenement_id
+         where x.user_id = p.id and not e.annule and e.debut > now() and e.debut < now() + interval '2 days' and e.author_id is distinct from p.id
+           and e.ecole = p.ecole)
+       + (select count(*) from public.cafe_participants x join public.cafes c on c.id = x.cafe_id
+         where x.user_id = p.id and not c.annule and c.date_at > now() and c.date_at < now() + interval '2 days' and c.organisateur_id <> p.id
+           and c.ecole = p.ecole))
+  ) as t(k, n));
+end $$;
+revoke all on function public.rappel_contenu(public.profiles, timestamptz) from public, anon, authenticated;
+
+-- Ce qui a été envoyé : n = rappels depuis la dernière visite (remis à zéro quand le membre revient)
+create table if not exists public.rappels_visite (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  n int not null default 0,
+  dernier_at timestamptz,
+  push_at timestamptz,
+  email_at timestamptz
+);
+alter table public.rappels_visite enable row level security;
+
+-- Attente avant le rappel suivant : 1 jour après la visite, puis 2, 3, 5, et 7 jours entre deux rappels, soit J+1, J+3,
+-- J+6, J+11, J+18, puis un par semaine ; toujours seulement avec quelque chose de réel (rappels_dus)
+-- (2 heures de marge : la tâche passe chaque soir à la même heure, à quelques secondes près)
+create or replace function public.rappel_attente(p_n int) returns interval
+language sql immutable as $$
+  select (case when p_n <= 0 then 1 when p_n = 1 then 2 when p_n = 2 then 3 when p_n = 3 then 5 else 7 end) * interval '1 day' - interval '2 hours';
+$$;
+
+-- Les membres à rappeler ce soir, avec ce qui les attend
+create or replace function public.rappels_dus()
+returns table (id uuid, langue text, vu timestamptz, n int, abonne boolean, contenu jsonb)
+language sql stable security definer set search_path = public as $$
+  with base as materialized (
+    select p.id, coalesce(p.langue, 'fr') as langue, v.vu,
+      case when r.dernier_at is null or r.dernier_at < v.vu then 0 else r.n end as n,
+      case when r.dernier_at is null or r.dernier_at < v.vu then v.vu else r.dernier_at end as depuis
+    from public.profiles p
+    left join public.rappels_visite r on r.user_id = p.id
+    cross join lateral (select public.derniere_visite(p.id) as vu) v
+    where p.role in ('etudiant','laureat') and p.created_at < now() - interval '1 day'
+  ), dus as materialized (
+    select b.* from base b
+    where b.vu < now() - public.rappel_attente(0) and b.depuis < now() - public.rappel_attente(b.n)
+      and public.push_voulu(b.id, 'rappel_visite')
+  )
+  select d.id, d.langue, d.vu, d.n, exists (select 1 from public.push_subscriptions s where s.user_id = d.id), c.contenu
+  from dus d join public.profiles p on p.id = d.id
+  cross join lateral (select public.rappel_contenu(p, d.vu) as contenu) c
+  where c.contenu <> '{}'::jsonb;
+$$;
+revoke all on function public.rappels_dus() from public, anon, authenticated;
+
+-- Chaque soir : la notification sur le téléphone (par la file, donc par le filtre des catégories), notée tout de suite.
+-- Une notification programmée DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place, appelée
+-- sur les seuls membres dus et abonnés). Rien le soir d'un résumé du dimanche (semaine, dans les 20 h) : pas deux résumés
+-- le même jour, avec des chiffres différents ; il reste dû, et part le lendemain, recalculé.
+-- L'agenda des 2 jours (evenements) n'est pas redit sur le téléphone : agenda_demain (DURE) annonce chacun la veille à
+-- 19:30. Il y reste pour qui a coupé cette notification (Réseau, dans Mon profil) ; l'email le garde toujours (il lit
+-- rappel_contenu). Rien que l'agenda : pas de rappel ce soir-là.
+create or replace function public.rappels_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with dus as materialized (
+    select x.* from (
+      select d.id, d.n, case when public.push_voulu(d.id, 'agenda_demain') then d.contenu - 'evenements' else d.contenu end as contenu
+      from public.rappels_dus() d where d.abonne
+        and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'semaine'
+                          and n.at > public.horloge() - interval '20 hours')) x
+    where x.contenu <> '{}'::jsonb),
+  places as materialized (select d.* from dus d where public.programme_place(d.id, 'rappel_visite')),
+  envoyes as (
+    insert into public.push_queue (user_id, kind, data)
+    select d.id, 'rappel_visite', d.contenu from places d
+    returning user_id),
+  notes as (
+    insert into public.rappels_visite (user_id, n, dernier_at, push_at)
+      select distinct e.user_id, d.n + 1, now(), now() from envoyes e join places d on d.id = e.user_id
+    on conflict (user_id) do update set n = excluded.n, dernier_at = now(), push_at = now()
+    returning 1)
+  select count(*) into v_n from notes;
+  return v_n;
+end $$;
+revoke all on function public.rappels_push() from public, anon, authenticated;
+
+-- Emails de rappel (lus par la fonction « notifier ») : dus ce soir sans téléphone abonné, ou absents depuis 5 jours
+-- (dus, ou rappelés sur le téléphone ce soir). Une fois par semaine au plus, résumé gardé (emails_hebdo),
+-- aucun autre email du réseau dans les dernières 24 h, 150 par jour au plus pour toute la plateforme.
+create or replace function public.rappels_emails_a_envoyer(p_max int default 150)
+returns table (id uuid, email text, langue text, token uuid, contenu jsonb, dernier_email timestamptz)
+language plpgsql security definer set search_path = public as $$
+declare v_reste int;
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  select 150 - count(*) into v_reste from public.rappels_visite r where r.email_at > now() - interval '20 hours';
+  if v_reste <= 0 then return; end if;
+  return query
+    with cand as (
+      select d.id, d.langue, d.vu, d.contenu from public.rappels_dus() d where not d.abonne or d.vu < now() - interval '5 days'
+      union
+      select r.user_id, coalesce(p.langue, 'fr'), x.vu, public.rappel_contenu(p, x.vu)
+      from public.rappels_visite r join public.profiles p on p.id = r.user_id
+      cross join lateral (select public.derniere_visite(p.id) as vu) x
+      where r.push_at > now() - interval '12 hours' and x.vu < now() - interval '5 days' and x.vu < r.push_at
+    )
+    select c.id, u.email::text, c.langue, n.token, c.contenu,
+      greatest(n.resume_at, n.demandes_at, n.alerte_at, n.messages_at, n.enquete_at, n.enquete_rappel_at)
+    from cand c
+      join public.profiles p on p.id = c.id
+      join auth.users u on u.id = c.id
+      join public.notif_etat n on n.user_id = c.id
+      left join public.rappels_visite r on r.user_id = c.id
+    where p.emails_hebdo and u.email is not null and c.contenu <> '{}'::jsonb
+      and public.push_voulu(c.id, 'rappel_visite')
+      and (r.email_at is null or r.email_at < now() - interval '7 days' + interval '2 hours')
+      and coalesce(greatest(n.resume_at, n.demandes_at, n.alerte_at, n.messages_at, n.enquete_at, n.enquete_rappel_at), '-infinity'::timestamptz) < now() - interval '24 hours'
+    order by c.vu
+    limit greatest(0, least(p_max, v_reste, 150));
+end $$;
+revoke all on function public.rappels_emails_a_envoyer(int) from public, anon, authenticated;
+
+-- Après l'envoi : l'email compte comme le rappel du soir (sauf si la notification du téléphone est déjà partie)
+create or replace function public.rappels_emails_envoyes(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.rappels_visite (user_id, n, dernier_at, email_at)
+    select p.id, 1, now(), now() from public.profiles p where p.id = any(p_ids)
+  on conflict (user_id) do update set email_at = now(), dernier_at = now(),
+    n = case when rappels_visite.push_at > now() - interval '12 hours' then rappels_visite.n
+             when rappels_visite.dernier_at is null or rappels_visite.dernier_at < public.derniere_visite(rappels_visite.user_id) then 1
+             else rappels_visite.n + 1 end;
+$$;
+revoke all on function public.rappels_emails_envoyes(uuid[]) from public, anon, authenticated;
+
+-- Lien « Ne plus recevoir ces rappels » des emails : décoche la catégorie « Rappels » (téléphone et email)
+create or replace function public.se_desabonner_rappels(p_token uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  select user_id into v from public.notif_etat where token = p_token;
+  if v is null then return false; end if;
+  update public.profiles set notif_push = coalesce(notif_push, '{}'::jsonb) || '{"rappels": false}'::jsonb where id = v;
+  return true;
+end $$;
+revoke all on function public.se_desabonner_rappels(uuid) from public;
+grant execute on function public.se_desabonner_rappels(uuid) to anon, authenticated;
+
+-- Chaque soir à 18 h UTC (18 h au Maroc, à l'heure GMT depuis le 20/09/2026) : le téléphone, puis les emails.
+-- Le tour Match du jour part à midi (midi_push, section « Nouvelles notifications », à la fin).
+create or replace function public.rappels_soir() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.rappels_push();
+  perform public.appeler_notifier('rappels');
+end $$;
+revoke all on function public.rappels_soir() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.rappels_emails_a_envoyer(int) to service_role;
+    grant execute on function public.rappels_emails_envoyes(uuid[]) to service_role;
+  end if;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-rappels-visite', '0 18 * * *', 'select public.rappels_soir()');
+  end if;
+end $$;
+
+-- =====================================================================
+--  Origine des offres (offers.origine) : la priorité aux offres que les lauréats apportent eux-mêmes.
+--    'portee'   : un lauréat publie une offre de son entreprise, il en est responsable et encadrera la personne
+--                 retenue (il le confirme en publiant). Seul un lauréat ou l'administration.
+--    'partagee' : une offre vue ailleurs (LinkedIn, site d'entreprise…), lien http(s) obligatoire, publiable par
+--                 tout membre, étudiants compris. Un étudiant ne publie QUE des partages. La candidature se fait sur
+--                 le site d'origine ; sans date limite, le partage se ferme seul après 45 jours.
+--    null       : offre classique (toutes les offres d'avant : rien n'est affirmé sur elles).
+--  Mêmes règles que origine.js (refusOrigine, partageExpire) et DemoStore (regleOrigineDemo) dans store.js.
+--  La colonne est ajoutée plus haut, avec les autres colonnes des offres.
+-- =====================================================================
+alter table public.offers add column if not exists origine text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'offers_origine_check') then
+    alter table public.offers add constraint offers_origine_check check (origine in ('portee','partagee'));
+  end if;
+end $$;
+
+create or replace function public.offre_origine() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_role text; v_promo int; v_niv int; v_admin boolean := public.is_admin();
+begin
+  select role, promo into v_role, v_promo from public.profiles where id = new.author_id;
+  v_role := coalesce(v_role, '');
+  if tg_op = 'UPDATE' then
+    if new.origine is distinct from old.origine and not v_admin then
+      if old.origine = 'partagee' or new.origine = 'partagee' then
+        raise exception 'Une offre partagée reste un partage : publie plutôt une nouvelle offre.' using errcode = '42501';
+      end if;
+      if new.origine = 'portee' and v_role not in ('laureat','admin') then
+        raise exception 'Seul un lauréat peut porter une offre de son entreprise.' using errcode = '42501';
+      end if;
+    end if;
+    -- Un étudiant ne change pas après coup ce que la publication lui interdit (audience, années)
+    if v_role = 'etudiant' and not v_admin then
+      if coalesce(new.audience, 'etudiants') <> 'etudiants' then
+        raise exception 'Un étudiant partage une offre vue ailleurs, avec son lien.' using errcode = '42501';
+      end if;
+      v_niv := public.niveau_de(v_promo, public.saison_courante());
+      new.annees := array[v_niv];
+    end if;
+    if new.origine = 'partagee' and new.lien is distinct from old.lien then
+      new.lien := trim(new.lien);
+      if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
+        raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
+      end if;
+      if exists (select 1 from public.offers o where o.id <> new.id and o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
+          and o.created_at > now() - interval '45 days'
+          and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
+        raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
+      end if;
+    end if;
+    if new.origine = 'partagee' then new.cooptation := false; end if;
+    return new;
+  end if;
+  if new.origine = 'portee' and v_role not in ('laureat','admin') then
+    raise exception 'Seul un lauréat peut porter une offre de son entreprise.' using errcode = '42501';
+  end if;
+  if v_role = 'etudiant' and (new.origine is distinct from 'partagee' or coalesce(new.audience, 'etudiants') <> 'etudiants') then
+    raise exception 'Un étudiant partage une offre vue ailleurs, avec son lien.' using errcode = '42501';
+  end if;
+  -- Le partage d'un étudiant va aux étudiants de son année, comme le dit l'écran
+  if v_role = 'etudiant' and not v_admin then
+    new.annees := array[public.niveau_de(v_promo, public.saison_courante())];
+  end if;
+  if new.origine = 'partagee' then
+    new.lien := trim(new.lien);
+    if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
+      raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
+    end if;
+    new.cooptation := false;
+    -- Le même lien déjà partagé, encore ouvert : une seule fois sur le réseau
+    if exists (select 1 from public.offers o where o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
+        and o.created_at > now() - interval '45 days'
+        and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
+      raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.offre_origine() from public, anon, authenticated;
+drop trigger if exists trg_offre_origine on public.offers;
+create trigger trg_offre_origine before insert or update on public.offers
+  for each row execute function public.offre_origine();
+
+-- Anti-spam des partages (limiter, plus haut) : 5 offres par jour au plus quand on partage, et pas deux fois le même lien en 24 h
+drop trigger if exists trg_limite_partage on public.offers;
+create trigger trg_limite_partage before insert on public.offers
+  for each row when (new.origine = 'partagee') execute function public.limiter('author_id', '5', '1 day', 'lien');
+
+-- Chaque nuit : un partage sans date limite se ferme après 45 jours, un partage avec date limite une fois celle-ci passée
+create or replace function public.fermer_partages_anciens() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  update public.offers set status = 'fermee'
+    where origine = 'partagee' and status = 'ouverte'
+      and ((deadline is null and created_at < now() - interval '45 days') or deadline < current_date);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.fermer_partages_anciens() from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-partages', '20 3 * * *', 'select public.fermer_partages_anciens()');
+  end if;
+exception when others then raise notice 'Fermeture des partages non programmée : %', sqlerrm;
+end $$;
+
+-- =====================================================================
+--  Notifications pour tout : chaque chose qui concerne un membre lui arrive sur le téléphone.
+--    · Messages : une notification par message (notif_message, plus haut), au plus une toutes les 20 s par conversation.
+--    · Nouvelles offres : tous ceux qu'elles concernent, lauréats compris (alerte_offre, plus haut).
+--    · Défauts : toutes les catégories activées pour tout le monde (push_defaut, plus haut).
+--    · Ajoutées ici, chacune dans une catégorie existante de Mon profil (push_categorie) :
+--        demande_large    (demandes)  une demande d'étudiant qui s'ouvre à tous les lauréats, aux lauréats des autres
+--                                     parcours, une seule fois (tâche horaire alertes_horaires)
+--        promo_nouveau    (réseau)    « Prénom a rejoint ta promo » : au plus une par jour et par membre, avec le compte
+--        offre_commentaire(réseau)    un commentaire sur mon offre ; la réponse de l'auteur sous une offre où j'ai écrit
+--        annonce          (réseau)    une annonce de l'équipe du réseau, à son public
+--        mentorat_ouvert  (mentorat)  une demande de mentorat ouverte à tous, aux lauréats disponibles du parcours
+--  Toutes passent par push_queue, donc par le filtre des catégories (trg_push_filtre).
+--  Mêmes catégories que logic.js (PUSH_KINDS) ; textes FR et AR dans le notifier (NOTIFS).
+-- =====================================================================
+
+-- Anti-spam : date du dernier envoi par clé (« message:<auteur>:<dest> », « promo:<membre> », …). Lu par le serveur seulement.
+create table if not exists public.notif_cadence (
+  cle text primary key check (char_length(cle) <= 200),
+  at timestamptz not null default now()
+);
+alter table public.notif_cadence enable row level security;
+
+-- Vrai (et noté tout de suite) si rien n'est parti pour cette clé depuis p_intervalle ; faux sinon. Sans course :
+-- deux envois simultanés ne passent pas tous les deux.
+create or replace function public.cadence(p_cle text, p_intervalle interval) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v boolean;
+begin
+  insert into public.notif_cadence as c (cle, at) values (p_cle, now())
+    on conflict (cle) do update set at = excluded.at where c.at <= now() - p_intervalle
+    returning true into v;
+  return coalesce(v, false);
+end $$;
+revoke all on function public.cadence(text, interval) from public, anon, authenticated;
+
+-- Demandes qui s'ouvrent à tous les lauréats (demande_large_le : 24 h après la publication, tout de suite pour un
+-- étudiant sans parcours) et toujours sans aucune proposition d'aide : les lauréats des autres parcours sont prévenus
+-- une fois (ceux du parcours l'ont été à la publication, notif_demande). Appelée chaque heure par alertes_horaires.
+create table if not exists public.demandes_larges_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.demandes_larges_notif enable row level security;
+
+create or replace function public.demandes_larges_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare d public.demandes; v_n int := 0; v_k int;
+begin
+  -- Un envoi à beaucoup : rien la nuit (de 22 h à 7 h 59) ; la fenêtre de 3 jours rattrape ces demandes à 08:05
+  if extract(hour from public.horloge() at time zone 'UTC') not between 8 and 21 then return 0; end if;
+  for d in select x.* from public.demandes x
+      where x.status = 'ouverte' and x.created_at > now() - interval '30 days'
+        and public.demande_large_le(x) <= now() and public.demande_large_le(x) > now() - interval '3 days'
+        and not exists (select 1 from public.demandes_larges_notif n where n.demande_id = x.id)
+        and not exists (select 1 from public.propositions y where y.demande_id = x.id and y.status <> 'retiree')
+      order by x.created_at limit 50 loop
+    insert into public.demandes_larges_notif (demande_id) values (d.id) on conflict do nothing;
+    insert into public.push_queue (user_id, kind, data)
+    select p.id, 'demande_large', jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'titre', d.titre, 'type', d.type, 'demande', d.id)
+    from public.profiles p join public.profiles a on a.id = d.auteur_id
+    where public.demande_pour(d, p) and public.proximite_filiere(p.filiere, a.filiere) = 0
+      and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_large')
+    order by public.derniere_visite(p.id) desc nulls last
+    limit 300;
+    get diagnostics v_k = row_count;
+    v_n := v_n + v_k;
+  end loop;
+  -- Ménage de l'anti-spam (une clé plus vieille qu'un mois ne bloque plus rien)
+  delete from public.notif_cadence where at < now() - interval '30 days';
+  return v_n;
+end $$;
+revoke all on function public.demandes_larges_push() from public, anon, authenticated;
+
+-- Un nouveau membre (étudiant ou lauréat) dans ma promo : « Prénom a rejoint ta promo ». Au plus une par jour et par
+-- membre prévenu ; elle dit combien sont arrivés depuis la précédente (depuis sa propre arrivée, 7 jours au plus). Un lauréat déjà prévenu pour
+-- confirmer ce camarade (verifier_pair, trigger trg_nouveau_laureat, qui passe avant) ne reçoit pas les deux.
+create or replace function public.notif_promo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare r record; v_n int;
+begin
+  if new.role not in ('etudiant','laureat') or new.promo is null then return null; end if;
+  for r in select x.id, x.created_at as arrive, c.at as dernier from public.profiles x
+      left join public.notif_cadence c on c.cle = 'promo:' || x.id
+      where x.promo = new.promo and x.ecole = new.ecole and x.id <> new.id and x.role in ('etudiant','laureat')
+        and (c.at is null or c.at <= now() - interval '1 day')
+        and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'promo_nouveau')
+        and not exists (select 1 from public.push_queue q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
+        and not exists (select 1 from public.push_nuit q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
+      order by public.derniere_visite(x.id) desc nulls last
+      limit 300 loop
+    continue when not public.cadence('promo:' || r.id, interval '1 day');
+    select count(*) into v_n from public.profiles y
+      where y.promo = new.promo and y.ecole = new.ecole and y.id <> r.id and y.role in ('etudiant','laureat')
+        and y.created_at > greatest(coalesce(r.dernier, '-infinity'::timestamptz), coalesce(r.arrive, '-infinity'::timestamptz), now() - interval '7 days');
+    perform public.pousser(r.id, 'promo_nouveau', jsonb_build_object('nom', split_part(new.full_name, ' ', 1), 'n', greatest(v_n, 1), 'promo', new.promo));
+  end loop;
+  return null;
+exception when others then raise warning 'notif_promo : %', sqlerrm; return null;
+end $$;
+-- Le nom du trigger le fait passer après trg_nouveau_laureat (ordre alphabétique) : verifier_pair est déjà en file
+drop trigger if exists trg_promo_nouveau on public.profiles;
+create trigger trg_promo_nouveau after insert on public.profiles
+  for each row execute function public.notif_promo();
+
+-- Un commentaire sous une offre : l'auteur de l'offre est prévenu ; quand l'auteur répond, ceux qui ont écrit sous
+-- l'offre (60 derniers jours, 30 au plus) le sont. Au plus une toutes les 10 minutes par offre et par personne.
+create or replace function public.notif_commentaire() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_o record; v_data jsonb; r record;
+begin
+  select o.id, o.author_id, o.titre into v_o from public.offers o where o.id = new.offer_id;
+  if v_o.id is null then return null; end if;
+  v_data := jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
+    'titre', v_o.titre, 'texte', left(new.body, 140), 'offre', v_o.id);
+  for r in
+    select v_o.author_id as id, 'auteur' as pour where new.author_id is distinct from v_o.author_id
+    union
+    select distinct c.author_id, 'fil' from public.comments c
+      where new.author_id = v_o.author_id and c.offer_id = v_o.id and c.author_id <> v_o.author_id
+        and c.created_at > now() - interval '60 days'
+  loop
+    continue when exists (select 1 from public.blocages b
+      where (b.user_id = r.id and b.bloque_id = new.author_id) or (b.user_id = new.author_id and b.bloque_id = r.id));
+    continue when not exists (select 1 from public.push_subscriptions s where s.user_id = r.id);
+    continue when not public.cadence('commentaire:' || v_o.id || ':' || r.id, interval '10 minutes');
+    perform public.pousser(r.id, 'offre_commentaire', v_data || jsonb_build_object('pour', r.pour));
+  end loop;
+  return null;
+exception when others then raise warning 'notif_commentaire : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif_commentaire on public.comments;
+create trigger trg_notif_commentaire after insert on public.comments
+  for each row execute function public.notif_commentaire();
+
+-- Une annonce de l'équipe du réseau (bandeau de l'accueil) : une notification à son public
+create or replace function public.notif_annonce() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not coalesce(new.active, true) then return null; end if;
+  insert into public.push_queue (user_id, kind, data)
+  select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180), 'id', new.id)
+  from public.profiles p
+  -- Écoles : celle de l'annonce (l'administration reçoit tout, comme dans push_filtre)
+  where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
+    and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
+  order by public.derniere_visite(p.id) desc nulls last
+  limit 2000;
+  return null;
+exception when others then raise warning 'notif_annonce : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif_annonce on public.annonces;
+create trigger trg_notif_annonce after insert on public.annonces
+  for each row execute function public.notif_annonce();
+
+-- Une demande de mentorat ouverte à tous (envoyée sans lauréat choisi, ou passée aux autres par le lauréat choisi) :
+-- les lauréats disponibles pour du mentorat dans le parcours de l'étudiant (30 au plus), sauf celui qui l'a passée
+create or replace function public.notif_mentorat_ouvert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_s record; v_ancien uuid;
+begin
+  if new.mentor_id is not null or new.status <> 'demande' then return null; end if;
+  if tg_op = 'UPDATE' then
+    if old.mentor_id is null then return null; end if;
+    v_ancien := old.mentor_id;
+  end if;
+  select full_name, filiere into v_s from public.profiles where id = new.student_id;
+  insert into public.push_queue (user_id, kind, data)
+  select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet, 'm', new.id)
+  from public.profiles l
+  where l.role = 'laureat' and l.ecole = new.ecole and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
+    and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
+    and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
+    and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
+  order by public.proximite_filiere(l.filiere, v_s.filiere) desc, public.derniere_visite(l.id) desc nulls last
+  limit 30;
+  return null;
+exception when others then raise warning 'notif_mentorat_ouvert : %', sqlerrm; return null;
+end $$;
+drop trigger if exists trg_notif_mentorat_ouvert on public.mentorships;
+create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on public.mentorships
+  for each row execute function public.notif_mentorat_ouvert();
+
+-- =====================================================================
+--  Match : comme les applis de rencontre, mais pour le travail. Une carte à la fois, « Intéressé » ou « Plus tard ».
+--    · L'étudiant voit des offres ouvertes à son année (et les lauréats qui s'intéressent à lui) ; le lauréat voit des
+--      étudiants (ceux qui ont dit oui à une de ses offres d'abord, puis ceux qui apparaissent dans Match).
+--    · Quand les deux disent oui, c'est un match : la discussion s'ouvre (peut_discuter), le lauréat lit le CV de
+--      l'étudiant (voit_champ, donc peut_voir_cv pour le stockage « cv »), et ils peuvent programmer un entretien
+--      (messages de type 'rdv', section « Messagerie »).
+--    · Notifications, catégorie « Match » de Mon profil (activée par défaut) : match (aux deux), match_interet (à la
+--      personne visée par un oui, une fois par jour au plus pour une même paire, jamais quand c'est déjà un match).
+--      L'entretien proposé et sa réponse (rdv_message, rdv_reponse : notif_message, repondre_rdv) sont dans
+--      « Messages » : couper Match ne fait pas rater un entretien.
+--  Mêmes règles dans la démo (DemoStore dans store.js) et dans logic.js (deckMatch, peutDiscuter).
+-- =====================================================================
+
+-- Un choix par carte : « oui » (Intéressé) ou « plus_tard » (la carte revient après 30 jours, règle du site).
+-- Une seule cible : le profil d'un membre, ou une offre. « Revenir » supprime son dernier choix (sans défaire un match).
+create table if not exists public.match_choix (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  cible_profil uuid references public.profiles(id) on delete cascade,
+  cible_offre uuid references public.offers(id) on delete cascade,
+  choix text not null check (choix in ('oui','plus_tard')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  constraint match_choix_une_cible check (num_nonnulls(cible_profil, cible_offre) = 1),
+  constraint match_choix_profil unique (user_id, cible_profil),
+  constraint match_choix_offre unique (user_id, cible_offre)
+);
+create index if not exists match_choix_cible_profil on public.match_choix (cible_profil) where cible_profil is not null;
+create index if not exists match_choix_cible_offre on public.match_choix (cible_offre) where cible_offre is not null;
+create index if not exists match_choix_jour on public.match_choix (user_id, updated_at desc);
+
+-- Les matchs : une ligne par paire étudiant × lauréat, créée par la base seulement (match_apres_choix).
+-- offre_id : l'offre du lauréat que l'étudiant a choisie (la plus récente), sinon vide. vu_*_at : le match a été vu.
+create table if not exists public.matchs (
+  id uuid primary key default gen_random_uuid(),
+  etudiant_id uuid not null references public.profiles(id) on delete cascade,
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  offre_id uuid references public.offers(id) on delete set null,
+  created_at timestamptz default now(),
+  vu_etudiant_at timestamptz,
+  vu_laureat_at timestamptz,
+  constraint matchs_paire unique (etudiant_id, laureat_id),
+  constraint matchs_deux check (etudiant_id <> laureat_id)
+);
+create index if not exists matchs_laureat on public.matchs (laureat_id);
+
+-- Qui peut choisir quoi (à chaque écriture, changement d'avis compris) :
+--   étudiant → une offre ouverte à son année, pour les étudiants (pas un partage dont l'auteur n'est pas lauréat) ;
+--   étudiant → le profil d'un lauréat qui a déjà dit oui à son profil (il répond à son intérêt) ;
+--   lauréat  → le profil d'un étudiant à la filière renseignée, qui apparaît dans Match (match_visible), ou qui a dit
+--              oui à une de ses offres ;
+--   l'administration : rien. Jamais soi-même ni sa propre offre ; un blocage, dans un sens ou dans l'autre, ferme tout.
+--   Anti-spam : 80 choix au plus sur 24 heures (changer d'avis sur une même carte ne compte qu'une fois).
+create or replace function public.protect_match_choix() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_moi public.profiles; v_cible public.profiles; v_o public.offers; v_autre uuid; n int;
+begin
+  if auth.uid() is null then return new; end if;
+  -- Ensuite, seul le choix change : jamais la personne ni la carte
+  if tg_op = 'UPDATE' then
+    new.user_id := old.user_id; new.cible_profil := old.cible_profil; new.cible_offre := old.cible_offre; new.created_at := old.created_at;
+  else
+    new.user_id := auth.uid(); new.created_at := now();
+  end if;
+  new.updated_at := now();
+  select * into v_moi from public.profiles where id = new.user_id;
+  if v_moi.role is null or v_moi.role not in ('etudiant','laureat') then
+    raise exception 'Match est réservé aux étudiants et aux lauréats.' using errcode = '42501';
+  end if;
+  if new.cible_offre is not null then
+    select * into v_o from public.offers where id = new.cible_offre;
+    if v_o.id is null then raise exception 'Cette offre n’existe plus.'; end if;
+    v_autre := v_o.author_id;
+    if v_autre = v_moi.id then raise exception 'C’est ta propre offre.'; end if;
+    if v_moi.role <> 'etudiant' then raise exception 'Dans Match, les offres sont proposées aux étudiants.' using errcode = '42501'; end if;
+    if v_o.status <> 'ouverte' then raise exception 'Cette offre n’est plus ouverte.'; end if;
+    -- Même règle que la liste des offres d'un étudiant : son année, les offres pour les étudiants ; un partage
+    -- (offre vue ailleurs) seulement quand un lauréat l'a apporté (le match se fait avec lui)
+    if coalesce(v_o.audience, 'etudiants') <> 'etudiants'
+       or not (public.niveau_de(v_moi.promo, public.saison_courante()) = any(coalesce(v_o.annees, '{}'::int[])))
+       or (v_o.origine = 'partagee' and not exists (select 1 from public.profiles a where a.id = v_autre and a.role = 'laureat')) then
+      raise exception 'Cette offre n’est pas proposée à ton année.' using errcode = '42501';
+    end if;
+  else
+    v_autre := new.cible_profil;
+    if v_autre = v_moi.id then raise exception 'Choisis un autre membre que toi.'; end if;
+    select * into v_cible from public.profiles where id = v_autre;
+    if v_cible.id is null then raise exception 'Ce membre n’est plus sur le réseau.'; end if;
+    if v_moi.role = 'etudiant' then
+      if v_cible.role <> 'laureat' or not exists (select 1 from public.match_choix c
+          where c.user_id = v_autre and c.cible_profil = v_moi.id and c.choix = 'oui') then
+        raise exception 'Ici, tu réponds aux lauréats qui s’intéressent à ton profil.' using errcode = '42501';
+      end if;
+    elsif v_cible.role <> 'etudiant' or coalesce(btrim(v_cible.filiere), '') = ''
+       or not (coalesce(v_cible.match_visible, true) or exists (select 1 from public.match_choix c join public.offers o on o.id = c.cible_offre
+         where c.user_id = v_autre and c.choix = 'oui' and o.author_id = v_moi.id)) then
+      raise exception 'Ce profil n’est pas proposé dans Match.' using errcode = '42501';
+    end if;
+  end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_moi.id and b.bloque_id = v_autre) or (b.user_id = v_autre and b.bloque_id = v_moi.id)) then
+    raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
+  end if;
+  select count(*) into n from public.match_choix c
+    where c.user_id = v_moi.id and c.updated_at > now() - interval '1 day'
+      and not (c.cible_profil is not distinct from new.cible_profil and c.cible_offre is not distinct from new.cible_offre);
+  if n >= 80 then raise exception 'Tu as déjà fait 80 choix aujourd’hui. La suite demain !'; end if;
+  return new;
+end $$;
+revoke all on function public.protect_match_choix() from public, anon, authenticated;
+drop trigger if exists trg_protect_match_choix on public.match_choix;
+create trigger trg_protect_match_choix before insert or update on public.match_choix
+  for each row execute function public.protect_match_choix();
+
+-- Après un oui : le match quand les deux ont dit oui (le lauréat au profil de l'étudiant ; l'étudiant à une offre de ce
+-- lauréat ou à son profil), une notification aux deux ; sinon, la personne visée apprend l'intérêt (au plus une fois
+-- par jour pour cette paire, jamais quand c'est déjà un match). Deux oui au même instant : un verrou par paire, le
+-- second voit le premier et crée le match. L'administration qui regarde l'application en lauréat (admin_ok) ne reçoit
+-- ni « C'est un match ! » ni intérêt, et rien n'est noté pour elle (comme pour le programmé, programme_place) ; l'autre
+-- côté, lui, reçoit.
+create or replace function public.match_apres_choix() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_role text; v_etu uuid; v_lau uuid; v_offre uuid; v_m public.matchs; v_l public.profiles; v_titre text;
+begin
+  if new.choix <> 'oui' or (tg_op = 'UPDATE' and old.choix = 'oui') then return null; end if;
+  select role into v_role from public.profiles where id = new.user_id;
+  if new.cible_offre is not null then
+    v_etu := new.user_id;
+    select author_id into v_lau from public.offers where id = new.cible_offre;
+  elsif v_role = 'etudiant' then
+    v_etu := new.user_id; v_lau := new.cible_profil;
+  else
+    v_lau := new.user_id; v_etu := new.cible_profil;
+  end if;
+  if not exists (select 1 from public.profiles where id = v_etu and role = 'etudiant')
+     or not exists (select 1 from public.profiles where id = v_lau and role = 'laureat') then return null; end if;
+  perform pg_advisory_xact_lock(hashtext('match:' || v_etu || ':' || v_lau));
+  if exists (select 1 from public.matchs x where x.etudiant_id = v_etu and x.laureat_id = v_lau) then return null; end if;
+  -- L'offre de ce lauréat que l'étudiant a choisie en dernier
+  select c.cible_offre into v_offre from public.match_choix c join public.offers o on o.id = c.cible_offre
+    where c.user_id = v_etu and c.choix = 'oui' and o.author_id = v_lau order by c.updated_at desc limit 1;
+  if exists (select 1 from public.match_choix c where c.user_id = v_lau and c.cible_profil = v_etu and c.choix = 'oui')
+     and (v_offre is not null or exists (select 1 from public.match_choix c where c.user_id = v_etu and c.cible_profil = v_lau and c.choix = 'oui')) then
+    insert into public.matchs (etudiant_id, laureat_id, offre_id) values (v_etu, v_lau, v_offre)
+      on conflict (etudiant_id, laureat_id) do nothing returning * into v_m;
+    if v_m.id is null then return null; end if;
+    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion).
+    -- Le filtre de la file retire (et note, -2) un côté qui a coupé Match ; un côté sans téléphone abonné est noté (-1).
+    begin
+      v_titre := (select titre from public.offers where id = v_offre);
+      insert into public.push_queue (user_id, kind, data)
+      select p.id, 'match', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'de', a.id, 'match', v_m.id, 'titre', v_titre))
+      from public.profiles p join public.profiles a on a.id = case when p.id = v_etu then v_lau else v_etu end
+      where p.id in (v_etu, v_lau) and not coalesce(p.admin_ok, false)
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
+      perform public.noter_push(x.id, 'match', -1) from unnest(array[v_etu, v_lau]) as x(id)
+        where not exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+          and not exists (select 1 from public.profiles p where p.id = x.id and coalesce(p.admin_ok, false));
+    exception when others then raise warning 'match_apres_choix : %', sqlerrm;  -- une notification ne bloque jamais le match
+    end;
+    return null;
+  end if;
+  -- Pas encore de match : l'intérêt, à la personne visée, une fois par jour au plus pour une même paire (un « oui » repris
+  -- après « Plus tard » ne repart pas), avec ou sans téléphone : pousser le met en file, ou le note au journal (-1 sans
+  -- téléphone abonné, -2 Match coupé), une fois comme il serait parti
+  begin
+    -- La personne visée est l'administration en vue lauréat : rien (et la cadence de la paire n'est pas prise)
+    if exists (select 1 from public.profiles p where p.id = case when new.user_id = v_lau then v_etu else v_lau end
+                 and coalesce(p.admin_ok, false)) then
+      return null;
+    end if;
+    if new.user_id = v_lau then
+      -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        select * into v_l from public.profiles where id = v_lau;
+        perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
+          'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
+      end if;
+    elsif new.cible_offre is not null then
+      -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
+          'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
+      end if;
+    end if;
+  exception when others then raise warning 'match_apres_choix : %', sqlerrm;
+  end;
+  return null;
+end $$;
+revoke all on function public.match_apres_choix() from public, anon, authenticated;
+drop trigger if exists trg_match_apres_choix on public.match_choix;
+create trigger trg_match_apres_choix after insert or update of choix on public.match_choix
+  for each row execute function public.match_apres_choix();
+
+-- Un match ne se crée que par la base ; ensuite chacun note seulement qu'il l'a vu (une fois), et l'un ou l'autre
+-- peut le retirer (« Retirer le match »)
+create or replace function public.protect_match() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.matchs;
+begin
+  if auth.uid() is null then return new; end if;
+  v := old;
+  if auth.uid() = old.etudiant_id then v.vu_etudiant_at := coalesce(old.vu_etudiant_at, case when new.vu_etudiant_at is not null then now() end); end if;
+  if auth.uid() = old.laureat_id then v.vu_laureat_at := coalesce(old.vu_laureat_at, case when new.vu_laureat_at is not null then now() end); end if;
+  return v;
+end $$;
+revoke all on function public.protect_match() from public, anon, authenticated;
+drop trigger if exists trg_protect_match on public.matchs;
+create trigger trg_protect_match before update on public.matchs
+  for each row execute function public.protect_match();
+
+-- Qui voit quoi : ses propres choix, et les « oui » qui me visent (mon profil, ou une de mes offres) ; jamais les
+-- « plus tard » des autres. Un match : les deux personnes (et l'administration).
+alter table public.match_choix enable row level security;
+alter table public.matchs enable row level security;
+drop policy if exists "lecture membres" on public.match_choix;
+drop policy if exists "ecriture proprietaire" on public.match_choix;
+drop policy if exists "modif proprietaire" on public.match_choix;
+drop policy if exists "suppression proprietaire" on public.match_choix;
+create policy "lecture membres" on public.match_choix for select to authenticated using (
+  user_id = auth.uid() or (choix = 'oui' and (cible_profil = auth.uid()
+    or exists (select 1 from public.offers o where o.id = match_choix.cible_offre and o.author_id = auth.uid()))));
+create policy "ecriture proprietaire" on public.match_choix for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.match_choix for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.match_choix for delete to authenticated using (user_id = auth.uid());
+drop policy if exists "lecture membres" on public.matchs;
+drop policy if exists "modif proprietaire" on public.matchs;
+drop policy if exists "suppression proprietaire" on public.matchs;
+create policy "lecture membres" on public.matchs for select to authenticated using (
+  etudiant_id = auth.uid() or laureat_id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.matchs for update to authenticated using (etudiant_id = auth.uid() or laureat_id = auth.uid());
+create policy "suppression proprietaire" on public.matchs for delete to authenticated using (etudiant_id = auth.uid() or laureat_id = auth.uid());
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['match_choix','matchs'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+exception when others then raise notice 'Temps réel de Match non configuré : %', sqlerrm;
+end $$;
+
+-- La discussion : la définition de la section « Messagerie », plus le match (l'étudiant et le lauréat qui se sont
+-- choisis peuvent s'écrire). Dernière définition de peut_discuter : c'est elle qui compte (protect_message, stockage « chat »).
+create or replace function public.peut_discuter(p_moi uuid, p_autre uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select p_moi is not null and p_autre is not null and p_moi <> p_autre
+    and (auth.uid() is null or auth.uid() = p_moi)
+    and exists (select 1 from public.profiles where id = p_autre)
+    and not exists (select 1 from public.blocages b
+      where (b.user_id = p_moi and b.bloque_id = p_autre) or (b.user_id = p_autre and b.bloque_id = p_moi))
+    and (
+      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin')
+      or exists (select 1 from public.messages m where m.author_id = p_autre and m.dest_id = p_moi)
+      or public.en_relation(p_moi, p_autre) or public.en_relation(p_autre, p_moi)
+      or exists (select 1 from public.mentorships m where m.mentor_id is not null and m.status in ('demande','acceptee','terminee')
+        and ((m.student_id = p_moi and m.mentor_id = p_autre) or (m.student_id = p_autre and m.mentor_id = p_moi)))
+      or exists (select 1 from public.parrainages x
+        where (x.parrain_id = p_moi and x.filleul_id = p_autre) or (x.parrain_id = p_autre and x.filleul_id = p_moi))
+      or exists (select 1 from public.relectures_cv r where r.reviewer_id is not null and r.status <> 'annulee'
+        and ((r.student_id = p_moi and r.reviewer_id = p_autre) or (r.student_id = p_autre and r.reviewer_id = p_moi)))
+      or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id where x.status in ('envoyee','acceptee')
+        and ((d.auteur_id = p_moi and x.laureat_id = p_autre) or (d.auteur_id = p_autre and x.laureat_id = p_moi)))
+      or exists (select 1 from public.matchs x
+        where (x.etudiant_id = p_moi and x.laureat_id = p_autre) or (x.etudiant_id = p_autre and x.laureat_id = p_moi)));
+$$;
+revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
+grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
+
+-- =====================================================================
+--  Cartes sponsorisées dans Match : une entreprise (recruteur, centre de langues, formation, préparation au départ…)
+--  paie le réseau directement, sans régie publicitaire ni traceur.
+--    · L'administration écrit la carte (entreprise, titre, texte, lien https, domaine du logo facultatif) et choisit qui
+--      la voit : public (étudiants, lauréats, tous), années (niveau_de ; vide = toutes), filières (filiere_ok, comme
+--      les offres ; vide = toutes), dates de début et de fin. Elle l'arrête et la reprend (actif).
+--    · Un membre connecté lit seulement les cartes en cours (actives, entre leurs dates) ; l'administration lit tout.
+--    · Le site place une carte après chaque 10 cartes de Match (logic.js : avecSponsorises). Passer la carte n'écrit
+--      rien dans match_choix.
+--    · Comptes : un membre que la carte vise compte une vue (carte du dessus) et un clic (« Voir »), une fois par jour
+--      chacun, seulement par compter_sponsorise(). Personne ne lit ces lignes ; l'administration en lit les totaux par
+--      carte (bilan_sponsorises : vues, clics, membres différents), jamais qui. L'entreprise reçoit ces totaux.
+--  Mêmes règles dans logic.js (sponsorisePour, refusSponsorise) et dans la démo (DemoStore dans store.js).
+-- =====================================================================
+create table if not exists public.sponsorises (
+  id uuid primary key default gen_random_uuid(),
+  entreprise text not null check (char_length(btrim(entreprise)) between 2 and 80),
+  titre text not null check (char_length(btrim(titre)) between 3 and 90),
+  texte text not null check (char_length(btrim(texte)) between 10 and 280),
+  lien text not null constraint sponsorises_lien_check check (char_length(lien) <= 500 and lien ~* '^https://[^\s/?#]+\.[^\s/?#]+([/?#]\S*)?$'),
+  domaine text constraint sponsorises_domaine_check check (domaine is null or domaine ~ '^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$'),
+  public text not null default 'tous' check (public in ('etudiants','laureats','tous')),
+  annees int[] constraint sponsorises_annees_check check (annees is null or annees <@ array[1,2,3,4,5,6,7]),
+  filieres text[],
+  debut date not null default current_date,
+  fin date not null,
+  actif boolean not null default true,
+  created_by uuid default auth.uid() references public.profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  constraint sponsorises_dates check (fin >= debut)
+);
+create index if not exists sponsorises_en_cours on public.sponsorises (debut, fin) where actif;
+
+-- Écrite par l'administration seulement ; la base garde l'auteur et la date, et nettoie la carte comme le site
+-- (normaliserSponsorise) : textes sans espaces autour, listes vides = tout le monde, domaine sans « https:// » ni « www. »
+create or replace function public.protect_sponsorise() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_admin() then
+    raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
+  end if;
+  if tg_op = 'UPDATE' then
+    new.id := old.id; new.created_by := old.created_by; new.created_at := old.created_at;
+  else
+    new.created_by := coalesce(auth.uid(), new.created_by); new.created_at := now();
+  end if;
+  new.entreprise := btrim(new.entreprise); new.titre := btrim(new.titre); new.texte := btrim(new.texte); new.lien := btrim(new.lien);
+  new.domaine := nullif(regexp_replace(regexp_replace(lower(btrim(coalesce(new.domaine, ''))), '^https?://(www\.)?', ''), '/.*$', ''), '');
+  if cardinality(coalesce(new.annees, '{}')) = 0 then new.annees := null; end if;
+  if cardinality(coalesce(new.filieres, '{}')) = 0 then new.filieres := null; end if;
+  return new;
+end $$;
+revoke all on function public.protect_sponsorise() from public, anon, authenticated;
+drop trigger if exists trg_protect_sponsorise on public.sponsorises;
+create trigger trg_protect_sponsorise before insert or update on public.sponsorises
+  for each row execute function public.protect_sponsorise();
+
+alter table public.sponsorises enable row level security;
+revoke all on public.sponsorises from anon;
+drop policy if exists "lecture membres" on public.sponsorises;
+drop policy if exists "ecriture admin" on public.sponsorises;
+drop policy if exists "modif admin" on public.sponsorises;
+drop policy if exists "suppression admin" on public.sponsorises;
+create policy "lecture membres" on public.sponsorises for select to authenticated using (
+  public.is_admin() or (actif and current_date between debut and fin));
+create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (public.is_admin());
+create policy "modif admin" on public.sponsorises for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "suppression admin" on public.sponsorises for delete to authenticated using (public.is_admin());
+
+-- Une ligne par carte, membre, jour et geste ('vue' ou 'clic') : un membre compte une fois par jour pour chacun.
+-- Aucune règle de lecture ni d'écriture : seules compter_sponsorise() et bilan_sponsorises() y touchent.
+-- Le compte d'un membre part avec lui (suppression du compte), celui d'une carte avec elle.
+create table if not exists public.sponsorises_comptes (
+  sponsorise_id uuid not null references public.sponsorises(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  jour date not null default current_date,
+  kind text not null check (kind in ('vue','clic')),
+  primary key (sponsorise_id, user_id, jour, kind)
+);
+alter table public.sponsorises_comptes enable row level security;
+revoke all on public.sponsorises_comptes from public, anon, authenticated;
+
+-- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
+alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
+create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
+language sql stable set search_path = public as $$
+  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin and (s.ecole is null or s.ecole = p.ecole)
+    and p.role in ('etudiant','laureat') and not coalesce(p.admin_ok, false)
+    and (s.public = 'tous' or (s.public = 'etudiants' and p.role = 'etudiant') or (s.public = 'laureats' and p.role = 'laureat'))
+    and (cardinality(coalesce(s.annees, '{}')) = 0 or public.niveau_de(p.promo, public.saison_courante()) = any(s.annees))
+    and public.filiere_ok(s.filieres, p.filiere);
+$$;
+
+-- Le membre connecté compte une vue ou un clic sur une carte qui le vise ; vrai si c'est le premier du jour
+create or replace function public.compter_sponsorise(p_id uuid, p_kind text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_moi public.profiles; v_s public.sponsorises;
+begin
+  if auth.uid() is null or p_kind is null or p_kind not in ('vue','clic') then return false; end if;
+  select * into v_moi from public.profiles where id = auth.uid();
+  select * into v_s from public.sponsorises where id = p_id;
+  if not coalesce(public.sponsorise_pour(v_s, v_moi), false) then return false; end if;
+  insert into public.sponsorises_comptes (sponsorise_id, user_id, jour, kind) values (v_s.id, v_moi.id, current_date, p_kind)
+    on conflict do nothing;
+  return found;
+end $$;
+revoke all on function public.compter_sponsorise(uuid, text) from public, anon;
+grant execute on function public.compter_sponsorise(uuid, text) to authenticated;
+
+-- Les totaux de chaque carte, pour l'administration seule : vues, clics, membres différents. Jamais un nom ni un identifiant.
+create or replace function public.bilan_sponsorises() returns table (sponsorise_id uuid, vues int, clics int, membres int)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  return query
+    select s.id, (count(c.kind) filter (where c.kind = 'vue'))::int, (count(c.kind) filter (where c.kind = 'clic'))::int, (count(distinct c.user_id))::int
+    from public.sponsorises s left join public.sponsorises_comptes c on c.sponsorise_id = s.id
+    group by s.id;
+end $$;
+revoke all on function public.bilan_sponsorises() from public, anon;
+grant execute on function public.bilan_sponsorises() to authenticated;
+
+-- =====================================================================
+--  Durées de conservation (page Confidentialité, déclaration à la CNDP), appliquées chaque jour par taches_quotidiennes :
+--    • un compte sans connexion pendant 3 ans est supprimé avec tout ce qui lui est lié, comme s'il l'avait supprimé
+--      lui-même ; un email le prévient 30 jours avant (tâche « inactifs » de la fonction notifier) et une seule visite
+--      le garde. Un compte qu'on n'a pas pu prévenir n'est jamais supprimé ; l'administration n'est jamais concernée ;
+--    • les réponses à l'enquête d'insertion sont détachées du compte 3 ans après le diplôme (le 1er septembre de
+--      promo + 3) : il ne reste que ce qui sert aux chiffres globaux (ni entreprise, ni ville, ni commentaire) ;
+--    • la liste officielle des étudiants est effacée le 1er septembre, à la fin de l'année universitaire.
+-- =====================================================================
+create table if not exists public.comptes_prevenus (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  prevenu_at timestamptz not null default now()
+);
+alter table public.comptes_prevenus enable row level security;
+revoke all on public.comptes_prevenus from anon, authenticated;
+
+-- Dernière présence d'un compte : sa dernière visite notée (marquer_vu), sa dernière connexion, ou sa création
+create or replace function public.derniere_presence(p_id uuid) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select greatest((select v.vu_at from public.visites v where v.user_id = u.id), u.last_sign_in_at, u.created_at)
+  from auth.users u where u.id = p_id;
+$$;
+revoke all on function public.derniere_presence(uuid) from public, anon, authenticated;
+
+-- Les comptes à prévenir : absents depuis 3 ans moins 30 jours, pas encore prévenus depuis leur dernière visite
+create or replace function public.comptes_inactifs_a_prevenir(p_max int default 100)
+returns table (id uuid, email text, langue text)
+language sql stable security definer set search_path = public as $$
+  select u.id, u.email::text, case when coalesce(p.langue, u.raw_user_meta_data->>'langue') = 'ar' then 'ar' else 'fr' end
+  from auth.users u
+    left join public.profiles p on p.id = u.id
+    left join public.comptes_prevenus c on c.user_id = u.id
+    cross join lateral (select public.derniere_presence(u.id) as vu) x
+  where u.email is not null and p.role is distinct from 'admin'
+    and x.vu < now() - interval '3 years' + interval '30 days'
+    and (c.prevenu_at is null or c.prevenu_at < x.vu)
+  order by x.vu
+  limit greatest(0, least(p_max, 200));
+$$;
+revoke all on function public.comptes_inactifs_a_prevenir(int) from public, anon, authenticated;
+
+-- Après l'envoi : seuls les emails partis comptent (un échec est retenté le lendemain)
+create or replace function public.comptes_inactifs_prevenus(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.comptes_prevenus (user_id)
+    select u.id from auth.users u where u.id = any(p_ids)
+  on conflict (user_id) do update set prevenu_at = now();
+$$;
+revoke all on function public.comptes_inactifs_prevenus(uuid[]) from public, anon, authenticated;
+
+-- Prévenus depuis plus de 30 jours et jamais revenus : supprimés (50 par jour au plus, par prudence)
+create or replace function public.purger_comptes_inactifs(p_max int default 50) returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in
+    select c.user_id from public.comptes_prevenus c
+      join auth.users u on u.id = c.user_id
+      left join public.profiles p on p.id = u.id
+      cross join lateral (select public.derniere_presence(u.id) as vu) x
+    where c.prevenu_at < now() - interval '30 days' and p.role is distinct from 'admin'
+      and x.vu < c.prevenu_at and x.vu < now() - interval '3 years'
+    order by c.prevenu_at
+    limit greatest(0, least(p_max, 200))
+  loop
+    delete from public.profiles where id = r.user_id;
+    delete from auth.users where id = r.user_id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.purger_comptes_inactifs(int) from public, anon, authenticated;
+
+-- Enquête d'insertion : 3 ans après le diplôme, la réponse n'appartient plus à personne
+alter table public.enquetes_insertion alter column user_id drop not null;
+create or replace function public.anonymiser_enquetes() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  update public.enquetes_insertion set user_id = null, entreprise = null, ville = null, commentaire = null
+  where user_id is not null and make_date(promo + 3, 9, 1) <= current_date;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.anonymiser_enquetes() from public, anon, authenticated;
+
+-- Liste officielle : ce qui a été importé avant le dernier 1er septembre est effacé
+create or replace function public.effacer_liste_officielle() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+  v_rentree date := make_date(extract(year from current_date)::int - (extract(month from current_date) < 9)::int, 9, 1);
+begin
+  delete from public.liste_officielle where created_at < v_rentree;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.effacer_liste_officielle() from public, anon, authenticated;
+
+create or replace function public.conservation_quotidienne() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  return jsonb_build_object('comptes', public.purger_comptes_inactifs(), 'enquetes', public.anonymiser_enquetes(),
+    'liste', public.effacer_liste_officielle());
+end $$;
+revoke all on function public.conservation_quotidienne() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.comptes_inactifs_a_prevenir(int) to service_role;
+    grant execute on function public.comptes_inactifs_prevenus(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- =====================================================================
+--  Notifications qui arrivent, et rappel 15 minutes avant un rendez-vous
+--    · File : une notification reste en file tant que la fonction n'a pas confirmé son envoi (prendre_push,
+--      push_faits, plus haut). Chaque minute, relancer_push rappelle la fonction pour ce qui attend encore : un appel
+--      perdu ne fait plus attendre une notification jusqu'à la suivante.
+--    · Journal (push_journal) : ce que la fonction a fait de chaque notification, 7 jours (taches_quotidiennes).
+--    · Rappel : 15 minutes avant un rendez-vous de mentorat ou un entretien proposé dans une discussion, une
+--      notification aux deux personnes ; un email à celle qui n'a de notifications sur aucun appareil.
+-- =====================================================================
+
+-- Le journal (push_journal) et ses codes : section « Notifications sur le téléphone », au début, près de la file.
+
+-- Entretiens proposés dans une discussion déjà rappelés, avec leur horaire
+create table if not exists public.rappels_entretiens (
+  id uuid primary key references public.messages(id) on delete cascade,
+  rdv_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table public.rappels_entretiens enable row level security;
+create index if not exists messages_rdv_at on public.messages (rdv_at) where type = 'rdv';
+
+-- Rappels par email, pour qui n'a de notifications sur aucun appareil (la fonction « notifier », tâche rappels_rdv).
+-- data garde le lien de la visio : seule la fonction lit cette table, et la ligne part dès l'email envoyé.
+create table if not exists public.rappels_emails (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('rappel_rdv', 'rappel_entretien')),
+  data jsonb not null default '{}',
+  rdv_at timestamptz not null,
+  pris_at timestamptz,
+  essais int not null default 0,
+  created_at timestamptz default now()
+);
+alter table public.rappels_emails enable row level security;
+
+-- Un rappel pour un membre : sur ses téléphones (selon ses réglages), sinon par email. Vrai si un email attend.
+create or replace function public.rappeler(p_user uuid, p_kind text, p_data jsonb, p_lien text) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null then return false; end if;
+  if exists (select 1 from public.push_subscriptions where user_id = p_user) then
+    perform public.pousser(p_user, p_kind, p_data);
+    return false;
+  end if;
+  insert into public.rappels_emails (user_id, kind, data, rdv_at)
+    select p_user, p_kind, p_data || jsonb_strip_nulls(jsonb_build_object('lien', p_lien)), (p_data ->> 'rdv_at')::timestamptz
+    where exists (select 1 from auth.users u where u.id = p_user and u.email is not null);
+  return found;
+exception when others then raise warning 'rappeler : %', sqlerrm; return false;  -- un rappel ne bloque jamais les autres
+end $$;
+revoke all on function public.rappeler(uuid, text, jsonb, text) from public, anon, authenticated;
+
+-- Chaque minute (taches_minute) : les rendez-vous qui commencent dans 15 minutes au plus, une seule fois par horaire
+create or replace function public.rappels_rdv() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; v_email boolean := false;
+begin
+  -- Mentorat : le rendez-vous fixé, et sa salle de visio
+  for r in select m.id, m.student_id, m.mentor_id, m.sujet, m.rdv_at, l.lien from public.mentorships m
+      left join public.liens_rdv l on l.id = m.id
+      where m.status = 'acceptee' and m.rdv_at > now() + interval '1 minute' and m.rdv_at <= now() + interval '15 minutes'
+        and not exists (select 1 from public.rappels_envoyes x where x.id = m.id and x.rdv_at = m.rdv_at) loop
+    insert into public.rappels_envoyes (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
+    if public.rappeler(r.student_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.mentor_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at, 'm', r.id), r.lien) then v_email := true; end if;
+    if public.rappeler(r.mentor_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.student_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at, 'm', r.id), r.lien) then v_email := true; end if;
+    n := n + 1;
+  end loop;
+  -- Entretien proposé dans une discussion : accepté, ou sans réponse ; pas s'il a été refusé (« Autre horaire »),
+  -- remplacé par un horaire proposé depuis dans la même discussion, ou si l'un a bloqué l'autre
+  for r in select m.id, m.author_id, m.dest_id, m.rdv_at, m.rdv_duree, m.rdv_lieu, m.rdv_lien from public.messages m
+      where m.type = 'rdv' and m.rdv_at > now() + interval '1 minute' and m.rdv_at <= now() + interval '15 minutes'
+        and m.rdv_reponse is distinct from 'autre'
+        and not exists (select 1 from public.messages y where y.type = 'rdv' and y.created_at > m.created_at
+          and ((y.author_id = m.author_id and y.dest_id = m.dest_id) or (y.author_id = m.dest_id and y.dest_id = m.author_id)))
+        and not exists (select 1 from public.blocages b
+          where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id))
+        and not exists (select 1 from public.rappels_entretiens x where x.id = m.id and x.rdv_at = m.rdv_at) loop
+    insert into public.rappels_entretiens (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
+    if public.rappeler(r.author_id, 'rappel_entretien', jsonb_build_object('nom', split_part((select full_name from public.profiles where id = r.dest_id), ' ', 1),
+        'de', r.dest_id, 'm', r.id, 'rdv_at', r.rdv_at, 'duree', r.rdv_duree, 'lieu', r.rdv_lieu), r.rdv_lien) then v_email := true; end if;
+    if public.rappeler(r.dest_id, 'rappel_entretien', jsonb_build_object('nom', split_part((select full_name from public.profiles where id = r.author_id), ' ', 1),
+        'de', r.author_id, 'm', r.id, 'rdv_at', r.rdv_at, 'duree', r.rdv_duree, 'lieu', r.rdv_lieu), r.rdv_lien) then v_email := true; end if;
+    n := n + 1;
+  end loop;
+  if v_email then perform public.appeler_notifier('rappels_rdv'); end if;
+  return n;
+end $$;
+revoke all on function public.rappels_rdv() from public, anon, authenticated;
+
+-- La fonction « notifier » prend les rappels par email à envoyer ; ils restent jusqu'à confirmation (rappels_rdv_envoyes),
+-- repris après 2 minutes, 3 essais au plus, jamais après le début du rendez-vous
+create or replace function public.rappels_rdv_a_envoyer(p_max int default 100)
+returns table (id bigint, email text, langue text, kind text, data jsonb)
+language sql security definer set search_path = public as $$
+  with pris as (
+    update public.rappels_emails r set pris_at = now(), essais = r.essais + 1
+    where r.id in (select x.id from public.rappels_emails x
+        where x.essais < 3 and x.rdv_at > now() and (x.pris_at is null or x.pris_at < now() - interval '2 minutes')
+        order by x.rdv_at, x.id limit greatest(0, least(p_max, 200)) for update skip locked)
+    returning r.*)
+  select pris.id, u.email::text, coalesce(p.langue, u.raw_user_meta_data ->> 'langue', 'fr'), pris.kind, pris.data
+  from pris join auth.users u on u.id = pris.user_id left join public.profiles p on p.id = pris.user_id
+  order by pris.rdv_at, pris.id;
+$$;
+revoke all on function public.rappels_rdv_a_envoyer(int) from public, anon, authenticated;
+
+create or replace function public.rappels_rdv_envoyes(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  delete from public.rappels_emails where id = any(coalesce(p_ids, '{}'::bigint[]));
+$$;
+revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, authenticated;
+
+-- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
+-- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès. Une notification
+-- abandonnée laisse sa trace au journal : rien ne disparaît sans qu'on le sache. -3 si elle a été essayée (le service du
+-- téléphone ne répondait pas) ; -5 si elle ne l'a jamais été (la fonction ou la tâche de chaque minute ne tournait pas).
+create or replace function public.relancer_push() returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v boolean := false;
+begin
+  begin
+    with abandon as (
+      delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes')
+      returning user_id, kind, essais)
+    insert into public.push_journal (user_id, kind, code)
+      select user_id, left(kind, 40), case when essais > 0 then -3 else -5 end from abandon;
+  exception when others then
+    raise warning 'relancer_push (journal) : %', sqlerrm;
+    delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  end;
+  delete from public.rappels_emails where rdv_at < now() or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  if exists (select 1 from public.push_queue where essais < 3
+      and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
+    perform public.appeler_notifier('push');
+    v := true;
+  end if;
+  if exists (select 1 from public.rappels_emails where essais < 3
+      and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
+    perform public.appeler_notifier('rappels_rdv');
+    v := true;
+  end if;
+  return v;
+end $$;
+revoke all on function public.relancer_push() from public, anon, authenticated;
+
+-- =====================================================================
+--  Notifications : la preuve de réception, et le tour Match du jour
+--    · push_subscriptions.recu_at : la dernière fois que ce téléphone a vraiment reçu une notification. Le service de push
+--      répond 201 dès qu'il l'accepte, même si elle n'arrive jamais ; le service worker, lui, le dit à la réception.
+--      L'adresse d'abonnement sert de preuve : elle n'est connue que de l'appareil et de la plateforme.
+--    · Match du jour : à midi (midi_push, section « Nouvelles notifications »), à qui a des cartes à voir
+--      (catégorie « Match » de Mon profil)
+-- =====================================================================
+alter table public.push_subscriptions add column if not exists recu_at timestamptz;
+
+create or replace function public.push_recu(p_endpoint text) returns void
+language sql security definer set search_path = public as $$
+  update public.push_subscriptions set recu_at = now() where endpoint = p_endpoint;
+$$;
+revoke all on function public.push_recu(text) from public;
+grant execute on function public.push_recu(text) to anon, authenticated;
+
+-- Le tour Match du jour, à midi (midi_push, après match_attente_push) : « Ton tour du jour est prêt », à qui a de vraies cartes
+-- dont au moins une arrivée depuis le dernier envoi. Le compte ne dépasse jamais ce que deckMatch (logic.js) montrerait :
+-- l'étudiant compte les offres de lauréats que Match lui proposerait (mêmes règles) ; le lauréat, les étudiants de son
+-- parcours arrivés depuis sa dernière visite (sous-ensemble de sa pile).
+--   · Jamais pour l'administration ; rien le jour d'un choix dans Match, ni le jour où un intérêt lui a été rappelé.
+--   · Au plus un par jour (20 h) ; chaque jour pour qui a joué ces 14 derniers jours, sinon le lundi seulement ;
+--     3 envois sans aucun choix : le lundi seulement ; 4 lundis sans choix : plus rien jusqu'au prochain choix.
+--   · DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place).
+-- match_jour_notif : envois (n) et lundis depuis le dernier choix. Un choix plus récent que le dernier envoi remet à zéro.
+create table if not exists public.match_jour_notif (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  n int not null default 0,
+  lundis int not null default 0,
+  dernier_at timestamptz
+);
+alter table public.match_jour_notif enable row level security;
+
+create or replace function public.match_jour_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante();
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+  v_jour date := (public.horloge() at time zone 'UTC')::date;
+  v_lundi boolean := extract(isodow from public.horloge() at time zone 'UTC') = 1;
+  v_n int;
+begin
+  with membres as materialized (
+    select p.id, p.role, p.promo, p.filiere, p.ecole, j.dernier_at,
+      case when p.role = 'laureat' then public.derniere_visite(p.id) end as vu,
+      case when c.dernier > coalesce(j.dernier_at, '-infinity'::timestamptz) then 0 else coalesce(j.n, 0) end as envois,
+      case when c.dernier > coalesce(j.dernier_at, '-infinity'::timestamptz) then 0 else coalesce(j.lundis, 0) end as lundis,
+      coalesce(c.dernier > now() - interval '14 days', false) as actif
+    from public.profiles p
+    left join public.match_jour_notif j on j.user_id = p.id
+    cross join lateral (select max(x.updated_at) as dernier from public.match_choix x where x.user_id = p.id) c
+    where p.role in ('etudiant','laureat') and coalesce(btrim(p.filiere), '') <> ''
+      and (j.dernier_at is null or j.dernier_at < now() - interval '20 hours')
+      and not exists (select 1 from public.match_choix x where x.user_id = p.id and x.updated_at >= v_debut and x.updated_at < v_debut + interval '1 day')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'match_attente'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'match_jour')
+  ),
+  dus as materialized (
+    select m.*, case when m.actif and m.envois < 3 then 'jour' when v_lundi and m.lundis < 4 then 'lundi' end as rythme
+    from membres m
+  ),
+  comptes as materialized (
+    select d.id, d.role, d.rythme, d.envois, d.lundis, k.n
+    from dus d
+    cross join lateral (
+      select count(*) as n, count(*) filter (where x.arrivee > coalesce(d.dernier_at, '-infinity'::timestamptz)) as neuves
+      from (
+        -- Étudiant : les offres de lauréats que Match lui montrerait (deckMatch, offreMatchable)
+        select o.created_at as arrivee from public.offers o join public.profiles a on a.id = o.author_id
+        where d.role = 'etudiant' and o.status = 'ouverte' and o.ecole = d.ecole and a.role = 'laureat' and o.author_id <> d.id
+          and coalesce(o.audience, 'etudiants') = 'etudiants'
+          and public.niveau_de(d.promo, v_s) = any(coalesce(o.annees, '{}'::int[]))
+          and public.filiere_ok(o.filieres, d.filiere)
+          and (o.deadline is null or o.deadline >= v_jour)
+          and (o.origine is distinct from 'partagee' or o.deadline is not null or o.created_at >= now() - interval '45 days')
+          and not exists (select 1 from public.applications y where y.student_id = d.id and y.offer_id = o.id)
+          and not exists (select 1 from public.match_choix c where c.user_id = d.id and c.cible_offre = o.id
+                            and (c.choix = 'oui' or c.updated_at > now() - interval '30 days'))
+          and not exists (select 1 from public.matchs m where m.etudiant_id = d.id and m.laureat_id = o.author_id)
+          and not exists (select 1 from public.blocages b where (b.user_id = d.id and b.bloque_id = o.author_id) or (b.user_id = o.author_id and b.bloque_id = d.id))
+          -- Un lauréat qui s'intéresse déjà à lui : Match montre son profil, pas ses offres
+          and not exists (select 1 from public.match_choix c where c.user_id = o.author_id and c.cible_profil = d.id and c.choix = 'oui')
+        union all
+        -- Lauréat : les étudiants de son parcours arrivés depuis sa dernière visite, que Match lui montrerait
+        select e.created_at from public.profiles e
+        where d.role = 'laureat' and e.role = 'etudiant' and e.ecole = d.ecole and e.created_at > d.vu and e.match_visible
+          and coalesce(btrim(e.filiere), '') <> '' and e.filiere <> 'Classes préparatoires intégrées'
+          and public.proximite_filiere(d.filiere, e.filiere) >= 1
+          and not exists (select 1 from public.match_choix c where c.user_id = d.id and c.cible_profil = e.id
+                            and (c.choix = 'oui' or c.updated_at > now() - interval '30 days'))
+          and not exists (select 1 from public.matchs m where m.laureat_id = d.id and m.etudiant_id = e.id)
+          and not exists (select 1 from public.blocages b where (b.user_id = d.id and b.bloque_id = e.id) or (b.user_id = e.id and b.bloque_id = d.id))
+      ) x
+    ) k
+    where d.rythme is not null and k.n > 0 and k.neuves > 0
+  ),
+  places as materialized (select c.* from comptes c where public.programme_place(c.id, 'match_jour')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'match_jour', jsonb_build_object('n', least(x.n, 5), 'type', x.role) from places x
+    returning user_id),
+  notes as (
+    insert into public.match_jour_notif (user_id, n, lundis, dernier_at)
+      select x.id, x.envois + 1, x.lundis + case when x.rythme = 'lundi' then 1 else 0 end, now()
+      from places x join envoi e on e.user_id = x.id
+    on conflict (user_id) do update set n = excluded.n, lundis = excluded.lundis, dernier_at = excluded.dernier_at
+    returning 1)
+  select count(*) into v_n from notes;
+  return v_n;
+end $$;
+revoke all on function public.match_jour_push() from public, anon, authenticated;
+
+-- =====================================================================
+--  Écoles (seconde partie) : le contenu de chaque réseau. Une règle restrictive s'ajoute à celles de chaque table, sans
+--  les toucher : un membre ne lit et n'écrit que ce qui est de son école. garde_ecole() refuse ensuite toute action qui
+--  vise la personne ou le contenu d'une autre école par son identifiant, même depuis une fonction de la base.
+--  Tant qu'une seule école est ouverte, rien ne change pour personne.
+-- =====================================================================
+do $$
+declare t text;
+begin
+  foreach t in array array['offers','questions','demandes','annonces','cafes','startups','evenements',
+      'placements','mentorships','answers','groupe_messages','groupe_membres','relectures_cv','verifications_pairs','defis','ambassadeurs',
+      'votes','reactions','kudos','cafe_participants','evenement_participants','shortlists'] loop
+    execute format($f$alter table public.%I add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug)$f$, t);
+    execute format('create index if not exists %I on public.%I (ecole)', t || '_ecole', t);
+    execute format('drop policy if exists "reseau de l''ecole" on public.%I', t);
+    execute format($f$create policy "reseau de l'ecole" on public.%I as restrictive for all to authenticated
+      using (ecole = (select public.mon_ecole()) or (select public.super_admin()))
+      with check (ecole = (select public.mon_ecole()) or (select public.super_admin()))$f$, t);
+  end loop;
+end $$;
+
+-- La marque et l'inscription de chaque école : nom court et ville (affichés), couleur, logo, domaines de l'email
+alter table public.ecoles add column if not exists nom_court text check (char_length(nom_court) <= 40);
+alter table public.ecoles add column if not exists ville text check (char_length(ville) <= 60);
+alter table public.ecoles add column if not exists couleur text check (couleur ~ '^#[0-9a-fA-F]{6}$');
+alter table public.ecoles add column if not exists logo_url text check (char_length(logo_url) <= 300 and logo_url ~ '^https://');
+alter table public.ecoles add column if not exists domaines text[] not null default '{}';
+alter table public.ecoles add column if not exists email_obligatoire boolean not null default false;
+update public.ecoles set nom_court = coalesce(nom_court, 'ENSAM'), ville = coalesce(ville, 'Meknès'), couleur = coalesce(couleur, '#1670A8')
+  where slug = 'ensam-meknes';
+alter table public.ecoles add column if not exists nom_ar text check (char_length(nom_ar) <= 120);
+update public.ecoles set nom_ar = coalesce(nom_ar, 'ENSAM مكناس') where slug = 'ensam-meknes';
+-- Deuxième école : fermée tant que l'administration ne l'ouvre pas (domaines et filières à recevoir de l'école)
+insert into public.ecoles (slug, nom, nom_court, ville, nom_ar, ouverte) values ('ensam-casa', 'ENSAM Casablanca', 'ENSAM', 'Casablanca', 'ENSAM الدار البيضاء', false)
+  on conflict (slug) do nothing;
+
+-- Arguments du déclencheur : « colonne:table » ; la table citée a un id et une école. Sans membre connecté
+-- (tâches de la base) ni pour l'administration, rien à vérifier.
+create or replace function public.garde_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare i int; v text; e text; m text := public.mon_ecole();
+begin
+  if auth.uid() is null or public.super_admin() then return new; end if;
+  for i in 0 .. tg_nargs - 1 loop
+    v := to_jsonb(new) ->> split_part(tg_argv[i], ':', 1);
+    continue when v is null;
+    execute format('select ecole from public.%I where id = $1', split_part(tg_argv[i], ':', 2)) into e using v::uuid;
+    if e is distinct from m then raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501'; end if;
+  end loop;
+  return new;
+end $$;
+revoke all on function public.garde_ecole() from public, anon, authenticated;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('mentorships', array['student_id:profiles','mentor_id:profiles']), ('relectures_cv', array['student_id:profiles','reviewer_id:profiles']),
+    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers']),
+    ('demandes_contact', array['cible_id:profiles']), ('match_choix', array['cible_profil:profiles','cible_offre:offers']),
+    ('propositions', array['demande_id:demandes']), ('reponses_demandes', array['demande_id:demandes']),
+    ('applications', array['offer_id:offers']), ('messages', array['dest_id:profiles']), ('comments', array['offer_id:offers']),
+    ('answers', array['question_id:questions']), ('votes', array['answer_id:answers']), ('kudos', array['placement_id:placements']),
+    ('reactions', array['offer_id:offers']), ('reactions_publiques', array['offer_id:offers','demande_id:demandes']),
+    ('cafe_participants', array['cafe_id:cafes']), ('evenement_participants', array['evenement_id:evenements']),
+    ('verifications_pairs', array['laureat_id:profiles']), ('shortlists', array['student_id:profiles'])
+  ) as x(t, a) loop
+    execute format('drop trigger if exists aa_garde_ecole on public.%I', r.t);
+    execute format('create trigger aa_garde_ecole before insert or update on public.%I for each row execute function public.garde_ecole(%s)',
+      r.t, (select string_agg(quote_literal(c), ', ') from unnest(r.a) c));
+  end loop;
+end $$;
+
+-- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
+create or replace function public.taches_minute() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  begin perform public.rappels_rdv(); exception when others then raise warning 'Rappels : %', sqlerrm; end;
+  begin perform public.relancer_push(); exception when others then raise warning 'Notifications en file : %', sqlerrm; end;
+end $$;
+revoke all on function public.taches_minute() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.rappels_rdv_a_envoyer(int) to service_role;
+    grant execute on function public.rappels_rdv_envoyes(bigint[]) to service_role;
+  end if;
+end $$;
+
+-- =====================================================================
+--  Nouvelles notifications (2/2) : ce qui remplit la barre de notifications de choses vraies et utiles.
+--  (1/2, plus haut après push_filtre : horloge, nuit calme, budget du jour.)
+--    · Programmées, dans le budget de 3 par jour (programme_place) :
+--        DURES   rdv_demain, entretien_demain, agenda_demain (la veille, 19:30), apres_rdv (19:30), match_attente (12:30)
+--        DOUCES  match_jour (12:30), offre_bientot (09:00), demande_attente (chaque heure de 8 h à 21 h), demande_pause
+--                (08:00), rappel_visite (18:00), semaine (dimanche 10:00), groupe_jour (19:30)
+--    · Entre personnes, tout de suite : reponse_utile (un vote, la meilleure réponse), bravo, mentorat_presence.
+--    · Chaque producteur filtre d'abord (abonné, push_voulu, conditions), puis appelle programme_place sur ce qui reste,
+--      dans une CTE matérialisée ; chaque envoi est noté pour ne jamais partir deux fois.
+--    · Écoles : une tâche de pg_cron n'a pas de membre connecté (auth.uid() vide), push_filtre ne filtre donc pas l'école
+--      pour elle. Chaque producteur programmé choisit lui-même ses destinataires, ses chiffres et ses noms dans l'école
+--      du membre : rien ne passe d'une école à l'autre.
+--  Mêmes catégories que logic.js (PUSH_KINDS) ; textes FR et AR dans le notifier (NOTIFS).
+-- =====================================================================
+
+-- Index des lectures de cette section (et du rappel du soir)
+create index if not exists applications_offre on public.applications (offer_id) where offer_id is not null;
+create index if not exists answers_question on public.answers (question_id);
+create index if not exists evenement_participants_membre on public.evenement_participants (user_id);
+create index if not exists cafe_participants_membre on public.cafe_participants (user_id);
+create index if not exists cafes_date on public.cafes (date_at);
+create index if not exists match_choix_oui_at on public.match_choix (updated_at) where choix = 'oui';
+create index if not exists profiles_arrivee on public.profiles (created_at);
+create index if not exists offers_arrivee on public.offers (created_at);
+create index if not exists groupe_messages_at on public.groupe_messages (created_at);
+create index if not exists mentorships_rdv on public.mentorships (rdv_at) where status = 'acceptee';
+
+-- ---------------------------------------------------------------------
+-- match_attente (12:30) : un « Intéressé » qui attend une réponse depuis la veille. La personne visée (l'étudiant pour un
+-- oui à son profil, le lauréat pour un oui à son offre) l'apprend une fois, tous ses intérêts en attente regroupés :
+-- un oui donné il y a 20 h à 7 jours, sans réponse de sa part (aucun choix sur cette personne), sans match ni blocage,
+-- entre deux membres de la même école.
+-- Rien si un match_interet lui est parti dans les 20 h ; au plus un par jour. DURE : une personne attend.
+-- ---------------------------------------------------------------------
+create table if not exists public.match_attente_notif (
+  choix_id uuid primary key references public.match_choix(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.match_attente_notif enable row level security;
+
+create or replace function public.match_attente_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  with ouis as materialized (
+    -- Un lauréat dit oui au profil d'un étudiant : l'étudiant est visé
+    select c.id as choix_id, c.cible_profil as dest, c.user_id as de, null::uuid as offre, c.updated_at
+    from public.match_choix c join public.profiles l on l.id = c.user_id join public.profiles e on e.id = c.cible_profil
+    where c.choix = 'oui' and c.cible_profil is not null
+      and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
+      and l.role = 'laureat' and e.role = 'etudiant' and l.ecole = e.ecole
+    union all
+    -- Un étudiant dit oui à l'offre d'un lauréat : le lauréat est visé
+    select c.id, o.author_id, c.user_id, o.id, c.updated_at
+    from public.match_choix c join public.offers o on o.id = c.cible_offre
+      join public.profiles e on e.id = c.user_id join public.profiles l on l.id = o.author_id
+    where c.choix = 'oui' and c.cible_offre is not null
+      and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
+      and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> '' and l.role = 'laureat'
+      and l.ecole = e.ecole and o.ecole = e.ecole
+  ),
+  attente as materialized (
+    select o.*, exists (select 1 from public.match_attente_notif n where n.choix_id = o.choix_id) as deja
+    from ouis o
+    -- Sans réponse : aucun choix de sa part sur cette personne depuis l'intérêt (un « Plus tard » plus ancien ne compte pas,
+    -- comme dans deckMatch : la carte revient)
+    where not exists (select 1 from public.match_choix r where r.user_id = o.dest and r.cible_profil = o.de
+                        and (r.choix = 'oui' or r.updated_at >= o.updated_at))
+      and not exists (select 1 from public.matchs m where (m.etudiant_id = o.dest and m.laureat_id = o.de) or (m.etudiant_id = o.de and m.laureat_id = o.dest))
+      and not exists (select 1 from public.blocages b where (b.user_id = o.dest and b.bloque_id = o.de) or (b.user_id = o.de and b.bloque_id = o.dest))
+  ),
+  dest as materialized (
+    select d.id, p.role from (select distinct a.dest as id from attente a where not a.deja) d join public.profiles p on p.id = d.id
+    where p.role in ('etudiant','laureat')
+      and exists (select 1 from public.push_subscriptions s where s.user_id = d.id)
+      and public.push_voulu(d.id, 'match_attente')
+      and not exists (select 1 from public.push_journal j where j.user_id = d.id and j.kind = 'match_interet' and j.at > now() - interval '20 hours')
+      and not exists (select 1 from public.push_queue q where q.user_id = d.id and q.kind = 'match_interet')
+      and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'match_attente'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+  ),
+  -- Le premier nommé : l'intérêt le plus récent jamais rappelé ; n : toutes les personnes qui attendent une réponse
+  premier as materialized (
+    select distinct on (a.dest) a.dest as id, d.role, a.de, a.offre, (select count(distinct y.de) from attente y where y.dest = a.dest) as n
+    from attente a join dest d on d.id = a.dest
+    where not a.deja
+    order by a.dest, a.updated_at desc, a.choix_id
+  ),
+  places as materialized (select x.* from premier x where public.programme_place(x.id, 'match_attente')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'match_attente', jsonb_strip_nulls(jsonb_build_object(
+      'n', x.n, 'nom', split_part(f.full_name, ' ', 1), 'de', x.de, 'type', x.role,
+      -- L'entreprise du lauréat seulement s'il la montre à tous (comme match_interet) ; vide sinon
+      'entreprise', case when x.role = 'etudiant' and coalesce(f.visibilite ->> 'travail', 'tous') = 'tous' then coalesce(btrim(f.entreprise), '') else '' end,
+      'titre', case when x.role = 'laureat' then (select o.titre from public.offers o where o.id = x.offre) end,
+      'offre', x.offre))
+    from places x join public.profiles f on f.id = x.de
+    returning user_id),
+  notes as (
+    insert into public.match_attente_notif (choix_id)
+      select a.choix_id from attente a join places x on x.id = a.dest where not a.deja
+    on conflict do nothing
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.match_attente_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- La veille (19:30) et le lendemain d'un engagement. veilles_envoyees : ce qui est déjà parti, avec son horaire (un rendez-vous
+-- déplacé est annoncé de nouveau). quoi : 'rdv' (mentorat, la veille), 'entretien' (message 'rdv', la veille), 'agenda'
+-- (événement ou café, la veille), 'apres' (mentorat, le lendemain).
+-- ---------------------------------------------------------------------
+create table if not exists public.veilles_envoyees (
+  quoi text not null check (quoi in ('rdv','entretien','agenda','apres')),
+  id uuid not null,
+  rdv_at timestamptz,
+  created_at timestamptz default now(),
+  primary key (quoi, id)
+);
+alter table public.veilles_envoyees enable row level security;
+
+-- rdv_demain : rendez-vous de mentorat fixé demain, à l'étudiant et au lauréat. Plusieurs le même jour : une seule
+-- notification, le premier en détail (n). DURE.
+create or replace function public.rdv_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.student_id, x.mentor_id, x.sujet, x.rdv_at from public.mentorships x
+    where x.status = 'acceptee' and x.mentor_id is not null
+      and x.rdv_at >= v_demain and x.rdv_at < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'rdv' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : l'étudiant et le lauréat sont de la même école
+      and exists (select 1 from public.profiles se join public.profiles me on me.id = x.mentor_id where se.id = x.student_id and se.ecole = me.ecole)
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.rdv_at, y.m) as rang
+      from (select r.student_id as id, r.mentor_id as autre, r.m, r.sujet, r.rdv_at from r
+            union all select r.mentor_id, r.student_id, r.m, r.sujet, r.rdv_at from r) y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'rdv_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'rdv_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'rdv_demain', jsonb_build_object('nom', a.full_name, 'sujet', x.sujet, 'rdv_at', x.rdv_at, 'm', x.m, 'n', x.n)
+    from places x join public.profiles a on a.id = x.autre
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'rdv', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.rdv_demain_push() from public, anon, authenticated;
+
+-- entretien_demain : entretien proposé dans une discussion (message 'rdv') prévu demain, aux deux personnes ; mêmes
+-- filtres que le rappel de 15 minutes (rappels_rdv) : pas refusé, pas remplacé par un horaire plus récent, sans blocage.
+-- DURE.
+create or replace function public.entretien_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.author_id, x.dest_id, x.rdv_at, x.rdv_duree, x.rdv_lieu, coalesce(btrim(x.rdv_lien), '') <> '' as visio
+    from public.messages x
+    where x.type = 'rdv' and x.rdv_at >= v_demain and x.rdv_at < v_demain + interval '1 day'
+      and x.rdv_reponse is distinct from 'autre'
+      and not exists (select 1 from public.messages y where y.type = 'rdv' and y.created_at > x.created_at
+        and ((y.author_id = x.author_id and y.dest_id = x.dest_id) or (y.author_id = x.dest_id and y.dest_id = x.author_id)))
+      and not exists (select 1 from public.blocages b
+        where (b.user_id = x.author_id and b.bloque_id = x.dest_id) or (b.user_id = x.dest_id and b.bloque_id = x.author_id))
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'entretien' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : les deux personnes de la discussion sont de la même école
+      and exists (select 1 from public.profiles pa join public.profiles pd on pd.id = x.dest_id where pa.id = x.author_id and pa.ecole = pd.ecole)
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.rdv_at, y.m) as rang
+      from (select r.author_id as id, r.dest_id as de, r.m, r.rdv_at, r.rdv_duree, r.rdv_lieu, r.visio from r
+            union all select r.dest_id, r.author_id, r.m, r.rdv_at, r.rdv_duree, r.rdv_lieu, r.visio from r) y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'entretien_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'entretien_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'entretien_demain', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'rdv_at', x.rdv_at,
+      'duree', x.rdv_duree, 'lieu', x.rdv_lieu, 'visio', x.visio, 'm', x.m, 'de', x.de, 'n', x.n))
+    from places x join public.profiles a on a.id = x.de
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'entretien', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.entretien_demain_push() from public, anon, authenticated;
+
+-- agenda_demain : inscrit à un événement ou à un café non annulé qui a lieu demain (pas celui qu'il organise). Plusieurs :
+-- une seule notification, le premier en détail (n). inscrits : le vrai nombre d'inscrits (de son école). DURE.
+create or replace function public.agenda_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with items as materialized (
+    select 'evenement'::text as type, e.id as item, e.titre, e.debut, e.lieu, null::text as ville,
+      (select count(*) from public.evenement_participants y join public.profiles u on u.id = y.user_id
+        where y.evenement_id = e.id and u.ecole = e.ecole) as inscrits, e.author_id as organisateur, e.ecole
+    from public.evenements e
+    where not e.annule and e.debut >= v_demain and e.debut < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = e.id and v.rdv_at = e.debut)
+    union all
+    select 'cafe', c.id, null, c.date_at, c.lieu, c.ville,
+      (select count(*) from public.cafe_participants y join public.profiles u on u.id = y.user_id
+        where y.cafe_id = c.id and u.ecole = c.ecole), c.organisateur_id, c.ecole
+    from public.cafes c
+    where not c.annule and c.date_at >= v_demain and c.date_at < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = c.id and v.rdv_at = c.date_at)
+  ),
+  inscrits as materialized (
+    select x.user_id as id, i.* from items i join public.evenement_participants x on x.evenement_id = i.item
+      join public.profiles u on u.id = x.user_id
+      where i.type = 'evenement' and x.user_id is distinct from i.organisateur and u.ecole = i.ecole
+    union all
+    select x.user_id, i.* from items i join public.cafe_participants x on x.cafe_id = i.item
+      join public.profiles u on u.id = x.user_id
+      where i.type = 'cafe' and x.user_id is distinct from i.organisateur and u.ecole = i.ecole
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.debut, y.type, y.titre) as rang
+      from inscrits y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'agenda_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'agenda_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'agenda_demain', jsonb_strip_nulls(jsonb_build_object('type', x.type, 'titre', x.titre, 'debut', x.debut,
+      'lieu', x.lieu, 'ville', x.ville, 'inscrits', x.inscrits, 'id', x.item, 'n', x.n))
+    from places x
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'agenda', i.item, i.debut from items i
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.agenda_demain_push() from public, anon, authenticated;
+
+-- apres_rdv : le rendez-vous de mentorat a eu lieu (il y a 1 à 30 h, toujours « acceptée ») : l'étudiant qui n'a pas encore
+-- remercié (pour = 'demandeur'), et le lauréat tant que le mentorat n'est pas marqué terminé (pour = 'mentor'). DURE.
+create or replace function public.apres_rdv_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.student_id, x.mentor_id, x.sujet, x.rdv_at, x.merci from public.mentorships x
+    where x.status = 'acceptee' and x.mentor_id is not null
+      and x.rdv_at >= now() - interval '30 hours' and x.rdv_at <= now() - interval '1 hour'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'apres' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : l'étudiant et le lauréat sont de la même école
+      and exists (select 1 from public.profiles se join public.profiles me on me.id = x.mentor_id where se.id = x.student_id and se.ecole = me.ecole)
+  ),
+  dest as materialized (
+    select y.* from (
+      select r.student_id as id, r.mentor_id as autre, 'demandeur'::text as pour, r.m, r.sujet from r where r.merci is null
+      union all select r.mentor_id, r.student_id, 'mentor', r.m, r.sujet from r) y
+    where exists (select 1 from public.push_subscriptions s where s.user_id = y.id)
+      and public.push_voulu(y.id, 'apres_rdv')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'apres_rdv')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'apres_rdv', jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'sujet', x.sujet, 'm', x.m, 'pour', x.pour)
+    from places x join public.profiles a on a.id = x.autre
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'apres', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.apres_rdv_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- offre_bientot (09:00) : une offre mise de côté (reactions 'save') ferme dans 2 jours ou demain (rattrapage), encore ouverte,
+-- pour son année (offre_pour), sans candidature de sa part, pas la sienne. Une offre partagée sans date limite ferme
+-- 45 jours après sa publication (fermer_partages_anciens). Une fois par offre et par membre ; 2 par jour au plus,
+-- au-delà une seule notification groupée (n, groupe). DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.offres_bientot_notif (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  offer_id uuid not null references public.offers(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (user_id, offer_id)
+);
+alter table public.offres_bientot_notif enable row level security;
+
+create or replace function public.offres_bientot_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_jour date := (public.horloge() at time zone 'UTC')::date;
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  with offres as materialized (
+    select o.id, l.limite from public.offers o
+    cross join lateral (select coalesce(o.deadline, case when o.origine = 'partagee'
+      then ((o.created_at + interval '45 days') at time zone 'UTC')::date end) as limite) l
+    where o.status = 'ouverte' and l.limite - v_jour in (1, 2)
+  ),
+  c as materialized (
+    select p.id, o.id as offre, o.titre, o.entreprise, f.limite, f.limite - v_jour as jours
+    from offres f
+    join public.offers o on o.id = f.id
+    join public.reactions r on r.offer_id = o.id and r.kind = 'save'
+    join public.profiles p on p.id = r.user_id
+    where p.role in ('etudiant','laureat') and o.author_id <> p.id
+      and public.offre_pour(o, p, v_s)
+      and not exists (select 1 from public.applications y where y.student_id = p.id and y.offer_id = o.id)
+      and not exists (select 1 from public.offres_bientot_notif n where n.user_id = p.id and n.offer_id = o.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'offre_bientot')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'offre_bientot'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+  ),
+  g as materialized (
+    select c.*, count(*) over (partition by c.id) as k, row_number() over (partition by c.id order by c.limite, c.titre, c.offre) as rang from c
+  ),
+  lignes as materialized (
+    select g.id, g.offre, g.k, g.rang,
+      case when g.k >= 3 then jsonb_build_object('n', g.k, 'groupe', true)
+           else jsonb_build_object('titre', g.titre, 'entreprise', g.entreprise, 'date_limite', g.limite, 'offre', g.offre, 'jours', g.jours) end as data
+    from g where g.k <= 2 or g.rang = 1
+  ),
+  places as materialized (select l.* from lignes l where public.programme_place(l.id, 'offre_bientot')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'offre_bientot', x.data from places x order by x.id, x.rang
+    returning 1),
+  notes as (
+    insert into public.offres_bientot_notif (user_id, offer_id)
+      select g.id, g.offre from g join places x on x.id = g.id and (x.k >= 3 or x.offre = g.offre)
+    on conflict do nothing
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.offres_bientot_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- demande_attente (alertes_horaires, chaque heure de 8 h à 21 h) : une demande publiée il y a 24 à 72 h, toujours ouverte
+-- et sans aucune aide proposée. Les lauréats de son parcours (demande_pour, proximité ≥ 1) sans proposition, une fois par
+-- demande, 150 au plus : d'abord ceux que l'annonce de la demande n'a pas atteints (pas de demande_nouvelle dans le
+-- journal dans les 15 minutes de sa publication ; publiée la nuit, son annonce part à 08:00 : jusqu'à 08:15), puis les
+-- plus actifs. Au plus une par jour et par lauréat. DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes_attente_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.demandes_attente_notif enable row level security;
+
+create or replace function public.demande_attente_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare d public.demandes; v_a record; v_n int := 0; v_k int; v_annonce timestamptz;
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+begin
+  if extract(hour from public.horloge() at time zone 'UTC') not between 8 and 21 then return 0; end if;
+  for d in select x.* from public.demandes x
+      where x.status = 'ouverte' and x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'
+        and not exists (select 1 from public.demandes_attente_notif n where n.demande_id = x.id)
+        and not exists (select 1 from public.propositions y where y.demande_id = x.id and y.status <> 'retiree')
+      order by x.created_at limit 50 loop
+    insert into public.demandes_attente_notif (demande_id) values (d.id) on conflict do nothing;
+    select split_part(full_name, ' ', 1) as prenom, filiere into v_a from public.profiles where id = d.auteur_id;
+    -- Jusqu'où chercher son annonce au journal : 15 minutes ; publiée la nuit (push_nuit), 08:15 le matin qui suit
+    v_annonce := case when public.heure_calme(d.created_at)
+      then (date_trunc('day', (d.created_at at time zone 'UTC') + interval '150 minutes') + interval '8 hours 15 minutes') at time zone 'UTC'
+      else d.created_at + interval '15 minutes' end;
+    with dest as materialized (
+      select p.id from public.profiles p
+      where p.role = 'laureat' and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+        and public.demande_pour(d, p)
+        and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+        and public.push_voulu(p.id, 'demande_attente')
+        and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'demande_attente'
+                          and n.at >= v_debut and n.at < v_debut + interval '1 day')
+      order by exists (select 1 from public.push_journal j where j.user_id = p.id and j.kind = 'demande_nouvelle'
+                         and j.at >= d.created_at and j.at < v_annonce),
+        public.derniere_visite(p.id) desc nulls last
+      limit 150
+    ),
+    places as materialized (select x.id from dest x where public.programme_place(x.id, 'demande_attente'))
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'demande_attente', jsonb_build_object('nom', v_a.prenom, 'type', d.type, 'titre', d.titre, 'demande', d.id)
+    from places x;
+    get diagnostics v_k = row_count;
+    v_n := v_n + v_k;
+  end loop;
+  return v_n;
+end $$;
+revoke all on function public.demande_attente_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- demande_pause (08:00) : sa demande ouverte sans nouvelle depuis 60 jours se met en pause (demande_pour la cache aux
+-- lauréats ; logic.js : demandeEnPause) : l'auteur peut la relancer. Une fois par pause (relancee_at) ; rattrapage 7 jours.
+-- DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes_pause_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  relancee_at timestamptz,
+  at timestamptz not null default now()
+);
+alter table public.demandes_pause_notif enable row level security;
+
+create or replace function public.demande_pause_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with c as materialized (
+    select d.auteur_id as id, d.id as demande, d.titre, d.relancee_at
+    from public.demandes d join public.profiles p on p.id = d.auteur_id
+    where d.status = 'ouverte' and d.relancee_at <= now() - interval '60 days' and d.relancee_at > now() - interval '67 days'
+      and p.role in ('etudiant','laureat')
+      and not exists (select 1 from public.demandes_pause_notif n where n.demande_id = d.id and n.relancee_at = d.relancee_at)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = d.auteur_id)
+      and public.push_voulu(d.auteur_id, 'demande_pause')
+  ),
+  places as materialized (select c.* from c where public.programme_place(c.id, 'demande_pause')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'demande_pause', jsonb_build_object('titre', x.titre, 'demande', x.demande) from places x
+    returning 1),
+  notes as (
+    insert into public.demandes_pause_notif (demande_id, relancee_at) select x.demande, x.relancee_at from places x
+    on conflict (demande_id) do update set relancee_at = excluded.relancee_at, at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.demande_pause_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- semaine (dimanche 10:00) : le résumé de l'email en une ligne. Les vrais comptes des 7 derniers jours, jamais un zéro,
+-- 3 au plus, dans cet ordre :
+--   étudiant : offres pour lui (offre_pour), nouveaux lauréats de sa filière, nouveaux membres de sa promo, événements à
+--              venir dans les 7 jours pour son public ;
+--   lauréat  : demandes d'étudiants de son parcours (demande_pour, proximité ≥ 1), nouvelles offres de sa filière, nouveaux
+--              membres de sa promo, événements.
+-- Rien si tout est à zéro, si un rappel du soir lui est parti dans les 24 h, ou un résumé dans les 6 jours. DOUCE.
+-- ---------------------------------------------------------------------
+create or replace function public.semaine_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_n int;
+begin
+  with offres as materialized (
+    select o from public.offers o where o.status = 'ouverte' and o.created_at > now() - interval '7 days'
+  ),
+  demandes as materialized (select d from public.demandes d where d.status = 'ouverte' and d.created_at > now() - interval '7 days'),
+  nouveaux as materialized (
+    select x.id, x.role, x.promo, x.filiere, x.ecole from public.profiles x
+    where x.created_at > now() - interval '7 days' and x.role in ('etudiant','laureat')
+  ),
+  agenda as materialized (
+    select e.public, e.ecole from public.evenements e where not e.annule and e.debut > now() and e.debut < now() + interval '7 days'
+  ),
+  membres as materialized (
+    select p.id, p.role,
+      (select count(*) from offres x where public.offre_pour(x.o, p, v_s)) as offres_pour,
+      -- Écoles : chaque compte dans l'école du membre (offre_pour et demande_pour la vérifient déjà)
+      (select count(*) from offres x where (x.o).ecole = p.ecole and (x.o).author_id <> p.id and public.filiere_ok((x.o).filieres, p.filiere)) as offres_filiere,
+      (select count(*) from nouveaux n where n.ecole = p.ecole and n.role = 'laureat' and n.id <> p.id and public.filiere_ok(array[n.filiere], p.filiere)) as laureats,
+      (select count(*) from nouveaux n where n.ecole = p.ecole and n.promo = p.promo and n.id <> p.id) as promo,
+      (select count(*) from agenda e where e.ecole = p.ecole
+         and (e.public = 'tous' or (e.public = 'etudiants' and p.role = 'etudiant') or (e.public = 'laureats' and p.role = 'laureat'))) as evenements,
+      -- « de ton parcours » : pas une demande d'un autre parcours restée sans aide (ouverte à tous par demande_pour)
+      case when p.role = 'laureat' then (select count(*) from demandes x where public.demande_pour(x.d, p)
+        and public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = (x.d).auteur_id)) >= 1
+        and not exists (select 1 from public.propositions y where y.demande_id = (x.d).id and y.laureat_id = p.id)) else 0 end as demandes
+    from public.profiles p
+    where p.role in ('etudiant','laureat')
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'semaine')
+      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.push_at > now() - interval '24 hours')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'semaine' and n.at > public.horloge() - interval '6 days')
+  ),
+  resumes as materialized (
+    select m.id, m.role, (
+      select jsonb_object_agg(z.k, z.v) from (
+        select t.k, t.v from unnest(
+          case when m.role = 'etudiant' then array['offres','laureats','promo','evenements'] else array['demandes','offres','promo','evenements'] end,
+          case when m.role = 'etudiant' then array[m.offres_pour, m.laureats, m.promo, m.evenements]
+               else array[m.demandes, m.offres_filiere, m.promo, m.evenements] end) with ordinality t(k, v, i)
+        where t.v > 0 order by t.i limit 3) z) as compte
+    from membres m
+  ),
+  -- Tout à zéro : rien (filtré avant programme_place, qui écrit)
+  garnis as materialized (select r.* from resumes r where r.compte is not null),
+  places as materialized (select r.* from garnis r where public.programme_place(r.id, 'semaine')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'semaine', jsonb_build_object('type', x.role) || x.compte from places x
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.semaine_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- groupe_jour (19:30, après la veille) : les messages de ses groupes (ceux de son profil : parcours, ville, pays, comme
+-- autoGroups de logic.js ; et ceux qu'il suit) écrits par d'autres depuis sa dernière visite (la base n'a pas de repère
+-- « lu » par groupe : une heure de marge après la visite, 24 h au plus). Le groupe le plus actif en détail, autres = ses
+-- autres groupes qui ont du nouveau. Au plus un par jour. DOUCE. Pas pour qui n'est pas venu depuis 14 jours (le repère
+-- d'activité de match_jour) : un envoi à beaucoup, chaque soir, jamais ouvert ; le rappel du soir, lui, s'espace.
+-- ---------------------------------------------------------------------
+-- Clés des groupes d'un profil (mêmes clés que groupKey / groupeFiliere / autoGroups de logic.js)
+create or replace function public.groupes_auto(p_filiere text, p_ville text, p_pays text) returns text[]
+language sql immutable as $$
+  select array_remove(array[
+    case when cardinality(public.parcours_de(p_filiere)) > 0 then 'filiere:' || case (public.parcours_de(p_filiere))[1]
+           when 'PEI' then 'electro-industriel' when 'PM' then 'mecanique' when 'CIVIL' then 'civil'
+           when 'IA' then 'intelligence artificielle' when 'INFO' then 'informatique' end
+         when public.cle_lieu(p_filiere) is not null then left('filiere:' || public.cle_lieu(p_filiere), 80) end,
+    case when public.cle_lieu(p_ville) is not null then 'ville:' || public.cle_lieu(p_ville) end,
+    case when public.cle_lieu(p_pays) is not null and public.cle_lieu(p_pays) <> 'maroc' then 'pays:' || public.cle_lieu(p_pays) end
+  ], null);
+$$;
+revoke all on function public.groupes_auto(text, text, text) from public, anon, authenticated;
+
+-- Nom affiché d'un groupe (comme groupLabel de logic.js) : le nom du parcours, sinon l'écriture la plus courante parmi les
+-- profils du groupe dans cette école (le site ne voit que les profils de son école)
+drop function if exists public.nom_groupe(text);
+create or replace function public.nom_groupe(p_cle text, p_ecole text) returns text
+language sql stable security definer set search_path = public as $$
+  select case p_cle
+    when 'filiere:electro-industriel' then 'Électro-industriel' when 'filiere:mecanique' then 'Mécanique'
+    when 'filiere:civil' then 'Civil' when 'filiere:intelligence artificielle' then 'Intelligence artificielle'
+    when 'filiere:informatique' then 'Informatique'
+    else coalesce((
+      select x.v from (
+        select btrim(case split_part(p_cle, ':', 1) when 'ville' then p.ville when 'pays' then p.pays else p.filiere end) as v
+        from public.profiles p
+        where p.ecole = p_ecole and case split_part(p_cle, ':', 1)
+          when 'ville' then 'ville:' || public.cle_lieu(p.ville) = p_cle
+          when 'pays' then 'pays:' || public.cle_lieu(p.pays) = p_cle
+          else left('filiere:' || public.cle_lieu(p.filiere), 80) = p_cle end) x
+      where x.v <> '' group by x.v order by count(*) desc, x.v limit 1),
+      initcap(substr(p_cle, strpos(p_cle, ':') + 1))) end;
+$$;
+revoke all on function public.nom_groupe(text, text) from public, anon, authenticated;
+
+create or replace function public.groupe_jour_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  -- Écoles : un groupe (même clé) est à part dans chaque école ; messages, comptes et nom dans l'école du membre
+  with actifs as materialized (
+    select distinct g.groupe, g.ecole from public.groupe_messages g where g.created_at > now() - interval '24 hours'
+  ),
+  membres as materialized (
+    select p.id, a.groupe, p.ecole from public.profiles p
+    cross join lateral unnest(public.groupes_auto(p.filiere, p.ville, p.pays)) a(groupe)
+    where p.role in ('etudiant','laureat') and (a.groupe, p.ecole) in (select x.groupe, x.ecole from actifs x)
+    union
+    select m.user_id, m.groupe, p.ecole from public.groupe_membres m join public.profiles p on p.id = m.user_id
+    where p.role in ('etudiant','laureat') and (m.groupe, p.ecole) in (select x.groupe, x.ecole from actifs x)
+  ),
+  abonnes as materialized (
+    select y.* from (
+      select x.id, public.derniere_visite(x.id) as vu from (select distinct m.id from membres m) x
+      where exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+        and public.push_voulu(x.id, 'groupe_jour')
+        and not exists (select 1 from public.notif_programme n where n.user_id = x.id and n.kind = 'groupe_jour'
+                          and n.at >= v_debut and n.at < v_debut + interval '1 day')) y
+    -- Venu ces 14 derniers jours
+    where y.vu > now() - interval '14 days'
+  ),
+  comptes as materialized (
+    select m.id, m.groupe, m.ecole, count(*) as n
+    from membres m join abonnes a on a.id = m.id
+    join public.groupe_messages g on g.groupe = m.groupe and g.ecole = m.ecole
+    where g.created_at > greatest(a.vu + interval '1 hour', now() - interval '24 hours') and g.author_id <> m.id
+      and not exists (select 1 from public.blocages b where (b.user_id = m.id and b.bloque_id = g.author_id) or (b.user_id = g.author_id and b.bloque_id = m.id))
+    group by m.id, m.groupe, m.ecole
+  ),
+  choisis as materialized (
+    select distinct on (c.id) c.id, c.groupe, c.ecole, c.n, (select count(*) from comptes y where y.id = c.id) - 1 as autres
+    from comptes c order by c.id, c.n desc, c.groupe
+  ),
+  places as materialized (select x.* from choisis x where public.programme_place(x.id, 'groupe_jour')),
+  noms as materialized (
+    select g.groupe, g.ecole, public.nom_groupe(g.groupe, g.ecole) as nom from (select distinct p.groupe, p.ecole from places p) g),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'groupe_jour', jsonb_build_object('n', x.n, 'groupe', n.nom, 'gkey', x.groupe, 'autres', x.autres)
+    from places x join noms n on n.groupe = x.groupe and n.ecole = x.ecole
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.groupe_jour_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Entre personnes, tout de suite
+--   reponse_utile : un vote sur ma réponse (au plus un par jour et par réponse, avec le nombre de votes) ; ma réponse
+--                   choisie comme meilleure par l'auteur de la question (une fois par question)
+--   bravo         : un bravo sur ma réussite (déclarée ou confirmée), au plus un par heure, avec le nombre de bravos
+-- Jamais pour son propre geste, jamais entre membres bloqués.
+-- ---------------------------------------------------------------------
+create or replace function public.notif_vote() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  select a.id, a.author_id, a.question_id, q.titre into v_a
+    from public.answers a join public.questions q on q.id = a.question_id where a.id = new.answer_id;
+  if v_a.id is null or v_a.author_id = new.user_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_a.author_id and b.bloque_id = new.user_id) or (b.user_id = new.user_id and b.bloque_id = v_a.author_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_a.author_id) then return null; end if;
+  if not public.cadence('vote:' || new.answer_id, interval '1 day') then return null; end if;
+  perform public.pousser(v_a.author_id, 'reponse_utile', jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.user_id), ' ', 1),
+    'titre', v_a.titre, 'q', v_a.question_id, 'answer', v_a.id,
+    'n', (select count(*) from public.votes v where v.answer_id = v_a.id), 'best', false));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_vote() from public, anon, authenticated;
+drop trigger if exists trg_notif_vote on public.votes;
+create trigger trg_notif_vote after insert on public.votes
+  for each row execute function public.notif_vote();
+
+create or replace function public.notif_meilleure_reponse() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  if new.best_answer_id is null or new.best_answer_id is not distinct from old.best_answer_id then return null; end if;
+  select a.id, a.author_id into v_a from public.answers a where a.id = new.best_answer_id and a.question_id = new.id;
+  if v_a.id is null or v_a.author_id = new.author_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_a.author_id and b.bloque_id = new.author_id) or (b.user_id = new.author_id and b.bloque_id = v_a.author_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_a.author_id) then return null; end if;
+  if not public.cadence('meilleure:' || new.id, interval '30 days') then return null; end if;
+  -- n seulement s'il y a des votes (jamais « 0 »)
+  perform public.pousser(v_a.author_id, 'reponse_utile', jsonb_strip_nulls(jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.author_id), ' ', 1),
+    'titre', new.titre, 'q', new.id, 'answer', v_a.id,
+    'n', nullif((select count(*) from public.votes v where v.answer_id = v_a.id), 0), 'best', true)));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_meilleure_reponse() from public, anon, authenticated;
+drop trigger if exists trg_notif_meilleure on public.questions;
+create trigger trg_notif_meilleure after update of best_answer_id on public.questions
+  for each row execute function public.notif_meilleure_reponse();
+
+create or replace function public.notif_bravo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_p record;
+begin
+  select pl.id, pl.student_id, pl.entreprise, pl.status into v_p from public.placements pl where pl.id = new.placement_id;
+  if v_p.id is null or v_p.status not in ('declare','confirme') or v_p.student_id = new.user_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_p.student_id and b.bloque_id = new.user_id) or (b.user_id = new.user_id and b.bloque_id = v_p.student_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_p.student_id) then return null; end if;
+  if not public.cadence('bravo:' || v_p.id, interval '1 hour') then return null; end if;
+  perform public.pousser(v_p.student_id, 'bravo', jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.user_id), ' ', 1),
+    'entreprise', v_p.entreprise, 'placement', v_p.id,
+    'n', (select count(*) from public.kudos k where k.placement_id = v_p.id)));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_bravo() from public, anon, authenticated;
+drop trigger if exists trg_notif_bravo on public.kudos;
+create trigger trg_notif_bravo after insert on public.kudos
+  for each row execute function public.notif_bravo();
+
+-- ---------------------------------------------------------------------
+-- Les tâches programmées (pg_cron, heures UTC = heure du Maroc). Chaque enveloppe appelle ses parties dans des blocs à
+-- part (une partie en panne n'empêche pas les autres) et rend le nombre de notifications mises en file.
+-- ---------------------------------------------------------------------
+-- 08:00 : les envois de la nuit, les demandes en pause, le ménage
+create or replace function public.matin_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.liberer_nuit(); v_n := v_n + v; exception when others then raise warning 'Envois de la nuit : %', sqlerrm; end;
+  begin v := public.demande_pause_push(); v_n := v_n + v; exception when others then raise warning 'Demandes en pause : %', sqlerrm; end;
+  begin
+    delete from public.notif_programme where at < public.horloge() - interval '8 days';
+    delete from public.veilles_envoyees where created_at < now() - interval '30 days';
+    delete from public.match_attente_notif where at < now() - interval '30 days';
+    delete from public.offres_bientot_notif where at < now() - interval '60 days';
+  exception when others then raise warning 'Ménage des notifications programmées : %', sqlerrm;
+  end;
+  return v_n;
+end $$;
+revoke all on function public.matin_push() from public, anon, authenticated;
+
+-- 12:30 : les intérêts qui attendent une réponse, puis le tour Match du jour
+create or replace function public.midi_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.match_attente_push(); v_n := v_n + v; exception when others then raise warning 'Intérêts en attente : %', sqlerrm; end;
+  begin v := public.match_jour_push(); v_n := v_n + v; exception when others then raise warning 'Match du jour : %', sqlerrm; end;
+  return v_n;
+end $$;
+revoke all on function public.midi_push() from public, anon, authenticated;
+
+-- 19:30 : la veille (rendez-vous, entretien, agenda), le lendemain d'un rendez-vous, puis les groupes du jour
+create or replace function public.veille_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.rdv_demain_push(); v_n := v_n + v; exception when others then raise warning 'Rendez-vous de demain : %', sqlerrm; end;
+  begin v := public.entretien_demain_push(); v_n := v_n + v; exception when others then raise warning 'Entretiens de demain : %', sqlerrm; end;
+  begin v := public.agenda_demain_push(); v_n := v_n + v; exception when others then raise warning 'Agenda de demain : %', sqlerrm; end;
+  begin v := public.apres_rdv_push(); v_n := v_n + v; exception when others then raise warning 'Après un rendez-vous : %', sqlerrm; end;
+  begin v := public.groupe_jour_push(); v_n := v_n + v; exception when others then raise warning 'Groupes du jour : %', sqlerrm; end;
+  return v_n;
+end $$;
+revoke all on function public.veille_push() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-matin', '0 8 * * *', 'select public.matin_push()');
+    perform cron.schedule('ensam-offres-bientot', '0 9 * * *', 'select public.offres_bientot_push()');
+    perform cron.schedule('ensam-midi', '30 12 * * *', 'select public.midi_push()');
+    perform cron.schedule('ensam-veille', '30 19 * * *', 'select public.veille_push()');
+    perform cron.schedule('ensam-semaine', '0 10 * * 0', 'select public.semaine_push()');
+  end if;
+exception when others then raise notice 'Notifications programmées non planifiées : %', sqlerrm;
+end $$;
+
+-- =====================================================================
+--  Santé des notifications (panneau de l'administration, Vue d'ensemble) : des totaux seulement, jamais un nom, un
+--  identifiant ni le contenu d'une notification. Les jours sont ceux de l'heure UTC (l'heure du Maroc depuis le
+--  20 septembre 2026).
+--    · membres, et membres qui ont activé les notifications sur au moins un téléphone, par rôle ;
+--    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien ont reçu un
+--      envoi en 7 jours (servis), combien acceptent les notifications sans jamais confirmer (service de push d'accord,
+--      rien d'affiché), combien refusent, combien ont été retirés ;
+--    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows), avec,
+--      d'après la dernière réponse de chacun en 7 jours, ceux qu'il accepte (2xx) et ceux qu'il refuse (400, 401, 403), et
+--      combien de membres distincts refusent : tous refusés et aucun accepté, la clé de la plateforme est en cause, pas les
+--      téléphones ;
+--    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) : envoyées (2xx) ;
+--      perdues : parties (404, 410), refusées (autres 4xx sauf 413 et 429), trop longues (413), abandonnées (-3),
+--      expirées sans essai (-5), jetées (-4) ; à part, sans téléphone (-1), coupées (-2), échecs passagers (0, 429, 5xx) ;
+--    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels »), la dernière
+--      réponse à l'appel de la fonction « notifier » (pg_net, qui ne garde ses réponses que 6 h : { vide } quand il n'en
+--      a plus aucune), quand la base les laisse lire (sinon null), et la dernière notification traitée par la fonction.
+-- =====================================================================
+create or replace function public.service_push(p_endpoint text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when h = 'fcm.googleapis.com' or h like '%.googleapis.com' then 'fcm'
+    when h = 'web.push.apple.com' or h like '%.push.apple.com' then 'apple'
+    when h like '%.mozilla.com' or h like '%.mozilla.org' or h like '%.mozaws.net' then 'mozilla'
+    when h like '%.windows.com' then 'windows'
+    else 'autre' end
+  from (select lower(split_part(split_part(coalesce(p_endpoint, ''), '/', 3), ':', 1)) as h) x;
+$$;
+revoke all on function public.service_push(text) from public, anon, authenticated;
+
+create or replace function public.admin_sante_notifs() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_jour date := (now() at time zone 'UTC')::date;
+  v_debut timestamptz := ((now() at time zone 'UTC')::date - 6)::timestamp at time zone 'UTC';
+  v_cron jsonb; v_http jsonb; v_r jsonb;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  -- pg_cron et pg_net ne sont pas toujours là, ni lisibles : alors null, sans erreur
+  begin
+    select jsonb_build_object('existe', true, 'at', d.start_time, 'statut', d.status) into v_cron
+    from cron.job j left join lateral (
+      select x.start_time, x.status from cron.job_run_details x where x.jobid = j.jobid order by x.start_time desc nulls last limit 1
+    ) d on true
+    where j.jobname = 'ensam-rappels' limit 1;
+    if v_cron is null then v_cron := jsonb_build_object('existe', false); end if;
+  exception when others then v_cron := null;
+  end;
+  begin
+    select to_jsonb(r) into v_r from net._http_response r order by r.id desc limit 1;
+    if v_r is not null then
+      v_http := jsonb_build_object('code', v_r->'status_code', 'at', v_r->'created',
+        'delai', coalesce((v_r->>'timed_out')::boolean, false), 'erreur', coalesce(v_r->>'error_msg', '') <> '');
+    else
+      v_http := jsonb_build_object('vide', true);   -- lisible, mais aucune réponse gardée (6 h au plus)
+    end if;
+  exception when others then v_http := null;
+  end;
+  return jsonb_build_object(
+    'at', now(),
+    'roles', coalesce((
+      select jsonb_agg(jsonb_build_object('role', x.role, 'membres', x.membres, 'avec_tel', x.avec_tel) order by x.role)
+      from (select p.role, count(*)::int as membres,
+          (count(*) filter (where exists (select 1 from public.push_subscriptions s where s.user_id = p.id)))::int as avec_tel
+        from public.profiles p group by p.role) x), '[]'::jsonb),
+    'telephones', (
+      select jsonb_build_object(
+        'total', count(*)::int,
+        'recus_24h', (count(*) filter (where s.recu_at > now() - interval '24 hours'))::int,
+        'recus_7j', (count(*) filter (where s.recu_at > now() - interval '7 days'))::int,
+        -- Ceux à qui quelque chose est parti cette semaine (ou qui ont confirmé une réception)
+        'servis_7j', (count(*) filter (where s.dernier_envoi_at > now() - interval '7 days' or s.recu_at > now() - interval '7 days'))::int,
+        -- Accepté par le service de push il y a plus d'une heure, et rien de reçu depuis (à 10 minutes près : le téléphone
+        -- peut confirmer avant que la fonction ait noté l'envoi)
+        'muets', (count(*) filter (where s.dernier_code between 200 and 299
+            and s.dernier_envoi_at > now() - interval '7 days' and s.dernier_envoi_at < now() - interval '1 hour'
+            and (s.recu_at is null or s.recu_at < s.dernier_envoi_at - interval '10 minutes')))::int,
+        'en_refus', (count(*) filter (where s.refus > 0))::int,
+        'retires_7j', (select count(*)::int from public.push_morts m where m.at > now() - interval '7 days'))
+      from public.push_subscriptions s),
+    'services', (
+      select jsonb_object_agg(z.srv, jsonb_build_object('n', z.n, 'ok', z.ok, 'refus', z.refus, 'refus_membres', z.refus_membres))
+      from (
+        select k.srv, count(x.srv)::int as n,
+          (count(x.srv) filter (where x.dernier_code between 200 and 299 and x.dernier_envoi_at > now() - interval '7 days'))::int as ok,
+          (count(x.srv) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus,
+          -- Des membres distincts, comme le garde-fou de la fonction (un membre et ses vieux abonnements ne font pas un service)
+          (count(distinct x.user_id) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus_membres
+        from (values ('fcm'), ('apple'), ('mozilla'), ('windows'), ('autre')) as k(srv)
+        left join (select public.service_push(s.endpoint) as srv, s.user_id, s.dernier_code, s.dernier_envoi_at
+          from public.push_subscriptions s) x on x.srv = k.srv
+        group by k.srv) z),
+    'jours', (
+      select jsonb_agg(jsonb_build_object('jour', to_char(g.jour::timestamp, 'YYYY-MM-DD'),
+          'envoyees', coalesce(t.envoyees, 0), 'parties', coalesce(t.parties, 0), 'refusees', coalesce(t.refusees, 0),
+          'trop_longues', coalesce(t.trop_longues, 0), 'echecs', coalesce(t.echecs, 0), 'sans_tel', coalesce(t.sans_tel, 0),
+          'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0), 'expirees', coalesce(t.expirees, 0),
+          'jetees', coalesce(t.jetees, 0)) order by g.jour)
+      from (select v_jour - 6 + i as jour from generate_series(0, 6) as i) g
+      left join (
+        select (j.at at time zone 'UTC')::date as jour,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code in (404, 410)))::int as parties,
+          (count(*) filter (where j.code between 400 and 499 and j.code not in (404, 410, 413, 429)))::int as refusees,
+          (count(*) filter (where j.code = 413))::int as trop_longues,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = -3))::int as abandonnees,
+          (count(*) filter (where j.code = -5))::int as expirees,
+          (count(*) filter (where j.code = -4))::int as jetees
+        from public.push_journal j where j.at >= v_debut group by 1
+      ) t on t.jour = g.jour),
+    'types', coalesce((
+      select jsonb_agg(jsonb_build_object('kind', y.kind, 'total', y.total, 'envoyees', y.envoyees, 'perdues', y.perdues,
+          'sans_tel', y.sans_tel, 'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
+      from (
+        select j.kind, count(*)::int as total,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code in (-3, -4, -5) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs
+        from public.push_journal j where j.at >= v_debut
+        group by j.kind order by count(*) desc, j.kind limit 12
+      ) y), '[]'::jsonb),
+    'file', (select jsonb_build_object('n', count(*)::int,
+        'age_s', coalesce(floor(extract(epoch from now() - min(q.created_at)))::int, 0)) from public.push_queue q),
+    -- La dernière notification traitée par la fonction (une réponse de service de push, ou jetée), même au-delà des 6 h de pg_net
+    'envoi_at', (select max(j.at) from public.push_journal j where j.code >= 0 or j.code = -4),
+    'cron', v_cron,
+    'http', v_http);
+end $$;
+revoke all on function public.admin_sante_notifs() from public, anon;
+grant execute on function public.admin_sante_notifs() to authenticated;
+
+-- =====================================================================
+--  Console d'administration : le suivi des écoles à contacter et des partenaires (entreprises qui sponsorisent).
+--  L'administration seule lit et écrit. Aucune donnée de membre : le nom d'une école ou d'une entreprise,
+--  la personne à qui l'on parle, l'étape, la prochaine action. Pour une école, trois cases gardent les deux règles :
+--  une personne de l'école porte le réseau, l'école a donné son accord écrit pour son nom, elle est ajoutée au dossier CNDP.
+-- =====================================================================
+create table if not exists public.admin_suivi (
+  id uuid primary key default gen_random_uuid(),
+  type text not null check (type in ('ecole', 'partenaire')),
+  nom text not null check (char_length(btrim(nom)) between 2 and 120),
+  ecole_slug text check (ecole_slug ~ '^[a-z0-9-]{2,40}$'),
+  ville text check (char_length(ville) <= 80),
+  contact_nom text check (char_length(contact_nom) <= 120),
+  contact_role text check (char_length(contact_role) <= 120),
+  contact text check (char_length(contact) <= 200),
+  etape text not null default 'a_contacter' check (etape in ('a_contacter', 'contacte', 'interesse', 'rdv', 'proposition', 'accord', 'pret', 'ouvert', 'signe', 'paye', 'pause', 'refus')),
+  prochaine_action text check (char_length(prochaine_action) <= 200),
+  prochaine_le date,
+  formule text check (formule in ('visibilite', 'partenaire', 'saison_pfe')),
+  montant_dh int check (montant_dh between 0 and 1000000),
+  referent_ok boolean not null default false,
+  accord_nom boolean not null default false,
+  cndp_ok boolean not null default false,
+  notes text check (char_length(notes) <= 2000),
+  created_by uuid default auth.uid() references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists admin_suivi_type on public.admin_suivi (type, etape);
+alter table public.admin_suivi enable row level security;
+drop policy if exists "administration" on public.admin_suivi;
+create policy "administration" on public.admin_suivi for all to authenticated using (public.is_admin()) with check (public.is_admin());
+revoke all on public.admin_suivi from anon;
+
+create or replace function public.admin_suivi_maj() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
+create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
+
+-- =====================================================================
+--  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
+--  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
+--  ouverte aux visiteurs ne rend que des lignes de l'école du visiteur (ecole_entree : sans compte, celle du lien
+--  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert).
+-- =====================================================================
+
+-- L'école que montre la page d'entrée : celle du membre connecté, sinon celle du lien de l'école (?ecole=…, p_ecole),
+-- sinon ENSAM Meknès. null tant que le réseau de cette école n'est pas ouvert (ou qu'elle n'existe pas) : rien ne s'affiche.
+create or replace function public.ecole_entree(p_ecole text default null) returns text
+language sql stable security definer set search_path = public as $$
+  select e.slug from public.ecoles e where e.slug = coalesce(public.mon_ecole(), p_ecole, 'ensam-meknes') and e.ouverte;
+$$;
+revoke all on function public.ecole_entree(text) from public, anon, authenticated;
+
+-- Invitation nommée. code_invitation : 8 caractères (a-z, 0-9), créé à la demande par mon_code_invitation(), stable ensuite.
+-- invite_par : le membre dont le code était dans le lien d'inscription (métadonnée « invite_par » du compte), de la même
+-- école, posé une seule fois, à la création du profil. Un membre ne choisit ni l'un ni l'autre ; l'administration peut.
+alter table public.profiles add column if not exists code_invitation text;
+alter table public.profiles add column if not exists invite_par uuid references public.profiles(id) on delete set null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_code_invitation_format') then
+    alter table public.profiles add constraint profiles_code_invitation_format check (code_invitation ~ '^[a-z0-9]{8}$');
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_invite_par_autre') then
+    alter table public.profiles add constraint profiles_invite_par_autre check (invite_par is distinct from id);
+  end if;
+end $$;
+create unique index if not exists profiles_code_invitation on public.profiles (code_invitation);
+create index if not exists profiles_invite_par on public.profiles (invite_par) where invite_par is not null;
+
+-- Nom propre à ce garde : protect_invitation() est celui des invitations à postuler (plus haut). Une première version de
+-- cette section le remplaçait et posait trg_protect_invitation sur les profils : ce déclencheur-là part.
+drop trigger if exists trg_protect_invitation on public.profiles;
+create or replace function public.protect_code_invitation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_code text; v_par uuid;
+begin
+  if tg_op = 'UPDATE' then
+    if auth.uid() is null or public.is_admin() then return new; end if;
+    -- « invité par » ne bouge pas, sauf quand il se vide parce que le membre qui avait invité a supprimé son compte
+    -- (on delete set null, lancé par sa propre suppression) : le remettre laisserait un lien vers un profil disparu
+    if new.invite_par is not null or exists (select 1 from public.profiles p where p.id = old.invite_par) then new.invite_par := old.invite_par; end if;
+    if coalesce(current_setting('ensam.code_invitation', true), '') <> 'on' then new.code_invitation := old.code_invitation; end if;
+    return new;
+  end if;
+  if auth.uid() is not null then new.code_invitation := null; new.invite_par := null; end if;
+  if new.invite_par is null then
+    begin
+      select lower(btrim(u.raw_user_meta_data ->> 'invite_par')) into v_code from auth.users u where u.id = new.id;
+      if v_code ~ '^[a-z0-9]{8}$' then
+        select p.id into v_par from public.profiles p where p.code_invitation = v_code and p.id <> new.id and p.ecole = new.ecole;
+        new.invite_par := v_par;
+      end if;
+    exception when others then new.invite_par := null;
+    end;
+  end if;
+  return new;
+end $$;
+revoke all on function public.protect_code_invitation() from public, anon, authenticated;
+drop trigger if exists trg_protect_code_invitation on public.profiles;
+create trigger trg_protect_code_invitation before insert or update of code_invitation, invite_par on public.profiles
+  for each row execute function public.protect_code_invitation();
+
+-- Le code du membre connecté, créé la première fois (lettres et chiffres faciles à lire : ni l, ni o, ni 0, ni 1)
+create or replace function public.mon_code_invitation() returns text
+language plpgsql security definer set search_path = public as $$
+declare v text; n int := 0;
+begin
+  if auth.uid() is null then return null; end if;
+  select code_invitation into v from public.profiles where id = auth.uid();
+  if not found then return null; end if;
+  if v is not null then return v; end if;
+  perform set_config('ensam.code_invitation', 'on', true);
+  loop
+    select string_agg(substr('abcdefghijkmnpqrstuvwxyz23456789', 1 + get_byte(b, i) % 32, 1), '' order by k) into v
+      from (select uuid_send(gen_random_uuid()) b) x, unnest(array[0, 1, 2, 3, 4, 5, 10, 11]) with ordinality t(i, k);
+    begin
+      update public.profiles set code_invitation = v where id = auth.uid() and code_invitation is null;
+      exit;
+    exception when unique_violation then
+      n := n + 1;
+      if n > 8 then perform set_config('ensam.code_invitation', '', true); raise; end if;
+    end;
+  end loop;
+  perform set_config('ensam.code_invitation', '', true);
+  return (select code_invitation from public.profiles where id = auth.uid());
+end $$;
+revoke all on function public.mon_code_invitation() from public, anon;
+grant execute on function public.mon_code_invitation() to authenticated;
+
+-- La page d'entrée ouverte avec un code : le prénom, la promo et le rôle de qui invite, rien d'autre. null sinon.
+-- p_ecole : l'école du lien (?ecole=…) ; seulement un membre de l'école de la page d'entrée (ecole_entree)
+drop function if exists public.invitation_de(text);
+create or replace function public.invitation_de(p_code text, p_ecole text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('prenom', split_part(btrim(p.full_name), ' ', 1), 'promo', p.promo, 'role', p.role)
+  from public.profiles p
+  where p_code ~ '^[a-z0-9]{8}$' and p.code_invitation = p_code and p.ecole = (select public.ecole_entree(p_ecole))
+  limit 1;
+$$;
+revoke all on function public.invitation_de(text, text) from public;
+grant execute on function public.invitation_de(text, text) to anon, authenticated;
+
+-- Les camarades arrivés grâce au membre connecté : combien, et les prénoms des 20 derniers
+create or replace function public.mes_invites() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with i as (
+    select split_part(btrim(p.full_name), ' ', 1) as prenom, p.created_at, p.id from public.profiles p
+    where auth.uid() is not null and p.invite_par = auth.uid() and p.ecole = public.mon_ecole()
+  )
+  select jsonb_build_object('n', (select count(*) from i),
+    'prenoms', coalesce((select jsonb_agg(x.prenom order by x.created_at desc, x.id) from (select * from i order by created_at desc, id limit 20) x), '[]'::jsonb));
+$$;
+revoke all on function public.mes_invites() from public, anon;
+grant execute on function public.mes_invites() to authenticated;
+
+-- Visages de la page d'entrée. vitrine_publique : le lauréat accepte que sa photo, son prénom (et l'initiale du nom), sa promo
+-- et son entreprise soient sur la page d'entrée (null = pas encore demandé). Seul le membre lui-même dit oui ;
+-- l'administration peut le retirer, jamais le donner. Un étudiant ne le donne pas (la question n'est posée qu'aux lauréats).
+alter table public.profiles add column if not exists vitrine_publique boolean;
+create index if not exists profiles_photo_visage on public.profiles (photo_path) where vitrine_publique;
+
+create or replace function public.protect_vitrine_publique() returns trigger
+language plpgsql as $$
+begin
+  if auth.uid() is not null and new.vitrine_publique is true and old.vitrine_publique is distinct from true
+     and (new.id is distinct from auth.uid() or new.role <> 'laureat') then
+    new.vitrine_publique := old.vitrine_publique;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_vitrine_publique on public.profiles;
+create trigger trg_protect_vitrine_publique before update of vitrine_publique on public.profiles
+  for each row execute function public.protect_vitrine_publique();
+
+-- 24 lauréats au plus, ceux qui ont une photo d'abord, dans l'ordre d'arrivée. Pas d'id ; le chemin de la photo
+-- (photos/<id>/…) n'est donné que pour qui a dit oui. Jamais l'administration. Seulement un lauréat vérifié : un compte
+-- qui prendrait le nom et la photo de quelqu'un d'autre ne le met pas sur une page que tout le monde voit.
+-- p_ecole : l'école du lien (?ecole=…) ; seulement l'école de la page d'entrée (ecole_entree), rien pour une école pas ouverte.
+drop function if exists public.visages_publics();
+create or replace function public.visages_publics(p_ecole text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('nom', x.nom, 'promo', x.promo, 'entreprise', x.entreprise, 'photo', x.photo_path) order by x.rang), '[]'::jsonb)
+  from (
+    select m[1] || coalesce(' ' || upper(left(nullif(m[2], ''), 1)) || '.', '') as nom,
+      p.promo, nullif(btrim(p.entreprise), '') as entreprise, p.photo_path,
+      row_number() over (order by p.photo_path is null, p.created_at, p.id) as rang
+    from public.profiles p, lateral (select regexp_split_to_array(btrim(p.full_name), '\s+') as m) n
+    where p.vitrine_publique and p.verified and p.role = 'laureat' and not p.admin_ok and p.ecole = (select public.ecole_entree(p_ecole))
+    order by p.photo_path is null, p.created_at, p.id
+    limit 24
+  ) x;
+$$;
+revoke all on function public.visages_publics(text) from public;
+grant execute on function public.visages_publics(text) to anon, authenticated;
+
+-- Le stockage « photos » reste privé : un visiteur obtient seulement un lien temporaire vers la photo actuelle d'un lauréat
+-- vérifié de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
+-- La règle du stockage ne sait pas quelle école le visiteur regarde : sans compte, seulement les photos de l'ENSAM Meknès
+-- (la page d'entrée d'une autre école montre les initiales).
+create or replace function public.photo_visage_publique(p_name text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat'
+    and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes'));
+$$;
+revoke all on function public.photo_visage_publique(text) from public;
+grant execute on function public.photo_visage_publique(text) to anon;
+do $$ begin
+  drop policy if exists "photos visages publics" on storage.objects;
+  create policy "photos visages publics" on storage.objects for select to anon using (bucket_id = 'photos' and public.photo_visage_publique(name));
+exception when others then raise notice 'Photos de la page d’entrée non configurées : %', sqlerrm;
+end $$;
+
+-- Réussites montrées : un recrutement confirmé apparaît sur la page d'entrée quand l'étudiant ET le lauréat l'acceptent.
+-- Chacun ne coche que sa case, par montrer_reussite() : oui seulement pour une réussite confirmée, non à tout moment.
+-- protect_placement remet la ligne telle quelle pour un membre ; ce déclencheur passe après lui (ordre alphabétique).
+alter table public.placements add column if not exists public_etudiant boolean not null default false;
+alter table public.placements add column if not exists public_laureat boolean not null default false;
+
+create or replace function public.garde_reussite_publique() returns trigger
+language plpgsql as $$
+declare g text := coalesce(current_setting('ensam.reussite_publique', true), '');
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.public_etudiant := false; new.public_laureat := false; end if;
+    return new;
+  end if;
+  if g <> '' and split_part(g, '/', 1) = new.id::text then
+    new.public_etudiant := case when split_part(g, '/', 2) = 'etudiant' then split_part(g, '/', 3) = 'oui' else old.public_etudiant end;
+    new.public_laureat := case when split_part(g, '/', 2) = 'laureat' then split_part(g, '/', 3) = 'oui' else old.public_laureat end;
+    return new;
+  end if;
+  if auth.uid() is null then return new; end if;
+  -- Personne ne dit oui à la place d'un autre : l'administration peut retirer, jamais montrer
+  if new.public_etudiant and not old.public_etudiant then new.public_etudiant := false; end if;
+  if new.public_laureat and not old.public_laureat then new.public_laureat := false; end if;
+  return new;
+end $$;
+drop trigger if exists zz_reussite_publique on public.placements;
+create trigger zz_reussite_publique before insert or update on public.placements
+  for each row execute function public.garde_reussite_publique();
+
+create or replace function public.montrer_reussite(p_id uuid, p_oui boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v record; v_cote text;
+begin
+  select id, student_id, laureat_id, status into v from public.placements where id = p_id;
+  v_cote := case when auth.uid() is null or v.id is null then null when v.student_id = auth.uid() then 'etudiant' when v.laureat_id = auth.uid() then 'laureat' end;
+  if v_cote is null then raise exception 'Ce choix revient à l’étudiant et au lauréat de cette réussite.' using errcode = '42501'; end if;
+  if coalesce(p_oui, false) and v.status <> 'confirme' then
+    raise exception 'Seule une réussite confirmée des deux côtés peut être montrée.' using errcode = '42501';
+  end if;
+  perform set_config('ensam.reussite_publique', p_id::text || '/' || v_cote || '/' || case when coalesce(p_oui, false) then 'oui' else 'non' end, true);
+  update public.placements set public_etudiant = public_etudiant where id = p_id;
+  perform set_config('ensam.reussite_publique', '', true);
+  return (select jsonb_build_object('public_etudiant', public_etudiant, 'public_laureat', public_laureat) from public.placements where id = p_id);
+end $$;
+revoke all on function public.montrer_reussite(uuid, boolean) from public, anon;
+grant execute on function public.montrer_reussite(uuid, boolean) to authenticated;
+
+-- Les 12 dernières réussites montrées de l'école : l'entreprise, le prénom de l'étudiant, le prénom et la promo du lauréat, le mois.
+-- p_ecole : l'école du lien (?ecole=…) ; seulement l'école de la page d'entrée (ecole_entree), rien pour une école pas ouverte.
+drop function if exists public.reussites_publiques();
+create or replace function public.reussites_publiques(p_ecole text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('entreprise', x.entreprise, 'etudiant', x.etudiant, 'laureat', x.laureat, 'promo', x.promo, 'mois', x.mois) order by x.at desc, x.id), '[]'::jsonb)
+  from (
+    select pl.id, btrim(pl.entreprise) as entreprise, split_part(btrim(s.full_name), ' ', 1) as etudiant, split_part(btrim(l.full_name), ' ', 1) as laureat,
+      l.promo, to_char(coalesce(pl.confirmed_at, pl.created_at), 'YYYY-MM') as mois, coalesce(pl.confirmed_at, pl.created_at) as at
+    from public.placements pl
+    join public.profiles s on s.id = pl.student_id
+    join public.profiles l on l.id = pl.laureat_id
+    where pl.status = 'confirme' and pl.public_etudiant and pl.public_laureat
+      and pl.ecole = (select public.ecole_entree(p_ecole)) and s.ecole = pl.ecole and l.ecole = pl.ecole
+    order by coalesce(pl.confirmed_at, pl.created_at) desc, pl.id
+    limit 12
+  ) x;
+$$;
+revoke all on function public.reussites_publiques(text) from public;
+grant execute on function public.reussites_publiques(text) to anon, authenticated;
+
+-- =====================================================================
+-- APRÈS votre inscription sur la plateforme, devenez administrateur :
+--   update public.profiles set role = 'admin', verified = true
+--   where id = (select id from auth.users where email = 'VOTRE_EMAIL');
+-- =====================================================================

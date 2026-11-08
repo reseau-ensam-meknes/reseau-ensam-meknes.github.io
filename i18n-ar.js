@@ -1,6 +1,6 @@
 // Dictionnaire français -> arabe de l'interface. Clé = texte français exact affiché à l'écran.
 // Les contenus des membres (offres, messages, noms, entreprises) ne sont pas traduits.
-import { PAYS_AR, canonPays } from './geo.js';
+import { PAYS_AR, canonPays, villeAR } from './geo.js';
 
 // Accord des noms avec les nombres en arabe (défini dans i18n.js, gardé ici pour les anciens imports)
 import { arCount } from './i18n.js';
@@ -661,7 +661,17 @@ Object.assign(AR, {
   'Un lauréat': 'خريج', 'Ton premier merci': 'أول رسالة شكر تصلك', 'Quelqu’un que tu as aidé t’a laissé ce mot :': 'كلمة شكر وصلتك ممن ساعدتهم:', 'Avec plaisir': 'بكل سرور',
 });
 
+// Le nom d'une autre école que l'ENSAM Meknès dans une phrase arabe : sa ville en arabe quand on la connaît (« ENSA Fès »
+// → « ENSA فاس », comme son nom arabe dans la table des écoles), sinon son nom tel qu'il s'écrit
+function ecoleAR(nom) {
+  const mots = String(nom).split(' ');
+  for (let i = 1; i < mots.length; i++) { const v = villeAR(mots.slice(i).join(' ')); if (v) return `${mots.slice(0, i).join(' ')} ${v}`; }
+  return nom;
+}
 export const AR_PATTERNS = [
+  // L'école du membre (logic.js : sousMarque, legendeCarte) ; ceux de l'ENSAM Meknès sont au dictionnaire
+  [/^([^·]{1,60}) · Lauréats & étudiants$/, v => `${villeAR(v) || v} · الخريجون والطلبة`],
+  [/^Où travaillent les lauréats de l’(?:école )?(.{1,130})\. Clique sur un point pour voir qui est là\. En bleu le Maroc, en orange l’étranger\.$/, n => `أين يعمل خريجو ${ecoleAR(n)}. انقر على نقطة لترى من هناك. بالأزرق المغرب، وبالبرتقالي الخارج.`],
   // Lot design · A (motifs)
   // (fin A)
   // Lot design · B (motifs)

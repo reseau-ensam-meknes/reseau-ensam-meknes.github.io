@@ -60,11 +60,14 @@ async function taillerPhotos(c, max = PHOTOS_MAX) {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  // Lien d'une promo (promo/2019/, promo/2019/ar/) : sa page ne sert qu'à l'aperçu WhatsApp. Ici, l'application gardée s'ouvre tout de suite.
-  // Le code de qui invite (&de=…, invitation nommée) suit le lien
-  const promo = req.mode === 'navigate' && new URL(req.url).pathname.match(/\/promo\/(\d{4})\/(ar\/)?(?:index\.html)?$/);
-  const de = promo && new URL(req.url).searchParams.get('de');
-  if (promo) return e.respondWith(Response.redirect(new URL(`./?promo=${promo[1]}${promo[2] ? '&lang=ar' : ''}${/^[a-z0-9]{8}$/.test(de || '') ? '&de=' + de : ''}`, self.registration.scope).href, 302));
+  // Lien d'une promo (promo/2019/, promo/2019/ar/, et leurs pages neutres promo/2019/e/, promo/2019/ar/e/ : les liens d'une
+  // autre école) : sa page ne sert qu'à l'aperçu WhatsApp. Ici, l'application gardée s'ouvre tout de suite.
+  // Le code de qui invite (&de=…, invitation nommée) et l'école du lien (&ecole=…, écrite comme l'accepte ecoleValide) le suivent
+  const promo = req.mode === 'navigate' && new URL(req.url).pathname.match(/\/promo\/(\d{4})\/(ar\/)?(?:e\/)?(?:index\.html)?$/);
+  const de = promo && new URL(req.url).searchParams.get('de'), ecole = promo && new URL(req.url).searchParams.get('ecole');
+  if (promo) return e.respondWith(Response.redirect(new URL(`./?promo=${promo[1]}${promo[2] ? '&lang=ar' : ''}${/^[a-z0-9-]{2,40}$/.test(ecole || '') ? '&ecole=' + ecole : ''}${/^[a-z0-9]{8}$/.test(de || '') ? '&de=' + de : ''}`, self.registration.scope).href, 302));
+  // La page neutre du site (e.html : l'aperçu d'un lien d'une autre école) : l'application, avec toute l'adresse (le # suit)
+  if (req.mode === 'navigate' && new URL(req.url).pathname === new URL('e.html', self.registration.scope).pathname) return e.respondWith(Response.redirect(new URL('./' + new URL(req.url).search, self.registration.scope).href, 302));
   e.respondWith(FICHIERS.length ? depuisCache(req) : reseauDabord(req));
 });
 

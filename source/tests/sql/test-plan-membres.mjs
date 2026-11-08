@@ -149,7 +149,10 @@ test('visages de la page d’entrée : seulement les lauréats qui ont dit oui, 
     { nom: 'Nadia E.', promo: 2019, entreprise: 'OCP', photo: `${NADIA}/photo-1.webp` },
     { nom: 'Karim B.', promo: 2012, entreprise: null, photo: null },
   ], 'avec photo d’abord ; jamais un autre réseau ; pas d’id');
-  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`], 'jamais le CV, ni la photo de qui n’a rien dit, ni celle d’une autre école');
+  // La règle du stockage ne connaît que le nom du fichier : la photo suit l'école de son propriétaire. Celle d'Omar, qui a dit
+  // oui, est lisible pour la page d'entrée de son école (ouverte) ; visages_publics ne la donne que sur cette page-là.
+  const omar = `${AILLEURS}/photo-3.webp`;
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`, omar], 'jamais le CV, ni la photo de qui n’a rien dit');
   assert.deepEqual((await visages(AILLEURS)).map(v => v.nom), ['Omar A.'], 'un membre de l’autre école voit les siens');
   // Un compte pas encore vérifié qui dit oui (il pourrait porter le nom et la photo de quelqu'un d'autre) : rien de public
   const FAUX = uid(640);
@@ -158,21 +161,21 @@ test('visages de la page d’entrée : seulement les lauréats qui ont dit oui, 
   await q(FAUX, 'update public.profiles set photo_path = $2, vitrine_publique = true where id = $1', [FAUX, `${FAUX}/photo-9.webp`]);
   assert.equal((await ligne(FAUX)).vitrine_publique, true, 'son oui est gardé pour quand il sera vérifié');
   assert.deepEqual((await visages(null)).map(v => v.nom), ['Nadia E.', 'Karim B.']);
-  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`]);
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`, omar]);
   // Vérifié : il apparaît (deux espaces dans le nom n'enlèvent pas l'initiale), puis son profil est retiré pour la suite
   await db.query('update public.profiles set verified = true where id = $1', [FAUX]);
   assert.deepEqual((await visages(null)).map(v => v.nom), ['Nadia E.', 'Nadia E.', 'Karim B.']);
-  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`, `${FAUX}/photo-9.webp`]);
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`, omar, `${FAUX}/photo-9.webp`]);
   await db.query('delete from auth.users where id = $1', [FAUX]);
   await db.query(`delete from storage.objects where name = $1`, [`${FAUX}/photo-9.webp`]);
   // Une nouvelle photo : l'ancienne n'est plus lisible
   await db.query(`insert into storage.objects (bucket_id, name) values ('photos', $1)`, [`${NADIA}/photo-11.webp`]);
   await q(NADIA, 'update public.profiles set photo_path = $2 where id = $1', [NADIA, `${NADIA}/photo-11.webp`]);
-  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-11.webp`]);
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-11.webp`, omar]);
   // Elle retire son oui : plus rien
   await q(NADIA, 'update public.profiles set vitrine_publique = false where id = $1', [NADIA]);
   assert.deepEqual((await visages(null)).map(v => v.nom), ['Karim B.']);
-  assert.deepEqual(await photosVisiteur(), []);
+  assert.deepEqual(await photosVisiteur(), [omar]);
 });
 
 test('le oui vient du lauréat lui-même : ni l’administration, ni un autre membre, ni un étudiant', async () => {

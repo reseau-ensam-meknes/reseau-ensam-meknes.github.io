@@ -5,7 +5,7 @@ import { html, useState, useEffect, useLayoutEffect, useRef } from './vendor/pre
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS, roleTexte } from './ui.js';
 import { useBrouillon, EnTetePage, Rangee, Coche, vibrer, mouvementReduit, clavierOnglets } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
-import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres, joursAvant } from './logic.js';
+import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres, joursAvant, NOMS_MEKNES, nomsAPartagerDe } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { RelecturesPage, DemandeRelecture } from './cv.js';
 import { MessageBtn } from './messages.js';
@@ -76,13 +76,15 @@ function defaultSlots(now = new Date()) {
 // ---------------------------------------------------------------------------
 const icsDate = d => new Date(d).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 
-function rdvTexts(m, store, lien) {
+// Ce que l'agenda reçoit, dans la langue de l'écran. noms : ceux de l'école du membre (nomsAPartager) ; l'ENSAM Meknès
+// par défaut, avec ses textes d'avant (« Mentorat Réseau ENSAM », son nom entier pour une autre école).
+export function rdvTexts(m, store, lien, noms = NOMS_MEKNES) {
   const st = store.byId('profiles', m.student_id); const la = store.byId('profiles', m.mentor_id);
   const ar = getLang() === 'ar';
-  const title = ar ? `إرشاد · شبكة ENSAM مكناس : ${m.sujet}` : `Mentorat Réseau ENSAM : ${m.sujet}`;
+  const title = ar ? `إرشاد · شبكة ${noms.nomAr} : ${m.sujet}` : `Mentorat Réseau ${noms.meknes ? 'ENSAM' : noms.nom} : ${m.sujet}`;
   const details = ar
-    ? `موعد مدته ${RDV_MIN} دقيقة بين ${la?.full_name || ''} (خريج) و${st?.full_name || ''}.${lien ? `\nالاتصال المرئي : ${lien}` : ''}\nشبكة ENSAM مكناس`
-    : `Rendez-vous de ${RDV_MIN} min entre ${la?.full_name || ''} (lauréat) et ${st?.full_name || ''}.${lien ? `\nVisio : ${lien}` : ''}\nRéseau ENSAM Meknès`;
+    ? `موعد مدته ${RDV_MIN} دقيقة بين ${la?.full_name || ''} (خريج) و${st?.full_name || ''}.${lien ? `\nالاتصال المرئي : ${lien}` : ''}\nشبكة ${noms.nomAr}`
+    : `Rendez-vous de ${RDV_MIN} min entre ${la?.full_name || ''} (lauréat) et ${st?.full_name || ''}.${lien ? `\nVisio : ${lien}` : ''}\nRéseau ${noms.nom}`;
   return { m, title, details, lien };
 }
 
@@ -347,7 +349,7 @@ function Billet({ ctx, m, side, focus, onFini, calme = false, now: nowPage = nul
   const confirmable = 'confirme_at' in m;
   // Confirmer tant que ce n'est pas l'heure ; à l'heure, rejoindre passe devant
   const aConfirmer = pleinDuBillet(m, side, lien, now) === 'confirmer';
-  const txt = rdvTexts(m, store, lien);
+  const txt = rdvTexts(m, store, lien, nomsAPartagerDe(ctx.data, ctx.me));
   const saveLien = () => act(async () => {
     if (!isHttps(newLien.trim())) throw new Error('Le lien doit commencer par https://');
     await store.update('liens_rdv', m.id, { lien: newLien.trim() }); setNewLien(''); setEdit(false); toast('Lien enregistré.');

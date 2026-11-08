@@ -63,7 +63,7 @@ export function ParcoursPage(ctx) {
       <${ProchaineEtape} ctx=${ctx} obj=${obj} step=${step} plein=${plein}/>
       ${pl && pl.status !== 'en_attente' ? html`<div class="found-line"><${CompanyLogo} name=${pl.entreprise} size=${40}/><span class="grow"><strong translate="no">${pl.entreprise}</strong>${pl.ville ? html`, <span translate="no">${pl.ville}</span>` : ''}${pl.pays && pl.pays !== 'Maroc' ? ` (${pl.pays})` : ''}<br/><span class="esp-sous">${pl.status === 'confirme' ? `Vérifié : recrutement déclaré par ${helper?.full_name || 'un lauréat'}, confirmé par toi` : 'Trouvé en dehors de la plateforme'}</span></span>
         <button type="button" class="btn small tonal" onClick=${() => setShare(true)}><${Icon} name="share" size=${15}/> Partager</button></div>` : null}
-      ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => act(() => store.update('placements', pl.id, { partage_ok: e.target.checked }))}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
+      ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => partagerNom(ctx, pl, e)}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
       ${pl && pl.status === 'confirme' && helper ? html`<${ReussitePublique} ctx=${ctx} pl=${pl} cote="etudiant"/>` : null}
     </section>
 
@@ -79,7 +79,7 @@ export function ParcoursPage(ctx) {
         // entre les deux plutôt que d'abréger le nom (« Renault Group Maroc », à 360 px)
         const corps = html`<${CompanyLogo} name=${a.entreprise} size=${44}/>
           <span class="esp-ligne-txt">${titre ? html`<strong class="esp-titre" translate="no" dir="auto">${titre}</strong>` : html`<strong class="esp-titre">Candidature</strong>`}
-            <span class="esp-sous pc-sous faits"><span class="pc-ent"><bdi translate="no">${a.entreprise}</bdi></span><span class="pc-quand nowrap">${o ? timeAgo(a.updated_at || a.created_at) : 'hors plateforme'}</span></span></span>`;
+            <span class="esp-sous pc-sous faits"><span class="pc-ent"><bdi translate="no">${a.entreprise}</bdi></span><span class="pc-quand nowrap">${o ? timeAgo(a.updated_at || a.created_at) : !a.offer_id && a.message != null ? 'Offre retirée' : 'hors plateforme'}</span></span></span>`;
         return o ? html`<li class="pc-cand" key=${a.id}><button type="button" class="esp-ligne" onClick=${() => openOffer(o.id)}>${corps}<span class=${'state-pill a-' + a.status}>${APP_STATUS[a.status]}</span></button></li>`
           : html`<li class="pc-cand hors" key=${a.id}><div class="esp-ligne">${corps}
             <span class="pc-hors-act"><select id=${'ap-' + a.id} aria-label="Statut" value=${a.status} onChange=${e => act(() => store.update('applications', a.id, { status: e.target.value, updated_at: new Date().toISOString() }))}>${Object.entries(APP_STATUS).map(([v, t]) => html`<option value=${v}>${t}</option>`)}</select>
@@ -100,6 +100,16 @@ export function ParcoursPage(ctx) {
     ${share && pl ? html`<${ShareModal} ctx=${ctx} pl=${pl} onClose=${() => setShare(false)}/>` : null}
     ${addApp ? html`<${AppModal} ctx=${ctx} onClose=${() => setAddApp(false)}/>` : null}
   </section>`;
+}
+
+// « … peut citer mon nom s’il partage mon recrutement sur LinkedIn » : comme « Peut être montré » (ReussitePublique), un choix
+// refusé ou perdu en route remet la case à ce que la base a gardé, puis act() dit l'erreur (la case du navigateur a déjà
+// changé d'état, et rien ne redessine la page après un échec)
+function partagerNom({ store, act }, pl, e) {
+  const c = e.currentTarget;
+  return act(async () => {
+    try { await store.update('placements', pl.id, { partage_ok: c.checked }); } catch (err) { c.checked = !!(store.byId('placements', pl.id) || pl).partage_ok; throw err; }
+  });
 }
 
 // Le chemin de l'année : quatre étapes reliées. Celles franchies en vert (coche), celle en cours en bleu, mise en avant ;
@@ -136,8 +146,14 @@ function ProchaineEtape({ ctx, obj, step, plein }) {
   </div>`;
 }
 
-// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non (ici, ou depuis la carte « prochaine étape » de l'accueil)
-export const refuserRecrutement = (ctx, pl) => ctx.act(async () => { await ctx.store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); });
+// Ce qui a été déclaré (Mon parcours, l'accueil, la cloche) : le lauréat, nommé (« Un lauréat » si son profil n'est pas là) ;
+// un lauréat qui a supprimé son compte depuis (la base vide laureat_id) n'est plus là : ce qui a été déclaré, comme sur la demande
+export const recrutementDeclare = (pl, qui) => (pl.laureat_id
+  ? (pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} déclare ton recrutement chez ${pl.entreprise}`)
+  : pl.demande_id ? `Ton démarrage chez ${pl.entreprise} a été déclaré` : `Ton recrutement chez ${pl.entreprise} a été déclaré par un ancien membre`);
+// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non (ici, ou depuis la carte « prochaine étape » de l'accueil) ;
+// un lauréat parti depuis n'est informé de rien
+export const refuserRecrutement = (ctx, pl) => ctx.act(async () => { await ctx.store.update('placements', pl.id, { status: 'refuse' }); toast(pl.laureat_id ? 'C’est noté. Le lauréat sera informé.' : 'C’est noté.'); });
 export const confirmerRecrutement = (ctx, pl, helper) => ctx.act(async () => {
   const { store } = ctx;
   await store.update('placements', pl.id, { status: 'confirme' });
@@ -159,7 +175,7 @@ export function ConfirmRecruit({ ctx, pl, helper }) {
   const d = pl.demande_id ? store.byId('demandes', pl.demande_id) : null;
   return html`<div class="confirm-card">
     <div class="confirm-top"><${CompanyLogo} name=${pl.entreprise} size=${48}/>
-      <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} déclare ton recrutement chez ${pl.entreprise}`}</h2>
+      <div><p class="eyebrow">À confirmer</p><h2>${recrutementDeclare(pl, helper?.full_name || 'Un lauréat')}</h2>
         <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.</p></div></div>
     <div class="row-end">
       <button class="btn ghost" onClick=${() => refuserRecrutement(ctx, pl)}>Ce n’est pas le cas</button>
@@ -397,16 +413,23 @@ function Hausse({ n }) {
 
 // « Peut être montré sur la page d'entrée » : sous un recrutement confirmé, l'étudiant et le lauréat cochent chacun leur case
 // (store.montrerReussite, jamais celle de l'autre). La réussite n'y paraît qu'avec les deux, et s'en va dès qu'un des deux décoche.
+// En ligne, une base plus ancienne que le site (la réussite lue sans sa colonne public_…) : pas de case, elle ne mènerait qu'à une erreur.
+// Un choix refusé ou perdu en route (réseau, droits, base pas à jour) : la case revient à ce que la base a gardé, act() dit l'erreur
+// (la case du navigateur a déjà changé d'état, et rien ne redessine la page après un échec).
 export function ReussitePublique({ ctx, pl, cote }) {
   const { store, act } = ctx;
   if (pl?.status !== 'confirme' || !pl.laureat_id || !store.montrerReussite) return null;
-  const changer = e => act(async () => {
-    const oui = e.target.checked;
-    const x = await store.montrerReussite(pl.id, oui);
-    toast(!oui ? 'C’est noté : cette réussite n’est pas sur la page d’entrée.'
-      : x?.public_etudiant && x?.public_laureat ? 'C’est noté : cette réussite est maintenant sur la page d’entrée.'
-      : 'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.');
-  });
+  if (store.mode === 'live' && !(('public_' + cote) in pl)) return null;
+  const changer = e => {
+    const c = e.currentTarget, oui = c.checked;
+    return act(async () => {
+      let x;
+      try { x = await store.montrerReussite(pl.id, oui); } catch (err) { c.checked = (store.byId('placements', pl.id) || pl)['public_' + cote] === true; throw err; }
+      toast(!oui ? 'C’est noté : cette réussite n’est pas sur la page d’entrée.'
+        : x?.public_etudiant && x?.public_laureat ? 'C’est noté : cette réussite est maintenant sur la page d’entrée.'
+        : 'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.');
+    });
+  };
   return html`<div class="pl-public">
     <label class="check small consent"><input id=${'pl-public-' + pl.id} class="pl-public-case" type="checkbox" checked=${pl['public_' + cote] === true} onChange=${changer}/> Peut être montré sur la page d’entrée</label>
     <p class="small muted pl-public-sens">La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.</p>
@@ -972,7 +995,15 @@ addAR({
   'C’est noté : cette réussite est maintenant sur la page d’entrée.': 'تم الحفظ: هذا النجاح معروض الآن في صفحة الدخول.',
   'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.': 'تم الحفظ: سيُعرض في صفحة الدخول عندما يؤشّر الطرف الآخر أيضًا.',
   'La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.': 'صفحة الدخول عمومية: تظهر فيها الشركة واسماكما الشخصيان ودفعة الخريج والشهر، فقط إذا أشّرتما معًا. يمكنك إلغاء التأشير في أي وقت.',
+  'Offre retirée': 'عرض مسحوب',
+  '. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.': '. بعد التأكيد، يُوثَّق نجاحك من الطرفين ويُحتسب في تتبّع سنتك.',
+  'C’est noté.': 'تم التسجيل.',
 }, [
+  // Un recrutement déclaré par un lauréat qui a supprimé son compte depuis (Mon parcours, l'accueil, la cloche)
+  [/^Ton démarrage chez (.+) a été déclaré\. Confirme-le\.$/, e => `تم التصريح ببدايتك لدى ${e}. أكّد ذلك.`],
+  [/^Ton démarrage chez (.+) a été déclaré$/, e => `تم التصريح ببدايتك لدى ${e}`],
+  [/^Ton recrutement chez (.+) a été déclaré par un ancien membre\. Confirme-le\.$/, e => `تصريح من عضو سابق بتوظيفك لدى ${e}. أكّده.`],
+  [/^Ton recrutement chez (.+) a été déclaré par un ancien membre$/, e => `تصريح من عضو سابق بتوظيفك لدى ${e}`],
   [/^\+(\d+) depuis ta dernière visite$/, n => `+${n} منذ زيارتك الأخيرة`],
   [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
   [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],
