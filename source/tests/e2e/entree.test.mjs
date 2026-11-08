@@ -843,6 +843,10 @@ test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepte
   ambFaux = [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null, created_at: now }];
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   const m = await membre();
+  // Les chiffres du mois arrivent de la base (chiffres_ma_promo) une fois la carte de l'ambassadeur là : retenus ici jusqu'à
+  // ce que le test ait lu la carte qui les attend
+  let lacher; const reponse = new Promise(ok => { lacher = ok; });
+  await m.ctx.route('**/rest/v1/rpc/chiffres_ma_promo', r => reponse.then(() => r.continue()).catch(() => {}));
   await m.page.waitForSelector('[data-pas^="am"], .af-accueil .todo > li[data-cle^="am"]', { timeout: 15000 });
   await m.page.waitForTimeout(1500);
   assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/ambassadeurs_proposer'), 'la base est appelée à l’ouverture');
@@ -857,6 +861,12 @@ test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepte
   assert.deepEqual(site.appels.find(a => a.u === '/sb/rest/v1/ambassadeurs' && a.m === 'PATCH')?.corps, { statut: 'accepte' });
   await m.page.keyboard.press('Escape');
   await m.page.waitForSelector('#amb-carte');
+  // En attendant la base : la carte et le lien de la promo, sans un chiffre (jamais « 0 inscrit » faute de réponse)
+  assert.doesNotMatch(await m.page.locator('#amb-carte').innerText(), /\d\s*(inscrit|demande|stage)/, 'pas de chiffre avant la réponse de la base');
+  assert.ok(await m.page.isVisible('#amb-wa'));
+  // Puis les chiffres, lus une fois arrivés
+  lacher();
+  await m.page.waitForSelector('#amb-carte .amb-chiffres');
   const t = await m.page.locator('#amb-carte').innerText();
   assert.match(t, /12\s*inscrits\s*\+3 ce mois-ci/);
   assert.match(t, /4\s*stages et emplois trouvés/);
@@ -996,29 +1006,38 @@ test('message envoyé avec un jeton refusé et un renouvellement refusé : il re
 test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la réponse de la base, la mise à jour arrive sans bruit ; jamais pour un autre compte', async () => {
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   site.tables.coordonnees = [{ id: UID, telephone: '0612345678' }, { id: AUTEUR, telephone: '0698765432' }];
-  let tenir = false; const tenus = [];
-  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+  let tenir = false, retenue = null; const tenus = [], passees = new Set(), repondues = [];
+  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => { if (tenir) { tenus.push(r); return retenue?.(); } passees.add(r.request()); return r.continue(); }) });
+  // Une requête au moins partie vers la base, et retenue (10 s au plus) ; repondues : ce que la base a rendu pendant ce temps
+  // (une requête laissée passer juste avant, par la page d'avant le rechargement, ne compte pas)
+  const tenue = () => new Promise((ok, ko) => { if (tenus.length) return ok(); retenue = ok; setTimeout(() => ko(new Error('rien n’est parti vers la base')), 10e3).unref(); });
+  m.page.on('response', r => { if (tenir && /\/sb\/rest\/v1\//.test(r.url()) && !passees.has(r.request())) repondues.push(r.url()); });
   await m.page.waitForSelector(ACCUEIL);
   let c = null;
   for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
   assert.ok(c, 'une copie de l’accueil est gardée');
   assert.equal(c.uid, UID);
   assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
-  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il peut paraître avant même que la mise à jour
+  // parte (elle attend la session de Supabase, dont un autre onglet peut tenir le verrou) : on attend qu'elle parte, retenue ;
+  // l'accueil est toujours là, et la base n'a encore rien rendu
   tenir = true;
   await m.page.reload();
   await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
-  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  await tenue();
+  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste pendant que la mise à jour attend la base');
+  assert.deepEqual(repondues, [], 'la base n’a pas encore répondu');
   assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForTimeout(1200);
   assert.equal(await m.page.locator('.toast').count(), 0, 'la mise à jour arrive sans message');
   assert.ok(await m.page.isVisible(ACCUEIL));
-  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée
+  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée (avant que la page
+  // demande quoi que ce soit à la base pour ce compte) ; 1,5 s au moins pour qu'elle ait le temps de paraître si elle le devait
   const AUTRE = '00000000-0000-4000-8000-0000000000c3';
   await m.page.evaluate(id => { const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k)); s.user.id = id; localStorage.setItem(k, JSON.stringify(s)); }, AUTRE);
   tenir = true;
-  await m.page.reload(); await m.page.waitForTimeout(1500);
+  await m.page.reload(); await Promise.all([tenue(), m.page.waitForTimeout(1500)]);
   assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'rien de l’autre compte');
   assert.equal(await lireCacheMembre(m.page), null, 'la copie est effacée');
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
