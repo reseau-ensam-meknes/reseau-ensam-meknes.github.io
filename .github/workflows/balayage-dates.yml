@@ -2,6 +2,7 @@
 # dates à venir (fins de mois, 1er janvier, 29 février, été, rentrée, un dimanche soir, une nuit, dans cinq ans), pour
 # trouver avant le jour J ce qui ne casserait qu'à certaines dates ou à certaines heures. Node et chaque page partent de
 # la date choisie (source/tests/horloge-balayage.mjs) ; « maintenant » est le témoin : s'il est rouge, ce n'est pas la date.
+# Pour la base, seul le jour change : le banc d'essai fixe l'heure de la base à 10 h (les essais qui en dépendent la posent).
 # À lancer avant de fusionner un changement qui touche aux dates, aux saisons ou aux heures.
 name: Balayage des dates
 
@@ -74,15 +75,21 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           set +e
-          H="--import ./horloge-balayage.mjs"
-          R="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination"
+          H=(--import ./horloge-balayage.mjs)
+          R=(--test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap)
+          # D'abord, l'horloge atteint-elle Node, un processus enfant et les pages ? Sinon tout serait vert pour rien
+          if [ "$SUITE" = verifs ]; then V=(); else V=(--pages); fi
+          if ! node "${H[@]}" verifier-horloge.mjs "${V[@]}"; then
+            echo "### $FAUX_MAINTENANT · $SUITE : l'horloge du balayage n'atteint pas tout (voir le journal)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           if [ "$SUITE" = verifs ]; then
-            node $H --test $R=tap-unit.txt unit/*.test.mjs; a=$?
-            node $H --test $R=tap-sql.txt sql/test-*.mjs; b=$?
-            node $H --test --test-concurrency=1 $R=tap-notifier.txt notifier/test-*.mjs; c=$?
+            node "${H[@]}" --test "${R[@]}" --test-reporter-destination=tap-unit.txt unit/*.test.mjs; a=$?
+            node "${H[@]}" --test "${R[@]}" --test-reporter-destination=tap-sql.txt sql/test-*.mjs; b=$?
+            node "${H[@]}" --test --test-concurrency=1 "${R[@]}" --test-reporter-destination=tap-notifier.txt notifier/test-*.mjs; c=$?
             code=$((a + b + c))
           else
-            PARTIE="${SUITE#site-}/3" node $H --test $R=tap-site.txt e2e/*.test.mjs; code=$?
+            PARTIE="${SUITE#site-}/3" node "${H[@]}" --test "${R[@]}" --test-reporter-destination=tap-site.txt e2e/*.test.mjs; code=$?
           fi
           echo "=== BILAN $FAUX_MAINTENANT $SUITE (code $code)"
           grep -h -E "^ *not ok|^# (tests|pass|fail)" tap-*.txt

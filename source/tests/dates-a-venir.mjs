@@ -2,8 +2,10 @@
 // prochaines dates où un calendrier se trompe le plus souvent (fins de mois, 1er janvier, 29 février, début et fin de
 // l'été, veille et jour de la rentrée du 1er septembre, un samedi soir de juillet, un dimanche soir, une nuit à 3 h,
 // dans cinq ans). node dates-a-venir.mjs [ISO,ISO…] : la liste en JSON. Des instants donnés remplacent la liste (le
-// témoin reste). Quatre machines par instant, et GitHub refuse plus de 256 machines par lancement : 63 instants au plus.
-const donnees = (process.argv[2] || '').split(',').map(s => s.trim()).filter(Boolean);
+// témoin reste ; un jour qui n'existe pas, comme le 31 septembre, est refusé). Quatre machines par instant, et GitHub
+// refuse plus de 256 machines par lancement : 63 instants au plus.
+import { lireInstant } from './horloge-balayage.mjs';
+const donnees = (process.argv[2] || '').split(',').map(s => s.trim()).filter(s => s && s !== 'maintenant');
 const maintenant = new Date();
 const apres = new Date(maintenant.getTime() + 864e5); // au moins un jour d'avance
 const utc = (a, m, j, h = 10) => new Date(Date.UTC(a, m, j, h));
@@ -18,7 +20,7 @@ const prochain = (m, j, h = 10, test = () => true) => {
 const jour = (d, n, h) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); x.setUTCHours(h, 0, 0, 0); return x; };
 let liste;
 if (donnees.length) {
-  liste = donnees.map(s => { const d = new Date(s); if (isNaN(d)) throw new Error(`date illisible : ${s}`); return d; });
+  liste = donnees.map(lireInstant);
 } else {
   const juillet = prochain(6, 17, 19);
   const dimanche = jour(apres, 7 + ((7 - jour(apres, 7, 0).getUTCDay()) % 7), 18);
