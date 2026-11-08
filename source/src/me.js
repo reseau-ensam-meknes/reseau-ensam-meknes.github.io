@@ -63,7 +63,7 @@ export function ParcoursPage(ctx) {
       <${ProchaineEtape} ctx=${ctx} obj=${obj} step=${step} plein=${plein}/>
       ${pl && pl.status !== 'en_attente' ? html`<div class="found-line"><${CompanyLogo} name=${pl.entreprise} size=${40}/><span class="grow"><strong translate="no">${pl.entreprise}</strong>${pl.ville ? html`, <span translate="no">${pl.ville}</span>` : ''}${pl.pays && pl.pays !== 'Maroc' ? ` (${pl.pays})` : ''}<br/><span class="esp-sous">${pl.status === 'confirme' ? `Vérifié : recrutement déclaré par ${helper?.full_name || 'un lauréat'}, confirmé par toi` : 'Trouvé en dehors de la plateforme'}</span></span>
         <button type="button" class="btn small tonal" onClick=${() => setShare(true)}><${Icon} name="share" size=${15}/> Partager</button></div>` : null}
-      ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => act(() => store.update('placements', pl.id, { partage_ok: e.target.checked }))}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
+      ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => partagerNom(ctx, pl, e)}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
       ${pl && pl.status === 'confirme' && helper ? html`<${ReussitePublique} ctx=${ctx} pl=${pl} cote="etudiant"/>` : null}
     </section>
 
@@ -100,6 +100,16 @@ export function ParcoursPage(ctx) {
     ${share && pl ? html`<${ShareModal} ctx=${ctx} pl=${pl} onClose=${() => setShare(false)}/>` : null}
     ${addApp ? html`<${AppModal} ctx=${ctx} onClose=${() => setAddApp(false)}/>` : null}
   </section>`;
+}
+
+// « … peut citer mon nom s’il partage mon recrutement sur LinkedIn » : comme « Peut être montré » (ReussitePublique), un choix
+// refusé ou perdu en route remet la case à ce que la base a gardé, puis act() dit l'erreur (la case du navigateur a déjà
+// changé d'état, et rien ne redessine la page après un échec)
+function partagerNom({ store, act }, pl, e) {
+  const c = e.currentTarget;
+  return act(async () => {
+    try { await store.update('placements', pl.id, { partage_ok: c.checked }); } catch (err) { c.checked = !!(store.byId('placements', pl.id) || pl).partage_ok; throw err; }
+  });
 }
 
 // Le chemin de l'année : quatre étapes reliées. Celles franchies en vert (coche), celle en cours en bleu, mise en avant ;

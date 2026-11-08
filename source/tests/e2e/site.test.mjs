@@ -10271,3 +10271,38 @@ test('lien de promo d’une autre école : la page d’aperçu, puis le service 
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// « … peut citer mon nom s’il partage mon recrutement sur LinkedIn » (#pl-partage) suit ce que la base a gardé, comme
+// « Peut être montré » : un choix refusé (droits) ou perdu en route (réseau coupé) remet la case où elle était, l'erreur dite
+test('Mon parcours, en ligne : « peut citer mon nom » refusé ou perdu en route, la case revient où la base l’a gardée ; acceptée, elle le reste', async () => {
+  const S = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1, now = new Date().toISOString();
+  const PL = { id: 'c0000000-0000-4000-8000-0000000000e2', student_id: UID, laureat_id: AUTEUR_OFFRE, offer_id: null, demande_id: null, source: 'plateforme', status: 'confirme', saison: S,
+    type: 'stage', entreprise: 'OCP', ville: 'Casablanca', pays: 'Maroc', merci: 'Merci pour tout !', note: 5, partage_ok: false, public_etudiant: false, public_laureat: false, created_at: now, confirmed_at: now };
+  const m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [PL] } });
+  const c = m.page.locator('#pl-partage');
+  await c.waitFor({ timeout: 10000 });
+  assert.equal(await c.isChecked(), false);
+  const PATCH = '**/rest/v1/placements?*';
+  const repondre = reponse => m.page.route(PATCH, r => (r.request().method() === 'PATCH' ? r.fulfill(reponse) : r.fallback()));
+  // Refusé par la base (ses règles) : l'erreur dite, la case décochée comme avant
+  await repondre({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', details: null, hint: null, message: 'new row violates row-level security policy for table "placements"' }) });
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Action non autorisée pour ton compte.")');
+  assert.equal(await c.isChecked(), false, 'refusé : la case revient décochée');
+  // Acceptée : cochée, et la ligne gardée (le magasin relit ensuite les demandes et les propositions : la ligne y est déjà)
+  await m.page.unroute(PATCH);
+  await repondre({ status: 200, contentType: 'application/vnd.pgrst.object+json', body: JSON.stringify({ ...PL, partage_ok: true }) });
+  const relue = m.page.waitForRequest(r => r.method() === 'GET' && /\/rest\/v1\/propositions\?/.test(r.url()));
+  await c.click();
+  await relue;
+  assert.equal(await c.isChecked(), true);
+  assert.ok(m.site.appels.some(a => a.u === '/sb/rest/v1/placements' && a.m === 'GET'), 'les réussites lues à l’ouverture');
+  // Décochée, réseau coupé en route : la base l'a toujours, la case revient cochée
+  await m.page.unroute(PATCH);
+  await m.page.route(PATCH, r => (r.request().method() === 'PATCH' ? r.abort('internetdisconnected') : r.fallback()));
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Pas de réseau")');
+  assert.equal(await c.isChecked(), true, 'perdu en route : la case revient cochée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
