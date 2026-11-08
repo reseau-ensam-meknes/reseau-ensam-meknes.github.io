@@ -2500,3 +2500,86 @@ test('lien d’une école ouverte : l’email de l’école, ses domaines et sa 
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Membre d'une autre école que l'ENSAM Meknès, déjà connecté sur cet appareil. email : celui de son compte ; avant(ctx) : le
+// réseau à régler avant la première visite ; attendre : ce qui dit que la page est là
+// ---------------------------------------------------------------------------
+async function membreDe({ hash = '', langue = 'fr', largeur = 390, email = 'membre@exemple.ma', avant, attendre = '.me-btn' } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(([uid, langue, email]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email, user_metadata: {}, app_metadata: {} } }));
+  }, [UID, langue, email]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  if (attendre) await page.waitForSelector(attendre, { timeout: 15000 });
+  return { ctx, page, erreurs };
+}
+
+// « Mon profil » : un lauréat qui passe côté étudiants (« Je suis à l’école ») suit les domaines et la règle d'email de son
+// école, sa ligne de la table des écoles, comme la base (protect_profile lit l'école du profil) ; l'ENSAM Meknès garde ses
+// réglages. Les enregistrements de son profil : les PATCH de /profiles
+const LAUREAT_2019 = { ...ETUDIANT, role: 'laureat', promo: 2019, consent_at: '2025-10-01T10:00:00Z' };
+const versEtudiant = async page => {
+  await page.waitForSelector('#profil-infos .pf-infos > .seg > button', { timeout: 15000 });
+  await page.click('#profil-infos .pf-infos > .seg > button:first-child');
+  await page.waitForFunction(() => document.querySelector('#profil-infos .pf-infos > .seg > button:first-child')?.classList.contains('on'));
+};
+const enregistrements = () => site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH');
+
+for (const langue of ['fr', 'ar']) test(`Mon profil d’un membre d’une autre école (${langue}) : « Je suis à l’école » demande l’email de son école (ses domaines, sa règle) ; l’ENSAM Meknès comme avant`, async () => {
+  const ar = langue === 'ar';
+  // Son école exige l'email de l'école (la règle de l'ENSAM Meknès, elle, ne l'exige pas)
+  site.inscrits.push({ ...LAUREAT_2019, ecole: 'ensa-fes' });
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  let m = await membreDe({ hash: '#profil', langue });
+  await versEtudiant(m.page);
+  await m.page.waitForSelector('#pf-ecole', { timeout: 8000 });
+  const bloc = await m.page.locator('#pf-ecole').innerText();
+  assert.match(bloc, /@ensa-fes\.ma/, 'les domaines de son école');
+  assert.doesNotMatch(bloc, /ensam-umi/, 'jamais ceux de l’ENSAM Meknès');
+  assert.match(bloc, ar ? /حساب الطالب يستعمل بريد المدرسة\./ : /Un compte étudiant utilise l’email de l’école\./);
+  assert.equal(await m.page.getAttribute('#profil-infos .row-end > button.btn.primary', 'data-manque'), 'ecole', 'le bouton mène à l’email de l’école, rien ne part');
+  assert.equal(await m.page.locator('#profil-infos .row-end > button.btn.primary').innerText(), ar ? 'استعمل بريد المدرسة' : 'Utilise l’email de l’école');
+  if (ar) assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /email|compte|rôle|école/i.test(x))), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Un membre de l'ENSAM Meknès : les réglages de l'administration, comme avant (la ligne d'une autre école n'y change rien)
+  site.vider(); site.inscrits.push({ ...LAUREAT_2019 });
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  m = await membreDe({ hash: '#profil', langue, avant: reglagesObligatoire });
+  await versEtudiant(m.page);
+  await m.page.waitForSelector('#pf-ecole', { timeout: 8000 });
+  const blocM = await m.page.locator('#pf-ecole').innerText();
+  assert.match(blocM, /@ensam-umi\.ac\.ma/);
+  assert.doesNotMatch(blocM, /ensa-fes/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('Mon profil d’un membre d’une autre école : la règle de l’ENSAM Meknès ne le bloque pas (son école ne l’exige pas, ou son email est celui de son école), et son profil étudiant s’enregistre', async () => {
+  for (const [email, obligatoire] of [['membre@exemple.ma', false], ['salma@ensa-fes.ma', true]]) {
+    const quoi = `${email}, obligatoire : ${obligatoire}`;
+    site.vider(); site.inscrits.push({ ...LAUREAT_2019, ecole: 'ensa-fes' });
+    site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: obligatoire }];
+    const m = await membreDe({ hash: '#profil', email, avant: reglagesObligatoire });
+    await versEtudiant(m.page);
+    await m.page.fill('#pf-promo', String(S + 1));
+    // La promo prise : il ne reste rien, ou l'email de l'école
+    await m.page.waitForFunction(() => { const b = document.querySelector('#profil-infos .row-end > button.btn.primary'); return b && (!b.dataset.manque || b.dataset.manque === 'ecole'); });
+    assert.equal(await m.page.locator('#pf-ecole').count(), 0, `${quoi} : pas la règle de l’ENSAM Meknès`);
+    assert.equal(await m.page.getAttribute('#profil-infos .row-end > button.btn.primary', 'data-manque'), null, quoi);
+    await m.page.click('#profil-infos .row-end > button.btn.primary');
+    await m.page.waitForFunction(() => /Profil enregistré/.test(document.querySelector('.toast-zone')?.textContent || ''), null, { timeout: 8000 });
+    assert.equal(enregistrements().pop()?.corps?.role, 'etudiant', quoi);
+    assert.equal(site.inscrits.find(x => x.id === UID)?.role, 'etudiant', quoi);
+    assert.deepEqual(m.erreurs, [], quoi);
+    await m.ctx.close();
+  }
+});

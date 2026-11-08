@@ -6,7 +6,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci, nomsDeLigne } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -628,12 +628,14 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const ecoleIns = onboarding ? [ecoleInvitee(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
   const autreEcole = ecoleIns && ecoleIns !== 'ensam-meknes' ? ecoleIns : null;
   // Email de l'école obligatoire pour les étudiants : le réglage de l'administration (ENSAM Meknès) ; pour une autre école,
-  // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. Sa ligne pas lisible ici (école pas encore
-  // ouverte) : rien à bloquer, la base répond « pas encore ouvert »
-  const ligneEcole = autreEcole && (store.data?.ecoles || []).find(e => e?.slug === autreEcole && e.ouverte === true);
+  // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. À l'inscription, l'école de l'inscription : sa
+  // ligne pas lisible ici (école pas encore ouverte), rien à bloquer, la base répond « pas encore ouvert ». Dans « Mon
+  // profil », l'école du membre (la base lit celle du profil quand il passe côté étudiants) : sa ligne, qu'il lit toujours
+  const ecoleRegles = onboarding ? autreEcole : ecoleDe(initial) !== 'ensam-meknes' ? ecoleDe(initial) : null;
+  const ligneEcole = ecoleRegles && (store.data?.ecoles || []).find(e => e?.slug === ecoleRegles && (!onboarding || e.ouverte === true));
   const email = (store.session?.user?.email || '').toLowerCase();
-  const domaines = autreEcole ? (Array.isArray(ligneEcole?.domaines) ? ligneEcole.domaines.filter(d => typeof d === 'string' && d) : []) : store.domainesEcole?.() || [];
-  const obligatoire = autreEcole ? ligneEcole?.email_obligatoire === true : store.reglages?.email_ecole_obligatoire === true;
+  const domaines = ecoleRegles ? (Array.isArray(ligneEcole?.domaines) ? ligneEcole.domaines.filter(d => typeof d === 'string' && d) : []) : store.domainesEcole?.() || [];
+  const obligatoire = ecoleRegles ? ligneEcole?.email_obligatoire === true : store.reglages?.email_ecole_obligatoire === true;
   const versEtudiant = !!onboarding || (!!initial && initial.role !== 'etudiant');
   const ecoleBloque = versEtudiant && f.role === 'etudiant' && obligatoire && domaines.length > 0 && !!email && !estEmailEcole(email, domaines);
   // La base a refusé le profil : l'école du lien n'est pas encore ouverte (sa phrase reste au-dessus du bouton)
