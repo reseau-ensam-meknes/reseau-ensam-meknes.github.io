@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, ecoleDe, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises, bilanTestPush, codeInvitationValide, invitesDe, visagesPublics, reussitesPubliques } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, ecoleDe, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, sponsoriseLisible, sponsoriseModifiable, adminDuReseau, jourLocal, totauxSponsorises, bilanTestPush, codeInvitationValide, invitesDe, visagesPublics, reussitesPubliques } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -320,8 +320,12 @@ class DemoStore extends Base {
     this.persist(); this.emit();
     return r;
   }
-  async update(table, id, patch) {
-    const old = this.byId(table, id); if (!old) return null;
+  // exiger : le message si aucune ligne n'est modifiée (comme en ligne : une règle d'accès filtre la ligne sans erreur)
+  async update(table, id, patch, { exiger } = {}) {
+    const old = this.byId(table, id); if (!old) { if (exiger) throw new Error(exiger); return null; }
+    // Une carte sponsorisée que l'administration d'une école ne gère pas (de toutes les écoles, d'une autre école) : la
+    // règle « modif admin » ne laisse passer aucune ligne ; en ligne, sans « exiger », c'est une ligne introuvable
+    if (SPONSO.includes(table) && this.me?.role === 'admin' && !sponsoriseModifiable(old, this.me)) { if (exiger) this.emit(); throw new Error(exiger || 'Cette action n’est plus possible. Recharge la page.'); }
     const r = { ...old, ...patch };
     if (table === 'placements') applyPlacementRules(this, r, old);
     if (table === 'applications') applyApplicationRules(this, r, old);
@@ -353,6 +357,10 @@ class DemoStore extends Base {
   async remove(table, id, { exiger, saufStatut } = {}) {
     if ((table === 'annonces' || SPONSO.includes(table)) && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     const row = this.byId(table, id);
+    // Une carte sponsorisée que l'administration d'une école ne gère pas, ou déjà retirée : la règle « suppression admin »
+    // ne laisse passer aucune ligne, sans erreur de la base ; « exiger » le dit (une carte déjà retirée, sans « exiger » :
+    // comme avant)
+    if (SPONSO.includes(table) && !sponsoriseModifiable(row, this.me)) { if (exiger) throw new Error(exiger); if (row) return; }
     if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
     if (table === 'placements' && row && this.me?.role !== 'admin' && !(row.student_id === this.me?.id || (row.laureat_id === this.me?.id && row.status === 'en_attente'))) throw new Error(exiger || 'Action non autorisée pour ton compte.');
@@ -533,7 +541,8 @@ class DemoStore extends Base {
   // Les totaux de chaque carte, pour l'administration seule (comme bilan_sponsorises) : jamais qui a vu ni cliqué
   async bilanSponsorises() {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    return totauxSponsorises(this.data.sponsorises, this.data.sponsorises_comptes);
+    // L'administration d'une école : ses cartes et celles de toutes les écoles (comme la base)
+    return totauxSponsorises(this.data.sponsorises.filter(x => sponsoriseLisible(x, this.me)), this.data.sponsorises_comptes);
   }
   // Match : mêmes règles que protect_match_choix(), match_apres_choix(), protect_match() et repondre_rdv() dans la base.
   // Un choix par carte (« oui » ou « plus_tard »), changé sur place ; renvoie le match que ce geste vient de créer (à fêter).
@@ -641,6 +650,9 @@ class DemoStore extends Base {
 function regleSponsoDemo(store, r, old) {
   if (store.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
   Object.assign(r, normaliserSponsorise(r));
+  // L'administration d'une école écrit pour son école : une carte sans école est de la sienne (protect_sponsorise) ; une
+  // autre école est refusée par les règles (« new row violates row-level security policy »)
+  if (!adminDuReseau(store.me)) { r.ecole = r.ecole || ecoleDe(store.me); if (r.ecole !== ecoleDe(store.me)) throw new Error('Action non autorisée pour ton compte.'); }
   if (old) { r.created_by = old.created_by; r.created_at = old.created_at; }
   else { r.created_by = store.me.id; r.actif = r.actif !== false; r.public ||= 'tous'; r.debut ||= jourLocal(); r.annees ??= null; r.filieres ??= null; r.domaine ??= null; }
   const refus = refusSponsorise(r);
@@ -1825,8 +1837,10 @@ export class SupabaseStore extends Base {
     await this.loadAll({ ensemble: true }); this.me = this.byId('profiles', this.userId) || null;
     this.emit();
   }
-  async update(table, id, patch) {
+  // exiger : le message si aucune ligne n'est modifiée (une règle d'accès filtre la ligne sans erreur) ; la table est relue
+  async update(table, id, patch, { exiger } = {}) {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
+    if (error?.code === 'PGRST116' && exiger) { await this.loadTable(table).catch(() => {}); this.emit(); throw new Error(exiger); }
     // Aucune ligne modifiée : quelqu'un est passé avant (ex. demande prise entre-temps)
     // Son propre profil : aucune ligne modifiée veut dire que la connexion s'est perdue, pas qu'un autre est passé avant
     if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de choisir un horaire.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');

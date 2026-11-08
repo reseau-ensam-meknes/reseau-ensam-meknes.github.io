@@ -7,7 +7,8 @@ import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.
 import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue, ecoleDesTextes,
-  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
+  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel, adminDuReseau,
+  sponsoriseLisible, sponsoriseModifiable } from './logic.js';
 import { SanteNotifsAdmin } from './admin-notifs.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin, consoleRegarde } from './agenda.js';
@@ -746,6 +747,9 @@ const ETATS_SPONSO = { en_cours: ['En cours', 'coopt'], programmee: ['Programmé
 const dateFr = d => (d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR') : '');
 const plusJours = (j, n) => jourLocal(new Date(j + 'T12:00:00').getTime() + n * 864e5);
 const vide = (ecole = '') => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30), ecole });
+// L'administration d'une école : une carte qui n'est plus de son école (passée à toutes les écoles, retirée) entre l'écran
+// et son geste ; la base ne touche alors aucune ligne, sans erreur (store.update … exiger)
+const RIEN_SPONSO = 'Rien n’a changé : cette carte n’est plus gérée par ton école.';
 // Pour qui, en une ligne : le public, les années, les filières (« Toutes les années », « Toutes les filières » quand rien n'est choisi)
 const cibleSponso = s => [SPONSO_PUBLICS.find(([k]) => k === (s.public || 'tous'))?.[1],
   s.annees?.length ? s.annees.map(n => SPONSO_ANNEES.find(([k]) => k === Number(n))?.[1]).filter(Boolean).join(', ') : 'Toutes les années',
@@ -766,8 +770,12 @@ export function bilanSponso(s, t, aujourdhui = jourLocal(), nomEcole = null) {
 }
 
 function SponsorisesAdmin({ ctx }) {
-  const { data, store, act } = ctx;
-  const liste = [...(data.sponsorises || [])].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const { data, store, act, me } = ctx;
+  // L'administration du réseau lit et gère toutes les cartes. Celle d'une école lit les cartes de son école et celles de
+  // toutes les écoles (en ligne, la base ne lui donne qu'elles ; la démo a tout) et ne gère que les siennes : une carte de
+  // toutes les écoles se lit seulement (ses chiffres, son bilan)
+  const reseau = adminDuReseau(me);
+  const liste = [...(data.sponsorises || [])].filter(s => reseau || sponsoriseLisible(s, me)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const [totaux, setTotaux] = useState(null);   // { [id]: { vues, clics, membres } }, lus à l'ouverture
   const [f, setF] = useState(null);             // le formulaire ouvert : { id?, ...champs }
   const cle = liste.map(s => s.id).join(',');
@@ -779,7 +787,7 @@ function SponsorisesAdmin({ ctx }) {
   if (!store.peutSponso?.()) return html`<div class="panel"><p class="muted">La base n’a pas encore les cartes sponsorisées : lance supabase/mise-a-jour.sql dans Supabase.</p></div>`;
   const nomEcole = plusieursEcoles(ctx) ? ctx.nomEcole : null;
   const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id], jourLocal(), nomEcole)); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
-  const basculer = s => act(async () => { await store.update('sponsorises', s.id, { actif: !s.actif }); toast(s.actif ? 'Carte arrêtée : elle ne paraît plus dans Match.' : 'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.'); });
+  const basculer = s => act(async () => { await store.update('sponsorises', s.id, { actif: !s.actif }, reseau ? undefined : { exiger: RIEN_SPONSO }); toast(s.actif ? 'Carte arrêtée : elle ne paraît plus dans Match.' : 'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.'); });
   const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin, ecole: s.ecole || '' } : vide(ctx.ecoleConsole || ''));
   return html`<div class="sub-page sponso-admin">
     <div class="panel">
@@ -798,8 +806,8 @@ function SponsorisesAdmin({ ctx }) {
           <div><dt>Membres différents</dt><dd class="sp-membres">${totaux ? t.membres : '…'}</dd></div>
         </dl>
         <div class="sp-acts">
-          <button class="btn tiny ghost sp-modifier" onClick=${() => ouvrir(s)}><${Icon} name="edit" size=${14}/> Modifier</button>
-          <button class="btn tiny ghost sp-basculer" onClick=${() => basculer(s)}>${s.actif ? 'Arrêter' : 'Reprendre'}</button>
+          ${reseau || sponsoriseModifiable(s, me) ? html`<button class="btn tiny ghost sp-modifier" onClick=${() => ouvrir(s)}><${Icon} name="edit" size=${14}/> Modifier</button>
+          <button class="btn tiny ghost sp-basculer" onClick=${() => basculer(s)}>${s.actif ? 'Arrêter' : 'Reprendre'}</button>` : html`<span class="small muted sp-lecture">Seule l’administration du réseau la modifie.</span>`}
           <button class="btn tiny ghost sp-bilan" onClick=${() => copier(s)} disabled=${!totaux}><${Icon} name="copy" size=${14}/> Copier le bilan</button>
         </div></li>`; })}</ul>`
       : f ? null : html`<${Empty} icon="etiquette" title="Aucune carte sponsorisée">Quand une entreprise soutient le réseau, sa carte se prépare ici : qui la voit, quand, et ses chiffres.<//>`}
@@ -808,8 +816,10 @@ function SponsorisesAdmin({ ctx }) {
 }
 
 function FormSponso({ ctx, f, setF }) {
-  const { store, act } = ctx;
+  const { store, act, me } = ctx;
   const plusieurs = plusieursEcoles(ctx);
+  // L'administration d'une école écrit pour la sienne, sans choix (la base refuse une autre école)
+  const reseau = adminDuReseau(me), sienne = ecoleDe(me);
   const set = (k, v) => setF({ ...f, [k]: v });
   const entree = k => e => set(k, e.target.value);
   const bascule = n => set('annees', f.annees.includes(n) ? f.annees.filter(x => x !== n) : [...f.annees, n]);
@@ -817,11 +827,12 @@ function FormSponso({ ctx, f, setF }) {
     e.preventDefault();
     act(async () => {
       const { id, ecole, ...champs } = f;
-      // L'école seulement quand le réseau en compte plusieurs (le choix est alors à l'écran) ; '' : toutes les écoles
-      const row = normaliserSponsorise(plusieurs ? { ...champs, ecole } : champs);
+      // L'école seulement quand le réseau en compte plusieurs (le choix est alors à l'écran) ; '' : toutes les écoles.
+      // L'administration d'une école : toujours la sienne.
+      const row = normaliserSponsorise(!reseau ? { ...champs, ecole: sienne } : plusieurs ? { ...champs, ecole } : champs);
       const refus = refusSponsorise(row);
       if (refus) throw new Error(refus);
-      if (id) await store.update('sponsorises', id, row); else await store.insert('sponsorises', { ...row, actif: true });
+      if (id) await store.update('sponsorises', id, row, reseau ? undefined : { exiger: RIEN_SPONSO }); else await store.insert('sponsorises', { ...row, actif: true });
       setF(null);
       toast(id ? 'Carte modifiée.' : 'Carte enregistrée : elle paraît dans Match entre ses dates.', 'win');
     });
@@ -834,7 +845,8 @@ function FormSponso({ ctx, f, setF }) {
     <${Field} label="Texte" hint="280 caractères au plus. Des faits simples : ce que l’entreprise propose, pour qui, à quel prix s’il y en a un."><textarea id="sp-texte" rows="3" maxlength="280" value=${f.texte} onInput=${entree('texte')}></textarea><//>
     <div class="grid2"><${Field} label="Lien" hint="« Voir » l’ouvre dans un nouvel onglet."><input id="sp-lien" dir="ltr" type="url" maxlength="500" value=${f.lien} onInput=${entree('lien')} placeholder="https://…"/><//>
       <${Field} label="Site pour le logo (facultatif)" hint="Son icône sert de logo ; sinon, les initiales."><input id="sp-domaine" dir="ltr" maxlength="120" value=${f.domaine} onInput=${entree('domaine')} placeholder="exemple.ma"/><//></div>
-    ${plusieurs ? html`<${Field} label="École" hint="Une carte pour toutes les écoles paraît dans chaque réseau."><select id="sp-ecole" value=${f.ecole || ''} onChange=${entree('ecole')}><option value="">Toutes les écoles</option>${ctx.ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select><//>` : null}
+    ${!reseau ? html`<div class="field"><span class="field-label">École</span><span class="sp-ecole-fixe" id="sp-ecole-fixe" translate="no">${ctx.nomEcole?.(sienne) || sienne}</span><span class="field-hint">Elle paraît dans le réseau de ton école seulement.</span></div>`
+      : plusieurs ? html`<${Field} label="École" hint="Une carte pour toutes les écoles paraît dans chaque réseau."><select id="sp-ecole" value=${f.ecole || ''} onChange=${entree('ecole')}><option value="">Toutes les écoles</option>${ctx.ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select><//>` : null}
     <div class="field"><span class="field-label" id="sp-pub-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="sp-pub-l">${SPONSO_PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'sp-pub-' + k} aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>
     <div class="field"><span class="field-label" id="sp-annees-l">Années</span><div id="sp-annees" class="chips" role="group" aria-labelledby="sp-annees-l">${SPONSO_ANNEES.map(([n, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(n) ? ' on' : '')} aria-pressed=${f.annees.includes(n)} onClick=${() => bascule(n)}>${l}</button>`)}</div><span class="field-hint">Aucune année choisie = toutes les années.</span></div>
     <div class="field"><span class="field-label" id="sp-fil-l">Filières</span><div role="group" aria-labelledby="sp-fil-l"><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/></div><span class="field-hint">Aucune sélection = toutes les filières. Une ancienne appellation suit son parcours.</span></div>
@@ -869,6 +881,9 @@ addAR({
   'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
   'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
   'Une carte pour toutes les écoles paraît dans chaque réseau.': 'تظهر البطاقة الموجّهة إلى كل المدارس في شبكة كل مدرسة.',
+  // L'administration d'une école : ses cartes seulement
+  'Seule l’administration du réseau la modifie.': 'وحدها إدارة الشبكة تعدّلها.', 'Elle paraît dans le réseau de ton école seulement.': 'تظهر في شبكة مدرستك فقط.',
+  'Rien n’a changé : cette carte n’est plus gérée par ton école.': 'لم يتغيّر شيء: لم تعد مدرستك تدير هذه البطاقة.',
   'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).': 'قبل استيراد لائحة هذه المدرسة، أضفها إلى ملف CNDP: ضع علامة على الخانة في تتبّعها (قسم المدارس).',
   'Ouvrir Écoles': 'فتح المدارس',
   'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.': 'هنا، النصوص والملصقات والأرقام هي دائمًا تلك الخاصة بشبكة ENSAM مكناس، مهما كانت المدرسة المختارة.',
@@ -903,6 +918,9 @@ injectCSS('admin', `
 .cs-ecole-tag { display: inline-flex; align-items: center; gap: .25rem; margin-inline-start: .3rem; vertical-align: middle; font-weight: 600; }
 .cs-note-ecole { margin: 0; }
 .sp-ecole { font-weight: 600; }
+/* L'administration d'une école : son école écrite dans le formulaire, et la ligne d'une carte qu'elle lit seulement */
+.sp-ecole-fixe { font-weight: 600; overflow-wrap: anywhere; }
+.sp-lecture { align-self: center; margin-inline-end: .3rem; }
 .sp-form { margin: .4rem 0 .8rem; padding: .9rem 1rem; border-radius: var(--r-lg); background: var(--surface-2); }
 .sp-form h3 { margin: 0; font-size: var(--fs-4); }
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }

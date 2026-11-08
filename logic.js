@@ -927,6 +927,9 @@ export const GUIDE_SECTIONS = [
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';
 export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// L'administration du réseau : celle de l'ENSAM Meknès, qui voit et écrit pour toutes les écoles (super_admin() dans la
+// base) ; l'administration d'une autre école n'agit que dans la sienne
+export const adminDuReseau = me => me?.role === 'admin' && ecoleDe(me) === ECOLE_DEFAUT;
 // Ce qu'un membre lit : ce qui est de son école, comme la règle « reseau de l'ecole » de la base (la démo, elle, a tout) ;
 // l'administration lit tout
 export const deMonEcole = (lignes, me) => (me?.role === 'admin' ? (lignes || []) : (lignes || []).filter(x => ecoleDe(x) === ecoleDe(me)));
@@ -1845,6 +1848,11 @@ export function sponsorisePour(s, me, now = Date.now(), saison = seasonOf(new Da
   if (s.annees?.length && !s.annees.map(Number).includes(niveauOf(me, saison))) return false;
   return filiereMatch(s.filieres, me.filiere);
 }
+// La console (comme « lecture membres », « modif admin » et « suppression admin » dans la base) : l'administration du réseau
+// lit et gère toutes les cartes ; celle d'une école lit les cartes de son école et celles de toutes les écoles (sans école),
+// et ne gère que celles de son école
+export const sponsoriseLisible = (s, me) => !!s && me?.role === 'admin' && (adminDuReseau(me) || !s.ecole || s.ecole === ecoleDe(me));
+export const sponsoriseModifiable = (s, me) => !!s && me?.role === 'admin' && (adminDuReseau(me) || (!!s.ecole && s.ecole === ecoleDe(me)));
 // Les cartes de ce membre, dans un ordre stable (la plus ancienne d'abord)
 export const sponsorisesPour = (liste, me, now = Date.now(), saison = seasonOf(new Date(now))) => (liste || []).filter(s => sponsorisePour(s, me, now, saison))
   .sort((a, b) => tms(a.created_at) - tms(b.created_at) || String(a.id).localeCompare(String(b.id)));

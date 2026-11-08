@@ -10517,3 +10517,99 @@ async function verifierReplis(s, langue, dep) {
   await s.page.waitForSelector('.toast:has-text("Ta demande est de nouveau ouverte.")');
   assert.deepEqual(await s.page.evaluate(() => { const d = window.__demo.data.demandes.find(x => x.id === 'dm-dep'); return [d.status, d.laureat_id]; }), ['ouverte', null]);
 }
+
+// Cartes sponsorisées, administration d'une école (pas celle du réseau) : comme la base (« lecture membres », « ecriture
+// admin », « modif admin », protect_sponsorise), elle lit les cartes de son école et celles de toutes les écoles, et ne gère
+// que celles de son école. Une carte pour toutes les écoles se lit seulement (ses chiffres, son bilan) ; le formulaire dit
+// que la carte est pour son école, sans choix « Toutes les écoles ». Une carte passée à toutes les écoles juste avant son
+// geste ne s'arrête pas d'ici (la base ne touche aucune ligne) : c'est dit, et rien ne change. L'administration du réseau
+// garde tout comme avant.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`Sponsorisés, administration d’une école : ses cartes se gèrent, celles de toutes les écoles se lisent seulement ; une nouvelle carte est pour son école (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const T = ar ? { toutes: 'كل المدارس', lecture: 'وحدها إدارة الشبكة تعدّلها.', ici: 'تظهر في شبكة مدرستك فقط.', rien: 'لم يتغيّر شيء: لم تعد مدرستك تدير هذه البطاقة.', enregistree: 'حُفظت البطاقة' }
+      : { toutes: 'Toutes les écoles', lecture: 'Seule l’administration du réseau la modifie.', ici: 'Elle paraît dans le réseau de ton école seulement.', rien: 'Rien n’a changé : cette carte n’est plus gérée par ton école.', enregistree: 'Carte enregistrée' };
+    const s = await ouvrir({ largeur, langue });
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    await s.comme('Admin');
+    const ie = await deuxiemeEcole(s);
+    // L'administration du réseau a écrit une carte pour l'ENSAM Meknès et une pour l'Institut exemple ; puis l'admin de la
+    // démo devient celle de l'Institut exemple
+    await s.page.evaluate(ie => {
+      const d = window.__demo, base = d.data.sponsorises[0], t = Date.now();
+      d.data.sponsorises = [...d.data.sponsorises,
+        { ...base, id: 'sp-mek', titre: 'Stage d’été à l’atelier de Meknès', ecole: 'ensam-meknes', created_at: new Date(t - 2e5).toISOString() },
+        { ...base, id: 'sp-ie', titre: 'Visite d’usine pour l’Institut', ecole: ie, created_at: new Date(t - 1e5).toISOString() }];
+      const moi = { ...d.me, ecole: ie };
+      d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+    }, ie);
+    await s.aller('admin/sponsorises'); await s.page.waitForSelector('.sp-ligne[data-id="sp-ie"]');
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    const ligne = id => s.page.locator(`.sp-ligne[data-id="${id}"]`);
+    assert.equal(await ligne('sp-mek').count(), 0, 'la carte d’une autre école ne se lit pas');
+    // La carte de toutes les écoles : ses chiffres et son bilan, ni « Modifier » ni « Arrêter »
+    const toutes = ligne('sp-demo-0001');
+    assert.equal(await toutes.locator('.sp-ecole').innerText(), T.toutes);
+    assert.equal(await toutes.locator('.sp-modifier, .sp-basculer').count(), 0);
+    assert.equal(await toutes.locator('.sp-bilan').count(), 1);
+    assert.equal(await toutes.locator('.sp-lecture').innerText(), T.lecture);
+    // La carte de son école se gère
+    assert.equal(await ligne('sp-ie').locator('.sp-modifier, .sp-basculer').count(), 2);
+    assert.equal(await ligne('sp-ie').locator('.sp-lecture').count(), 0);
+    await relever('Sponsorisés');
+    // Nouvelle carte : pour son école, dit en clair, sans choix « Toutes les écoles »
+    await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+    const form = s.page.locator('.sp-form');
+    assert.equal(await s.page.locator('#sp-ecole').count(), 0, 'pas de choix d’école');
+    assert.equal(await s.page.locator('#sp-ecole-fixe').innerText(), 'Institut exemple');
+    assert.ok((await form.innerText()).includes(T.ici));
+    assert.ok(!(await form.innerText()).includes(T.toutes));
+    await relever('nouvelle carte');
+    await s.page.fill('#sp-ent', 'Atelier Exemple');
+    await s.page.fill('#sp-titre', 'Préparer son départ en Allemagne');
+    await s.page.fill('#sp-texte', 'Visa, logement et premiers pas : un accompagnement pour les élèves ingénieurs.');
+    await s.page.fill('#sp-lien', 'https://example.org/depart');
+    await s.page.click('#sp-enregistrer');
+    await s.page.waitForSelector(`.toast:has-text("${T.enregistree}")`);
+    const nouvelle = await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.entreprise === 'Atelier Exemple'));
+    assert.equal(nouvelle.ecole, ie, 'enregistrée pour son école');
+    assert.equal(await ligne(nouvelle.id).locator('.sp-ecole').innerText(), 'Institut exemple');
+    assert.equal(await ligne(nouvelle.id).locator('.sp-modifier, .sp-basculer').count(), 2);
+    // L'administration du réseau passe la carte de l'Institut à toutes les écoles juste avant « Arrêter » : la base ne
+    // touche aucune ligne ; c'est dit, la carte reste en cours, et elle se lit désormais seulement
+    await s.page.evaluate(() => {
+      const d = window.__demo, u = d.update.bind(d);
+      d.update = (t, id, patch, o) => { d.update = u; if (t === 'sponsorises') d.data.sponsorises = d.data.sponsorises.map(x => (x.id === id ? { ...x, ecole: null } : x)); return u(t, id, patch, o); };
+    });
+    await ligne('sp-ie').locator('.sp-basculer').click();
+    await s.page.waitForSelector(`.toast:has-text("${T.rien}")`);
+    assert.equal(await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.id === 'sp-ie').actif), true, 'toujours en cours');
+    await ligne('sp-ie').locator('.sp-lecture').waitFor();
+    assert.equal(await ligne('sp-ie').locator('.sp-modifier, .sp-basculer').count(), 0);
+    assert.equal(await ligne('sp-ie').locator('.sp-ecole').innerText(), T.toutes);
+    await relever('carte passée à toutes les écoles');
+
+    // L'administration du réseau : comme avant, toutes les cartes se gèrent, et le formulaire offre « Toutes les écoles »
+    await s.page.evaluate(() => {
+      const d = window.__demo, moi = { ...d.me, ecole: 'ensam-meknes' };
+      d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+    });
+    await ligne('sp-mek').waitFor();
+    assert.equal(await s.page.locator('.sp-lecture').count(), 0);
+    const n = await s.page.locator('.sp-ligne').count();
+    assert.equal(n, 4, 'la carte de la démo, celles de l’ENSAM Meknès et de l’Institut, la nouvelle');
+    assert.equal(await s.page.locator('.sp-ligne .sp-modifier').count(), n);
+    assert.equal(await s.page.locator('.sp-ligne .sp-basculer').count(), n);
+    await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+    assert.deepEqual(await s.page.locator('#sp-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', ie]);
+    assert.equal(await s.page.locator('#sp-ecole-fixe').count(), 0);
+    await relever('administration du réseau');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
