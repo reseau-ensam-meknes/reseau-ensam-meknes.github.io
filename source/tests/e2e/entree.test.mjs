@@ -2699,3 +2699,60 @@ test('école gardée par un ancien lien, puis un lien d’invitation sans école
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// La carte de l'ambassadeur ne saute pas quand les chiffres du mois arrivent de la base (chiffres_ma_promo, retenus ici
+// jusqu'au lacher()) : leur place est gardée, sans un chiffre ni un mot qui pourrait être faux (des formes vides), et
+// « Envoyer sur WhatsApp » (#amb-wa), comme le bas de la carte, restent où ils sont. reponse : 'ok' (la base du faux
+// Supabase : 12 inscrits, +3 ce mois-ci…), d'autres chiffres, 'null' (rien) ou 'erreur'
+const AMB_ACCEPTE = () => { const now = new Date().toISOString(); return [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'accepte', par: 'auto', propose_at: now, repondu_at: now, created_at: now }]; };
+const posCarte = page => page.evaluate(() => {
+  const c = document.getElementById('amb-carte').getBoundingClientRect(), w = document.getElementById('amb-wa').getBoundingClientRect();
+  return { wa: Math.round(w.top - c.top), haut: Math.round(c.height) };
+});
+async function carteRetenue({ largeur = 390, langue = 'fr', reponse = 'ok' } = {}) {
+  ambFaux = AMB_ACCEPTE(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let lacher; const tenue = new Promise(ok => { lacher = ok; });
+  const repondre = r => (reponse === 'ok' ? r.continue() : reponse === 'erreur' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"x"}' })
+    : r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reponse === 'null' ? null : reponse) }));
+  const m = await membreDe({ largeur, langue, avant: ctx => ctx.route('**/rest/v1/rpc/chiffres_ma_promo', r => tenue.then(() => repondre(r)).catch(() => {})) });
+  await m.page.waitForSelector('#amb-carte #amb-wa', { timeout: 15000 });
+  return { ...m, lacher };
+}
+const UN_ZERO = { inscrits: 1, nouveaux: 0, demandes: 0, demandes_mois: 0, stages: 1, stages_mois: 0 };
+
+for (const [largeur, langue] of [[390, 'fr'], [390, 'ar'], [360, 'fr']]) test(`carte de l’ambassadeur (${largeur} px, ${langue}) : les chiffres du mois arrivent sans rien faire bouger, leur place gardée sans un chiffre ; un, zéro : pareil`, async () => {
+  for (const reponse of ['ok', UN_ZERO]) {
+    const quoi = JSON.stringify(reponse);
+    site.vider();
+    const m = await carteRetenue({ largeur, langue, reponse });
+    const avant = await posCarte(m.page);
+    // En attendant la base : pas un chiffre, pas un mot (« inscrits » serait faux pour un seul)
+    if (langue === 'fr') assert.doesNotMatch(await m.page.locator('#amb-carte').innerText(), /\d\s*(inscrit|demande|stage)/, quoi);
+    assert.deepEqual(await m.page.$$eval('#amb-carte .amb-grille li', l => l.map(x => x.innerText.trim()).filter(Boolean)), [], `${quoi} : rien d’écrit dans les cases qui attendent`);
+    m.lacher();
+    await m.page.waitForSelector('#amb-carte .amb-chiffres', { timeout: 10000 });
+    assert.deepEqual(await posCarte(m.page), avant, `${quoi} : « Envoyer sur WhatsApp » et le bas de la carte restent où ils sont`);
+    const nombres = await m.page.$$eval('#amb-carte .amb-chiffres b', bs => bs.map(b => b.textContent));
+    assert.deepEqual(nombres, reponse === 'ok' ? ['12', '2', '4'] : ['1', '0', '1'], quoi);
+    const t = await m.page.locator('#amb-carte').innerText();
+    if (langue === 'fr') assert.match(t, reponse === 'ok' ? /12\s*inscrits\s*\+3 ce mois-ci[\s\S]*2\s*demandes pourvues[\s\S]*4\s*stages et emplois trouvés/ : /1\s*inscrit\s+0\s*demande pourvue\s+1\s*stage ou emploi trouvé/);
+    else assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /inscrit|demande|stage|mois|En /.test(x))), []);
+    assert.doesNotMatch(t, /\binscrits?\s+inscrits?\b|pourvues?\s+demandes?/, `${quoi} : un seul mot par chiffre à l’écran`);
+    assert.deepEqual(m.erreurs, [], quoi);
+    await m.ctx.close();
+  }
+});
+
+test('carte de l’ambassadeur : la base ne rend pas de chiffres (erreur, rien) : pas de case vide qui reste', async () => {
+  for (const reponse of ['erreur', 'null']) {
+    site.vider();
+    const m = await carteRetenue({ reponse });
+    m.lacher();
+    await m.page.waitForFunction(() => !document.querySelector('#amb-carte [aria-busy="true"]'), null, { timeout: 10000 });
+    assert.equal(await m.page.locator('#amb-carte .amb-mois, #amb-carte .amb-chiffres, #amb-carte .amb-bloc ul.amb-grille').count(), 0, reponse);
+    assert.deepEqual(await m.page.$$eval('#amb-carte > .amb-bloc > .amb-sous', l => l.map(x => x.textContent)), ['Le lien de ta promo', 'Réussites à partager'], `${reponse} : le lien de la promo et les réussites, rien d’autre`);
+    assert.ok(await m.page.isVisible('#amb-wa'));
+    assert.deepEqual(m.erreurs, [], reponse);
+    await m.ctx.close();
+  }
+});
