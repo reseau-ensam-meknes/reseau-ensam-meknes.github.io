@@ -14,6 +14,11 @@ import { test } from './partie.mjs';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const saison = (d = new Date()) => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1);
+// S vaut pour tout le fichier (les promos des liens, des visiteurs et des inscrits). Lancé dans les dix dernières minutes d'une
+// saison (le 31 août au soir), le fichier attend la nouvelle : sinon le site changerait de saison en route, et la promo de 5A
+// des liens deviendrait celle des jeunes diplômés. Le fichier dure bien moins (3 à 4 minutes en entier).
+const finSaison = new Date(saison() + 1, 8, 1) - Date.now();
+if (finSaison < 6e5) await new Promise(ok => setTimeout(ok, finSaison + 500));
 const S = saison();
 const OFFRE = '3f2b8c1e-9a7d-4e21-b6c0-5d4e3f2a1b0c', DISPARUE = '11111111-2222-4333-8444-555555555555', INCONNUE = '99999999-2222-4333-8444-555555555555';
 const AUTEUR = '00000000-0000-4000-8000-0000000000b2';
