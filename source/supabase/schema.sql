@@ -412,6 +412,13 @@ create or replace function public.protect_placement() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
+  -- L'administration d'une école : la demande citée est celle de l'étudiant recruté (comme pour un lauréat, plus bas) ;
+  -- confirmé, le recrutement pourvoirait sinon la demande d'un autre membre (demande_reussie). Celle du réseau : comme avant.
+  if auth.uid() is not null and new.demande_id is not null and public.is_admin() and not public.super_admin()
+     and (tg_op = 'INSERT' or new.demande_id is distinct from old.demande_id or new.student_id is distinct from old.student_id)
+     and not exists (select 1 from public.demandes d where d.id = new.demande_id and d.auteur_id = new.student_id) then
+    raise exception 'Cette demande n’est pas celle de cet étudiant.';
+  end if;
   if tg_op = 'INSERT' then
     if auth.uid() is null then return new; end if;
     if public.is_admin() then
@@ -4176,6 +4183,13 @@ begin
   -- Le lauréat du match n'existe plus (son compte supprimé) : la demande reste à son auteur, qui la rouvre ou la ferme
   if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then
+    -- L'administration d'une école : l'aide retenue est une aide de cette demande. Une aide d'une autre demande (d'une
+    -- autre école) serait close à la fin de celle-ci (suite_demande). Celle du réseau : comme avant.
+    if auth.uid() is not null and new.proposition_id is not null and not public.super_admin()
+       and (tg_op = 'INSERT' or new.proposition_id is distinct from old.proposition_id)
+       and not exists (select 1 from public.propositions x where x.id = new.proposition_id and x.demande_id = new.id) then
+      raise exception 'Cette aide n’est pas une aide de cette demande.';
+    end if;
     if tg_op = 'UPDATE' then new.updated_at := now(); end if;
     return new;
   end if;
@@ -6580,12 +6594,15 @@ begin
 end $$;
 revoke all on function public.garde_ecole() from public, anon, authenticated;
 
+-- La demande d'un recrutement aussi : confirmé, il la pourvoit (demande_reussie) ; une demande d'une autre école était
+-- pourvue (et ses aides closes) par un recrutement de celle-ci. Un lauréat ne cite que la demande en match avec lui,
+-- déjà de son école (protect_placement).
 do $$
 declare r record;
 begin
   for r in select * from (values
     ('mentorships', array['student_id:profiles','mentor_id:profiles']), ('relectures_cv', array['student_id:profiles','reviewer_id:profiles']),
-    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers']),
+    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers','demande_id:demandes']),
     ('demandes_contact', array['cible_id:profiles']), ('match_choix', array['cible_profil:profiles','cible_offre:offers']),
     ('propositions', array['demande_id:demandes']), ('reponses_demandes', array['demande_id:demandes']),
     ('applications', array['offer_id:offers']), ('messages', array['dest_id:profiles']), ('comments', array['offer_id:offers']),
@@ -7880,16 +7897,27 @@ end $$;
 -- ne met personne d'une autre école à la place d'un auteur, d'un organisateur, d'un participant… : les règles le lui
 -- permettent (« ou l'administration »), et garde_ecole ne vérifie que les liens vers une autre ligne. Une personne
 -- déjà là (un événement de son école publié par l'administration du réseau) reste. Pour un membre (ces colonnes sont
--- les siennes) et pour l'administration du réseau, rien à vérifier. Argument : les colonnes, des ids de profiles.
+-- les siennes) et pour l'administration du réseau, rien à vérifier. Arguments : les colonnes, des ids de profiles, ou
+-- « colonne:table » pour une ligne d'une table qui a une école (l'offre d'un entretien, le recrutement d'un avis).
+-- Le lauréat d'une aide proposée : sans cette garde, l'administration de Casablanca mettait un lauréat de Meknès dans une
+-- aide acceptée, et l'étudiant de Casablanca et lui lisaient leurs coordonnées (en_relation). L'auteur d'un entretien ou
+-- d'un avis de stage : il le lirait, et son propre avis sur cette entreprise et cette saison serait refusé. « Invité par »,
+-- « traité par » : personne d'une autre école non plus.
 create or replace function public.garde_admin_ecole() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare i int; v text;
+declare i int; c text; t text; v text; ok boolean;
 begin
   if auth.uid() is null or not public.is_admin() or public.super_admin() then return new; end if;
   for i in 0 .. tg_nargs - 1 loop
-    v := to_jsonb(new) ->> tg_argv[i];
-    continue when v is null or (tg_op = 'UPDATE' and v is not distinct from to_jsonb(old) ->> tg_argv[i]);
-    if not public.de_mon_ecole(v::uuid) then
+    c := split_part(tg_argv[i], ':', 1); t := nullif(split_part(tg_argv[i], ':', 2), '');
+    v := to_jsonb(new) ->> c;
+    continue when v is null or (tg_op = 'UPDATE' and v is not distinct from to_jsonb(old) ->> c);
+    if t is null then
+      ok := public.de_mon_ecole(v::uuid);
+    else
+      execute format('select exists (select 1 from public.%I x where x.id = $1 and x.ecole = public.mon_ecole())', t) into ok using v::uuid;
+    end if;
+    if not ok then
       raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501';
     end if;
   end loop;
@@ -7904,7 +7932,9 @@ begin
     ('offers', array['author_id']), ('questions', array['author_id']), ('demandes', array['auteur_id','laureat_id']),
     ('startups', array['fondateur_id']), ('annonces', array['author_id']), ('evenements', array['author_id']),
     ('cafes', array['organisateur_id']), ('cafe_participants', array['user_id']), ('evenement_participants', array['user_id']),
-    ('verifications_pairs', array['verificateur_id'])
+    ('verifications_pairs', array['verificateur_id']), ('propositions', array['laureat_id']),
+    ('entretiens', array['author_id','offer_id:offers']), ('avis_stage', array['author_id','placement_id:placements']),
+    ('profiles', array['invite_par']), ('signalements', array['traite_par'])
   ) as x(t, a) loop
     -- Après a0_ecole_du_parent et aa_garde_ecole (ordre alphabétique), avant les autres déclencheurs
     execute format('drop trigger if exists ab_garde_admin_ecole on public.%I', r.t);
