@@ -5861,7 +5861,7 @@ test('écran chargé à la demande sans réseau : la forme de la page, puis un m
 
 test('écran chargé à la demande, rouvert pendant que son code arrive : il se pose quand même', async () => {
   // Le Suivi ouvert puis quitté avant l'arrivée de son code (dashboard.js), puis rouvert dans un onglet en arrière-plan
-  // (requestAnimationFrame arrêté : l'effet de la page passe 100 ms après elle). Le code arrive entre les deux, 40 ms après
+  // (requestAnimationFrame arrêté : l'effet de la page passe 100 ms après elle). Le code arrive entre les deux, juste après
   // l'affichage : la page le croyait déjà posé et gardait sa forme d'attente (« Chargement… ») jusqu'au geste suivant.
   const s = await ouvrir({ largeur: 390 });
   // D'abord la proposition d'ambassadeur (1,2 s après l'ouverture, une fois par visite) : elle redessine toute l'application,
@@ -5877,10 +5877,12 @@ test('écran chargé à la demande, rouvert pendant que son code arrive : il se 
   await s.page.waitForFunction(() => window.__suiviArrete);
   await s.page.evaluate(() => { location.hash = 'accueil'; }); await s.page.waitForSelector('.hello');
   await s.page.waitForTimeout(300);
-  // Rouvert en arrière-plan : le code est lâché 40 ms après l'affichage de la deuxième page
+  // Rouvert en arrière-plan : le code est lâché dès l'affichage de la deuxième page, dans le rappel même de l'observateur.
+  // Sa fin d'évaluation et l'import ne prennent que des microtâches : il est posé avant toute minuterie, donc avant l'effet,
+  // même sur une machine lente (une minuterie de 40 ms pouvait passer après l'effet : l'essai passait alors sans la correction)
   await s.page.evaluate(() => {
     window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {};
-    new MutationObserver((_, mo) => { if (document.querySelector('.page-attente')) { mo.disconnect(); setTimeout(window.__lacherSuivi, 40); } }).observe(document.body, { childList: true, subtree: true });
+    new MutationObserver((_, mo) => { if (document.querySelector('.page-attente')) { mo.disconnect(); window.__lacherSuivi(); } }).observe(document.body, { childList: true, subtree: true });
     location.hash = 'suivi';
   });
   // Le Suivi lui-même (l'accueil aussi est une .page : il ne doit pas passer pour lui)
