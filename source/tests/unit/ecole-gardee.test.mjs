@@ -91,3 +91,38 @@ test('l’adresse gardée pour Safari (iPhone) et « Ouvrir dans Chrome » (Andr
   assert.doesNotMatch(meknes, /ecole/);
   assert.equal(arriver(meknes).ecole, null);
 });
+
+// L'école du compte à l'inscription (ecoleRetenue) : celle du lien que la page suit. Un lien d'invitation sans école (?promo=,
+// &de=) retient l'ENSAM Meknès, à part : ni l'école gardée, ni ce qui part (argsEcole), ni les adresses pour Safari et Chrome
+// ne la disent (jamais ecole=ensam-meknes). Une simple visite la garde, un lien qui dit son école la remplace ; sans lien,
+// rien (l'école que le compte a reçue avec sa demande de code) ; l'inscription finie, oubliée avec le reste.
+test('un lien d’invitation sans école retient l’ENSAM Meknès pour l’inscription (ecoleRetenue), sans rien dire de plus à ce qui part', () => {
+  assert.equal(E.ecoleRetenue(), null, 'sans lien : rien');
+  for (const adresse of ['/?promo=2019', '/?de=nadia219', '/?promo=2019&lang=ar&de=nadia219#offre/abc', '/?de=x']) {
+    for (const avant of [null, 'ensam-casa', 'ensa-fes']) {
+      stockage.clear(); if (avant) stockage.set(ECOLE, avant);
+      arriver(adresse);
+      assert.deepEqual([E.ecoleRetenue(), E.ecoleInvitee(), E.argsEcole()], ['ensam-meknes', null, {}], `${avant} puis ${adresse}`);
+    }
+  }
+  arriver('/'); arriver('/?mode=connexion');
+  assert.equal(E.ecoleRetenue(), 'ensam-meknes', 'une simple visite la garde');
+  assert.equal(arriver('/?ecole=ensa-fes').ecole, 'ensa-fes');
+  assert.deepEqual([E.ecoleRetenue(), stockage.has('ensam-invite-meknes')], ['ensa-fes', false], 'un lien qui dit son école la remplace');
+  arriver('/?promo=2019'); assert.equal(E.ecoleRetenue(), 'ensam-meknes');
+  arriver('/?promo=2019&ecole=ensam-casa'); assert.equal(E.ecoleRetenue(), 'ensam-casa');
+  arriver('/?ecole=ensam-meknes'); assert.equal(E.ecoleRetenue(), 'ensam-meknes', 'le lien de l’ENSAM Meknès qui la dit');
+  arriver('/?promo=2019'); E.oublierInvitation();
+  assert.deepEqual([E.ecoleRetenue(), [...stockage.keys()].filter(k => k.startsWith('ensam-invite'))], [null, []], 'l’inscription finie');
+  // Ce que le site fabrique pour emporter le contexte (fait de ce qui est gardé) : sans école ; relu de l'autre côté (rien de
+  // gardé), l'ENSAM Meknès revient par le lien d'invitation qu'il emporte
+  stockage.clear(); arriver('/?promo=2019&de=nadia219');
+  const contexte = { promo: E.promoInvitee(), de: 'nadia219', ecole: E.ecoleInvitee(), role: 'laureat', mode: 'inscription' };
+  const safari = R.adresseAvecContexte('https://r.io/', contexte, 'fr');
+  const chrome = A.lienChrome('https://r.io/', '', { lang: 'fr', contexte, ici: true });
+  for (const x of [safari, decodeURIComponent(chrome)]) assert.doesNotMatch(x, /ecole/, x);
+  for (const adresse of [safari, `https://${chrome.slice('intent://'.length).split('#Intent;')[0]}`, decodeURIComponent(chrome.match(/S\.browser_fallback_url=([^;]+);/)[1])]) {
+    stockage.clear(); arriver(adresse);
+    assert.equal(E.ecoleRetenue(), 'ensam-meknes', adresse);
+  }
+});

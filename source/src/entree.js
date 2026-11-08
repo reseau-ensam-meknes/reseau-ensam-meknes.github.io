@@ -196,6 +196,9 @@ const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'e
 // (ecoleValide, regles-entree.js : la même règle que les liens que le site fabrique et que les pages d'aperçu des promos)
 // Invitation nommée : &de=… est le code du membre qui a envoyé le lien (8 caractères), gardé comme la promo
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
+// Lien d'invitation sans école (?promo=, &de=) : celui de l'ENSAM Meknès, retenu à part pour l'école du compte à l'inscription
+// (ecoleRetenue) ; rien de ce qui part (demandes, adresses que le site fabrique) ne la dit de plus
+const CLE_MEKNES = 'ensam-invite-meknes';
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
@@ -209,7 +212,7 @@ export function lireInvitation() {
   try {
     const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
     if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-    if (e === null) { if (de !== null || promo) ecrire(CLE_ECOLE); } else if (ecoleValide(e)) ecrire(CLE_ECOLE, e);
+    if (e === null) { if (de !== null || promo) { ecrire(CLE_ECOLE); ecrire(CLE_MEKNES, '1'); } } else if (ecoleValide(e)) { ecrire(CLE_ECOLE, e); ecrire(CLE_MEKNES); }
     q.delete('de'); q.delete('ecole');
     if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
     const n = Number(q.get('promo'));
@@ -247,12 +250,15 @@ function reprendreArrivee() {
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+// L'école du lien que la page suit, pour l'école du compte à l'inscription : celle du lien d'une école, l'ENSAM Meknès d'un lien
+// d'invitation sans école ; sans lien, rien (l'école que le compte a reçue avec sa demande de code, sur un autre appareil)
+export const ecoleRetenue = () => ecoleInvitee() || (lire(CLE_MEKNES) ? 'ensam-meknes' : null);
 // L'école de la page d'entrée pour les fonctions publiques (invitation nommée, visages, réussites) : celle du lien d'une
 // école ; sans lien, ou pour l'ENSAM Meknès, rien (la base prend l'ENSAM Meknès)
 export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); adresseIci(null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_MEKNES, null); ecrire(CLE_DE, null); adresseIci(null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 // iPhone, iPad, dans le navigateur d'une application : « Ouvrir dans Safari » (le geste de la carte) ouvre l'adresse affichée,
 // et Safari n'a rien de ce que la page garde ici. L'adresse garde donc ce que « Ouvrir dans Chrome » emporte sur Android
@@ -673,8 +679,10 @@ export function AuthScreen({ store }) {
     attendu(Date.now());
     if (renvoi) { setCode(''); essai.current = ''; const el = document.getElementById('au-code'); if (el) el.value = ''; setMsg({ t: 'Nouveau code envoyé. Seul le dernier code reçu marche.' }); }
   });
+  // À l'inscription, l'école du lien que la page suit : le compte né sur le lien d'une autre école ne la garde plus (store.js)
   const verifier = v => { essai.current = v; run(async s => {
-    try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
+    const ins = origine === 'inscription';
+    try { await s.verifierCode(email.trim(), v, ins ? meta() : null, ins ? ecoleRetenue() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
     noterAttente(null); marquerMembre(); setEntre(true); apresConnexion();
   }); };
   const saisir = e => {

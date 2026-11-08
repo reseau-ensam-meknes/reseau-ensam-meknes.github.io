@@ -159,6 +159,7 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
+const CLE_MEKNES = 'ensam-invite-meknes';
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
@@ -167,7 +168,7 @@ export function lireInvitation() {
   try {
     const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
     if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-    if (e === null) { if (de !== null || promo) ecrire(CLE_ECOLE); } else if (ecoleValide(e)) ecrire(CLE_ECOLE, e);
+    if (e === null) { if (de !== null || promo) { ecrire(CLE_ECOLE); ecrire(CLE_MEKNES, '1'); } } else if (ecoleValide(e)) { ecrire(CLE_ECOLE, e); ecrire(CLE_MEKNES); }
     q.delete('de'); q.delete('ecole');
     if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
     const n = Number(q.get('promo'));
@@ -199,10 +200,11 @@ function reprendreArrivee() {
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+export const ecoleRetenue = () => ecoleInvitee() || (lire(CLE_MEKNES) ? 'ensam-meknes' : null);
 export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); adresseIci(null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_MEKNES, null); ecrire(CLE_DE, null); adresseIci(null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 function adresseIci(mode) {
   if (APPLI_ICI !== 'ios' || mode === 'nouveau') return;
@@ -498,7 +500,8 @@ export function AuthScreen({ store }) {
     if (renvoi) { setCode(''); essai.current = ''; const el = document.getElementById('au-code'); if (el) el.value = ''; setMsg({ t: 'Nouveau code envoyé. Seul le dernier code reçu marche.' }); }
   });
   const verifier = v => { essai.current = v; run(async s => {
-    try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
+    const ins = origine === 'inscription';
+    try { await s.verifierCode(email.trim(), v, ins ? meta() : null, ins ? ecoleRetenue() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
     noterAttente(null); marquerMembre(); setEntre(true); apresConnexion();
   }); };
   const saisir = e => {

@@ -20,7 +20,7 @@ import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
-import { oublierInvitation, ecoleInvitee } from './invitation.js';
+import { oublierInvitation, ecoleRetenue } from './invitation.js';
 import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
@@ -623,9 +623,10 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   // Inscription courte : rôle, nom, promo, filière (et, pour un lauréat, s'il peut aider) ; le reste est replié sous « Facultatif »
   const [details, setDetails] = useState(!onboarding);
   const plus = !onboarding || details;
-  // L'école de l'inscription : celle du lien gardé sur cet appareil, sinon celle que le compte a reçue avec la demande de code
-  // (fini sur un autre appareil, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
-  const ecoleIns = onboarding ? [ecoleInvitee(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
+  // L'école de l'inscription : celle du lien que la page suit, gardé sur cet appareil (l'ENSAM Meknès d'un lien d'invitation
+  // sans école aussi : ecoleRetenue), avant celle que le compte a reçue avec une demande de code (fini sur un autre appareil,
+  // sans lien, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
+  const ecoleIns = onboarding ? [ecoleRetenue(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
   const autreEcole = ecoleIns && ecoleIns !== 'ensam-meknes' ? ecoleIns : null;
   // Email de l'école obligatoire pour les étudiants : le réglage de l'administration (ENSAM Meknès) ; pour une autre école,
   // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. À l'inscription, l'école de l'inscription : sa

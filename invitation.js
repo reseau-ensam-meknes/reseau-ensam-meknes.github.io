@@ -8,7 +8,7 @@ import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPr
 import { roleDePromo, promoValide as valide } from './regles-entree.js';
 
 // Lire le lien, garder la promo et le rôle choisi : la page d'entrée s'en charge (elle s'affiche avant le reste du site)
-export { lireInvitation, promoInvitee, ecoleInvitee, oublierInvitation, retenirRole, roleRetenu } from './entree.js';
+export { lireInvitation, promoInvitee, ecoleInvitee, ecoleRetenue, oublierInvitation, retenirRole, roleRetenu } from './entree.js';
 export { roleDePromo };
 
 // Lien d'une promo : sa petite page d'aperçu (page = true) nomme la promo dans WhatsApp, puis ouvre le site avec ?promo=

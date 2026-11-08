@@ -2904,3 +2904,89 @@ test('lien d’une école ouverte, sa ligne illisible puis relue : ses noms quan
   assert.doesNotMatch(await indice(s.page), /ensam-umi/);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// L'école du compte est celle du lien que la page suit. Un compte né de la demande de code sur le lien d'une autre école
+// (le compte la garde dans ses données), fini plus tard par le lien d'une promo de l'ENSAM Meknès (?promo=, sans école) sur
+// un autre appareil : le profil part sans école et rejoint l'ENSAM Meknès (une école pas encore ouverte ne le bloque plus),
+// et le compte ne dit plus l'autre école (null l'efface) : la dernière étape finie ailleurs, sans lien, va aussi à l'ENSAM
+// Meknès. Un compte de l'ENSAM Meknès, ou une page sans lien : la mise à jour du compte d'avant, à l'octet.
+// ---------------------------------------------------------------------------
+// La base refuse le profil d'une école pas encore ouverte (protect_ecole), et celui-là seulement
+const refusCasa = ctx => ctx.route(/\/sb\/rest\/v1\/profiles(\?|$)/, r => {
+  const c = r.request().method() === 'POST' ? JSON.parse(r.request().postData() || 'null') : null;
+  return (Array.isArray(c) ? c[0] : c)?.ecole === 'ensam-casa'
+    ? r.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', details: null, hint: null, message: FERMEE }) }) : r.continue();
+});
+const profilsEnvoyes = () => site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'POST').map(a => (Array.isArray(a.corps) ? a.corps[0] : a.corps));
+const majsCompte = () => site.appels.filter(a => a.u === '/sb/auth/v1/user' && a.m === 'PUT').map(a => a.corps?.data);
+// La dernière étape finie (l'accueil) ou refusée (« pas encore ouvert ») : ce qui arrive en premier
+const etapeFinie = page => page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb') || document.querySelector('#pf-ferme'), null, { timeout: 15000 });
+// La première demande de code, sur le lien de l'autre école : le compte naît avec son école
+async function commencerPar(slug, email) {
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=' + slug });
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', email); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === email).pop().corps.data.ecole, slug);
+  await s.ctx.close();
+}
+
+for (const autre of [CASA, FES]) test(`compte commencé par le lien de l’${autre.nom} (${autre.ouverte ? 'ouverte' : 'pas encore ouverte'}), puis le lien d’une promo de l’ENSAM Meknès sur un autre appareil : le profil part sans école et l’inscription se finit ; le compte ne dit plus l’autre école (la dernière étape finie ailleurs, sans lien : l’ENSAM Meknès aussi)`, async () => {
+  site.tables.ecoles = [FES, CASA];
+  await commencerPar(autre.slug, 'karim@gmail.com');
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019', avant: refusCasa });
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  await finirLaureat(s.page);
+  await etapeFinie(s.page);
+  assert.equal(await s.page.locator('#pf-ferme').count(), 0, `pas « ${FERMEE} »`);
+  assert.deepEqual(profilsEnvoyes().map(p => 'ecole' in p), [false], `le profil part sans école : ${JSON.stringify(profilsEnvoyes())}`);
+  assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, 'le profil de l’ENSAM Meknès');
+  assert.deepEqual(majsCompte().map(d => ['ecole' in d, d.ecole]), [[true, null]], `le compte ne dit plus l’autre école : ${JSON.stringify(majsCompte())}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le code donné sur la page du lien de la promo, puis la dernière étape finie ailleurs, sur la page sans lien (connexion)
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  await commencerPar(autre.slug, 'karim@gmail.com');
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019' });
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  await s.ctx.close();
+  s = await visiteur({ largeur: 390, hauteur: 844, avant: refusCasa });
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'karim@gmail.com'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code'); await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  await finirLaureat(s.page, { choisir: true });
+  await etapeFinie(s.page);
+  assert.equal(await s.page.locator('#pf-ferme').count(), 0, `pas « ${FERMEE} »`);
+  assert.deepEqual(profilsEnvoyes().map(p => 'ecole' in p), [false], `fini ailleurs, sans école : ${JSON.stringify(profilsEnvoyes())}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('compte de l’ENSAM Meknès (son lien, celui d’une promo, ou aucun), ou page sans lien : à l’inscription, la mise à jour du compte d’avant (sans école), et le profil d’avant', async () => {
+  const CLES = ['consent_at', 'consent_version', 'emails_hebdo', 'langue', 'role_choisi'];
+  for (const query of ['', '?promo=2019', '?ecole=ensam-meknes']) {
+    site.vider(); site.tables.ecoles = [FES, CASA];
+    const s = await visiteur({ largeur: 390, hauteur: 844, query });
+    await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+    assert.deepEqual(majsCompte().map(d => Object.keys(d)), [CLES], query);
+    await finirLaureat(s.page);
+    await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+    assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, query);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Un compte né sur le lien de l'ENSA Fès, l'inscription reprise sur une page sans lien (un autre appareil) : la page ne suit
+  // aucun lien, l'école du compte reste (la mise à jour d'avant), et le profil y va
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  await commencerPar('ensa-fes', 'karim@gmail.com');
+  const s = await visiteur({ largeur: 390, hauteur: 844 });
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.deepEqual(majsCompte().map(d => Object.keys(d)), [CLES]);
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
