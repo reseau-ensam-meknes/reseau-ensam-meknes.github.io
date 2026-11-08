@@ -6543,6 +6543,37 @@ begin
   end loop;
 end $$;
 
+-- L'école d'une ligne qui vient sous un contenu (une réponse, un vote, une réaction, un bravo, une inscription à un café ou
+-- à un événement) ou qui concerne un membre (le recrutement déclaré pour un étudiant, la confirmation d'un lauréat) : celle
+-- de ce contenu ou de ce membre. La valeur par défaut (l'école de qui écrit) se trompait quand l'administration du réseau
+-- écrit dans une autre école, ou quand la base écrit seule : la ligne était de l'ENSAM Meknès, invisible là où elle compte.
+-- Pour un membre, rien ne change (garde_ecole lui refuse déjà le contenu d'une autre école). Argument : « colonne:table » ;
+-- la table citée a un id et une école. Comme pour les ambassadeurs (protect_ambassadeur_insert).
+create or replace function public.ecole_du_parent() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v text; e text;
+begin
+  v := to_jsonb(new) ->> split_part(tg_argv[0], ':', 1);
+  if v is not null then
+    execute format('select ecole from public.%I where id = $1', split_part(tg_argv[0], ':', 2)) into e using v::uuid;
+    if e is not null then new.ecole := e; end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.ecole_du_parent() from public, anon, authenticated;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values ('answers', 'question_id:questions'), ('votes', 'answer_id:answers'), ('reactions', 'offer_id:offers'),
+    ('kudos', 'placement_id:placements'), ('cafe_participants', 'cafe_id:cafes'), ('evenement_participants', 'evenement_id:evenements'),
+    ('placements', 'student_id:profiles'), ('verifications_pairs', 'laureat_id:profiles')) as x(t, a) loop
+    -- Avant les autres déclencheurs (ordre alphabétique) : ils voient déjà la bonne école
+    execute format('drop trigger if exists a0_ecole_du_parent on public.%I', r.t);
+    execute format('create trigger a0_ecole_du_parent before insert on public.%I for each row execute function public.ecole_du_parent(%L)', r.t, r.a);
+  end loop;
+end $$;
+
 -- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
 create or replace function public.taches_minute() returns void
 language plpgsql security definer set search_path = public as $$
