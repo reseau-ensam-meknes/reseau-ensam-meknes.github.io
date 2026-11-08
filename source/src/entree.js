@@ -147,8 +147,15 @@ export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (sce
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
-  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  // Le dessin est attendu d'après pret, pas d'après scene : arrivé entre l'affichage et cet effet (100 ms plus tard quand
+  // l'écran ne se redessine pas, une seconde ou plus dans un onglet en arrière-plan), il ne se posait jamais.
+  useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
+  // Le dessin n'est posé qu'une fois, avec le premier cadrage : un autre (l'accueil passe à gauche en arabe) ne change que le
+  // preserveAspectRatio du svg déjà là. Le remplacer relançait ses animations : la porte se refermait puis se rouvrait, ou,
+  // l'accueil une fois posé (tout en pause), restait fermée, les massifs vides.
+  const [cadre] = useState([align, fit]);
+  useLayoutEffect(() => { ref.current?.querySelector('svg')?.setAttribute('preserveAspectRatio', `${align} ${fit}`); }, [align, fit, pret]);
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
@@ -157,7 +164,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(...cadre) : '' }}></div>`;
 }
 
 // Message d'erreur en dehors d'un formulaire (l'application branche ici ses petits messages en bas de l'écran)

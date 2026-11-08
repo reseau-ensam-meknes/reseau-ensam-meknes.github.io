@@ -53,8 +53,11 @@ function aLaDemande(charger, nom, fichier) {
   };
   function AlaDemande(props) {
     const [etat, setEtat] = useState(Ecran ? 'pret' : 'attente');
+    // D'après son propre état, pas d'après Ecran : le code arrivé entre l'affichage et cet effet (100 ms plus tard quand
+    // l'écran ne se redessine pas, une seconde ou plus dans un onglet en arrière-plan), rien ne redessinait la page, qui
+    // gardait sa forme d'attente jusqu'au geste suivant
     useEffect(() => {
-      if (Ecran) return;
+      if (etat === 'pret') return;
       let fini = false;
       venir().then(() => { if (!fini) setEtat('pret'); }, () => { if (!fini) setEtat('echec'); });
       return () => { fini = true; };
