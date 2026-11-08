@@ -4496,11 +4496,15 @@ grant execute on function public.chiffres_publics(text) to anon, authenticated;
 
 -- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
 -- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
+-- L'offre d'une école dont le réseau n'est pas encore ouvert : null aussi (comme une offre inconnue), sauf pour un membre
+-- de cette école. En plpgsql : la colonne « ecole » des offres n'existe pas encore ici dans une première installation.
 create or replace function public.offre_partagee(p_id uuid) returns jsonb
-language sql stable security definer set search_path = public as $$
-  select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
-  from public.offers o where o.id = p_id;
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
+    from public.offers o join public.ecoles e on e.slug = o.ecole
+    where o.id = p_id and (e.ouverte or o.ecole = public.mon_ecole()));
+end $$;
 revoke all on function public.offre_partagee(uuid) from public;
 grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
