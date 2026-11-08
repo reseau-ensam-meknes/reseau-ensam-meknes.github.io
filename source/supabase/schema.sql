@@ -5978,6 +5978,8 @@ create table if not exists public.sponsorises (
   constraint sponsorises_dates check (fin >= debut)
 );
 create index if not exists sponsorises_en_cours on public.sponsorises (debut, fin) where actif;
+-- L'école de la carte ; sans école : une carte pour toutes les écoles (écrite par l'administration du réseau)
+alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 
 -- Écrite par l'administration seulement ; la base garde l'auteur et la date, et nettoie la carte comme le site
 -- (normaliserSponsorise) : textes sans espaces autour, listes vides = tout le monde, domaine sans « https:// » ni « www. »
@@ -5989,6 +5991,9 @@ begin
   if auth.uid() is not null and not public.is_admin() then
     raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
   end if;
+  -- L'administration d'une école écrit pour son école : une carte sans école (pour toutes les écoles) est de la sienne.
+  -- Les règles refusent ensuite une autre école ; toutes les écoles restent à l'administration du réseau.
+  if auth.uid() is not null and not public.super_admin() then new.ecole := coalesce(new.ecole, public.mon_ecole()); end if;
   if tg_op = 'UPDATE' then
     new.id := old.id; new.created_by := old.created_by; new.created_at := old.created_at;
   else
@@ -6011,11 +6016,19 @@ drop policy if exists "lecture membres" on public.sponsorises;
 drop policy if exists "ecriture admin" on public.sponsorises;
 drop policy if exists "modif admin" on public.sponsorises;
 drop policy if exists "suppression admin" on public.sponsorises;
+-- Chaque école ses cartes (comme « reseau de l'ecole ») : un membre lit les cartes en cours de son école et celles de
+-- toutes les écoles (sans école) ; l'administration d'une école, toutes celles de son école (sa console) et celles de
+-- toutes les écoles, qu'elle n'écrit pas ; l'administration du réseau (super_admin) lit et écrit tout
 create policy "lecture membres" on public.sponsorises for select to authenticated using (
-  public.is_admin() or (actif and current_date between debut and fin));
-create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (public.is_admin());
-create policy "modif admin" on public.sponsorises for update to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "suppression admin" on public.sponsorises for delete to authenticated using (public.is_admin());
+  (public.is_admin() or (actif and current_date between debut and fin))
+  and (ecole is null or ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (
+  public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "modif admin" on public.sponsorises for update to authenticated
+  using (public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())))
+  with check (public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "suppression admin" on public.sponsorises for delete to authenticated using (
+  public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
 
 -- Une ligne par carte, membre, jour et geste ('vue' ou 'clic') : un membre compte une fois par jour pour chacun.
 -- Aucune règle de lecture ni d'écriture : seules compter_sponsorise() et bilan_sponsorises() y touchent.
@@ -6031,7 +6044,6 @@ alter table public.sponsorises_comptes enable row level security;
 revoke all on public.sponsorises_comptes from public, anon, authenticated;
 
 -- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
-alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
 language sql stable set search_path = public as $$
   select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin and (s.ecole is null or s.ecole = p.ecole)
@@ -6058,6 +6070,7 @@ revoke all on function public.compter_sponsorise(uuid, text) from public, anon;
 grant execute on function public.compter_sponsorise(uuid, text) to authenticated;
 
 -- Les totaux de chaque carte, pour l'administration seule : vues, clics, membres différents. Jamais un nom ni un identifiant.
+-- Les cartes qu'elle lit : celle d'une école, les cartes de son école et de toutes les écoles ; celle du réseau, toutes.
 create or replace function public.bilan_sponsorises() returns table (sponsorise_id uuid, vues int, clics int, membres int)
 language plpgsql stable security definer set search_path = public as $$
 begin
@@ -6065,6 +6078,7 @@ begin
   return query
     select s.id, (count(c.kind) filter (where c.kind = 'vue'))::int, (count(c.kind) filter (where c.kind = 'clic'))::int, (count(distinct c.user_id))::int
     from public.sponsorises s left join public.sponsorises_comptes c on c.sponsorise_id = s.id
+    where public.super_admin() or s.ecole is null or s.ecole = public.mon_ecole()
     group by s.id;
 end $$;
 revoke all on function public.bilan_sponsorises() from public, anon;
