@@ -6,7 +6,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci, nomsDeLigne } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe, nomsAPartager } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -114,6 +114,13 @@ export function EntraidePage(ctx) {
   </div>`;
 }
 
+// Le message WhatsApp d'une question (#q-partage) : le lien l'ouvre dans son école (celle de la question, sinon celle du
+// membre), le texte la nomme (nomsAPartager : une école pas encore ouverte, « ENSAM » sans ville)
+export function texteQuestion(q, { data, store, me } = {}) {
+  const ecole = q.ecole || ecoleDe(me), n = nomsAPartager((data || store?.data)?.ecoles, ecole), lien = lienDirect('reseau/entraide/' + q.id, ecole);
+  return getLang() === 'ar' ? `سؤال على شبكة ${n.nomAr}: « ${q.titre} »\nيمكنك الجواب هنا: ${lien}` : `Question sur le Réseau ${n.nom} : « ${q.titre} »\nTu peux y répondre ici : ${lien}`;
+}
+
 function QuestionView({ ctx, q, onBack }) {
   const { data, store, me, act, openProfile, scores } = ctx;
   const [txt, setTxt] = useBrouillon(me.id + ':reponse:' + q.id, '');
@@ -127,7 +134,7 @@ function QuestionView({ ctx, q, onBack }) {
       <h2 class="q-title">${q.titre}</h2>
       ${q.body ? html`<p>${q.body}</p>` : null}
       <div class="row"><${Person} p=${au} onOpen=${openProfile} size=${30}/><span class="muted small">${timeAgo(q.created_at)}</span><span class="spacer"></span>
-        <${PartagerWhatsApp} id="q-partage" texte=${getLang() === 'ar' ? `سؤال على شبكة ENSAM مكناس: « ${q.titre} »\nيمكنك الجواب هنا: ${lienDirect('reseau/entraide/' + q.id)}` : `Question sur le Réseau ENSAM Meknès : « ${q.titre} »\nTu peux y répondre ici : ${lienDirect('reseau/entraide/' + q.id)}`}/>
+        <${PartagerWhatsApp} id="q-partage" texte=${texteQuestion(q, ctx)}/>
         ${(q.author_id === me.id || me.role === 'admin') ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette question et ses réponses ?', () => act(async () => { await store.remove('questions', q.id); onBack(); }))}>Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="question" id=${q.id}/>`}</div>
     </article>
     <h2 class="section-title">${ans.length} réponse${ans.length > 1 ? 's' : ''}</h2>

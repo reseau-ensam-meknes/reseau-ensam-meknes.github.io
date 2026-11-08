@@ -2990,3 +2990,47 @@ test('compte de l’ENSAM Meknès (son lien, celui d’une promo, ou aucun), ou 
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Une offre ou une question partagée sur WhatsApp (#od-partage, #q-partage) : le lien l'ouvre dans son école (celle de
+// l'offre ou de la question : &ecole=, après ?lang=ar), le texte la nomme (une école pas encore ouverte : « ENSAM », sans
+// ville). Ouvert par un visiteur : la page d'entrée de son école, et l'inscription y va (la demande de code, le profil).
+// L'ENSAM Meknès : le message d'avant, à l'octet, en français et en arabe.
+// ---------------------------------------------------------------------------
+const QUESTION = '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', TITRE_Q = 'Comment préparer un entretien chez OCP ?';
+const messageDe = async (page, sel) => { await page.waitForSelector(sel, { timeout: 15000 }); return decodeURIComponent((await page.getAttribute(sel, 'href')).split('https://wa.me/?text=')[1]); };
+// Les offres de son école (la base ne donne que celles-là) ; ecole null : celles d'avant, sans école
+const offresDe = ecole => ctx => ctx.route(/\/sb\/rest\/v1\/offers(\?|$)/, r => (r.request().method() === 'GET'
+  ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OFFRES.map(o => ({ ...o, ...(ecole ? { ecole } : {}) }))) }) : r.continue()));
+
+for (const langue of ['fr', 'ar']) test(`offre et question partagées par un membre d’une autre école (${langue}) : le lien dit son école, le texte la nomme (« ENSAM » pour une école pas encore ouverte) ; ouvert par un visiteur, son école, jusqu’au profil ; l’ENSAM Meknès, le message d’avant à l’octet`, async () => {
+  const ar = langue === 'ar';
+  const lienDe = (ecole, h) => site.adresse + (ar ? '?lang=ar' : '') + (ecole ? (ar ? '&' : '?') + 'ecole=' + ecole : '') + '#' + h;
+  const offre = (n, l) => (ar ? `PFE Lean manufacturing · OCP\nعرض منشور على شبكة ${n}. افتحه هنا: ${l}` : `PFE Lean manufacturing · OCP\nOffre partagée sur le Réseau ${n}. Ouvre-la ici : ${l}`);
+  const question = (n, l) => (ar ? `سؤال على شبكة ${n}: « ${TITRE_Q} »\nيمكنك الجواب هنا: ${l}` : `Question sur le Réseau ${n} : « ${TITRE_Q} »\nTu peux y répondre ici : ${l}`);
+  for (const [ecole, lignes, nom] of [['ensa-fes', [FES], ar ? 'ENSA فاس' : 'ENSA Fès'], ['ensam-casa', [CASA], 'ENSAM'], [null, [FES], ar ? 'ENSAM مكناس' : 'ENSAM Meknès']]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ...(ecole ? { ecole } : {}), consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = lignes;
+    site.tables.questions = [{ id: QUESTION, author_id: AUTEUR, titre: TITRE_Q, body: null, categorie: 'Stage', created_at: '2026-10-20T10:00:00Z', ...(ecole ? { ecole } : {}) }];
+    const m = await membreDe({ langue, hash: '#offre/' + OFFRE, avant: offresDe(ecole) });
+    assert.equal(await messageDe(m.page, '#od-partage'), offre(nom, lienDe(ecole, 'offre/' + OFFRE)), `offre : ${ecole || 'ensam-meknes'}`);
+    await m.page.evaluate(h => { location.hash = h; }, '#reseau/entraide/' + QUESTION);
+    assert.equal(await messageDe(m.page, '#q-partage'), question(nom, lienDe(ecole, 'reseau/entraide/' + QUESTION)), `question : ${ecole || 'ensam-meknes'}`);
+    assert.deepEqual(m.erreurs, [], ecole || 'ensam-meknes');
+    await m.ctx.close();
+  }
+  // Le lien de l'offre de l'ENSA Fès, ouvert par un visiteur qui n'a jamais choisi de langue : la page d'entrée de son école,
+  // la demande de code et le profil y vont
+  site.vider(); site.tables.ecoles = [FES];
+  const u = new URL(lienDe('ensa-fes', 'offre/' + OFFRE));
+  const s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: u.search, hash: u.hash });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === 'karim@gmail.com').pop().corps.data.ecole, 'ensa-fes');
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
