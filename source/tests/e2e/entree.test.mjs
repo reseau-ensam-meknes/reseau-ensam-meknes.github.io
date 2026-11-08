@@ -1263,20 +1263,37 @@ test('page d’entrée plus légère : sans geste, le magasin part une fois la p
 // Le CSS de l'entrée (dans la page) face au CSS complet (site.css) : chaque élément, chaque propriété calculée, pseudo-éléments
 // compris, doit être pareil avec l'un ou l'autre. Le CSS complet est retenu (jamais servi, sans échec : un échec ferait
 // recharger la page d'un membre) pour voir la page sans lui.
-const stylesCalcules = page => page.evaluate(() => {
-  const out = {};
-  const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
-  els.forEach((e, i) => {
-    const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
-    for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
-      const st = getComputedStyle(e, pseudo);
-      if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
-      const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
-      out[id + (pseudo || '')] = o;
-    }
-  });
-  return out;
-});
+// Les deux relevés se font d'un seul tenant, dans la page, et rien ne passe entre eux. La page continue en effet de charger
+// derrière : le magasin puis l'application partent une fois la page calme, et l'application ajoute ses propres styles (le
+// guide de Match déclare --mx-montre, qui se pose alors sur chaque élément). Pris de part et d'autre d'une attente, un relevé
+// les voyait parfois sans l'autre (vu sur la CI : 446 différences, toutes --mx-montre). Les transitions sont coupées le temps
+// des relevés : sinon, juste après l'échange, une propriété qui change garderait encore son ancienne valeur.
+const comparerStyles = (page, css) => page.evaluate(css => {
+  const relever = () => {
+    const out = {};
+    const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
+    els.forEach((e, i) => {
+      const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+      for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
+        const st = getComputedStyle(e, pseudo);
+        if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
+        const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
+        out[id + (pseudo || '')] = o;
+      }
+    });
+    return out;
+  };
+  const sansTransition = document.createElement('style');
+  sansTransition.textContent = '*, ::before, ::after, ::placeholder, ::marker { transition: none !important; }';
+  document.head.append(sansTransition);
+  const seul = relever();
+  const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove();
+  const complet = relever();
+  sansTransition.remove();
+  const diffs = [];
+  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
+  return { elements: Object.keys(complet).length, diffs };
+}, css);
 async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, ua, faire } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
@@ -1291,13 +1308,8 @@ async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', t
   await page.waitForSelector(jeton ? '.shell.squelette' : '#entree .entree-form');
   if (faire) await faire(page);
   await page.waitForTimeout(1200);
-  const seul = await stylesCalcules(page);
-  await page.evaluate(css => { const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove(); }, siteCss());
-  await page.waitForTimeout(200);
-  const complet = await stylesCalcules(page);
-  const diffs = [];
-  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
-  assert.ok(Object.keys(complet).length > 30, `${nom} : ${Object.keys(complet).length} éléments`);
+  const { elements, diffs } = await comparerStyles(page, siteCss());
+  assert.ok(elements > 30, `${nom} : ${elements} éléments`);
   assert.deepEqual(diffs.slice(0, 8), [], `${nom} : ${diffs.length} différences`);
   await ctx.close();
 }
