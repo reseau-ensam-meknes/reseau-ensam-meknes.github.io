@@ -55,3 +55,33 @@ test('les valeurs hors liste sont refusées : type, étape, formule, montant, id
   await refuse(ligne(ADMIN, { ecole_slug: 'ENSAM Rabat' }), /check/);
   await refuse(ligne(ADMIN, { nom: ' ' }), /check/);
 });
+
+test('dossier_cndp_de_mon_ecole : l’administration d’une école sait si son école est au dossier CNDP, sans lire le suivi', async () => {
+  const AC = uid(975), EC = uid(976);
+  await db.query(`update public.ecoles set ouverte = true where slug = 'ensam-casa'`);
+  await creerCompte(db, { id: AC, full_name: 'Admin Casa', role: 'etudiant', filiere: GIEO, promo: 2010, ecole: 'ensam-casa' });
+  await creerCompte(db, { id: EC, full_name: 'Karim Casa', role: 'etudiant', filiere: GIEO, promo: 2027, ecole: 'ensam-casa' });
+  await db.query(`update public.ecoles set ouverte = false where slug = 'ensam-casa'`);
+  await db.query(`update public.profiles set role = 'admin' where id = $1`, [AC]);
+  const cndp = u => q(u, 'select public.dossier_cndp_de_mon_ecole() x').then(r => r[0].x);
+  // Pas de ligne de suivi pour son école, puis une ligne dont la case n'est pas cochée : non
+  assert.equal(await cndp(AC), false);
+  const r = await ligne(ADMIN, { nom: 'ENSAM Casablanca', ecole_slug: 'ensam-casa', etape: 'accord' });
+  assert.equal(await cndp(AC), false);
+  // Un partenaire au même identifiant, case cochée : ce n'est pas le suivi de l'école
+  const p = await ligne(ADMIN, { type: 'partenaire', nom: 'Partenaire de Casablanca', ecole_slug: 'ensam-casa' });
+  await q(ADMIN, 'update public.admin_suivi set cndp_ok = true where id = $1', [p.id]);
+  assert.equal(await cndp(AC), false);
+  // L'administration du réseau coche la case de l'école : oui, pour l'administration de cette école seulement
+  await q(ADMIN, 'update public.admin_suivi set cndp_ok = true where id = $1', [r.id]);
+  assert.equal(await cndp(AC), true);
+  for (const u of [EC, ETU, LAU, ADMIN_VUE]) assert.equal(await cndp(u), false, u);
+  // L'administration du réseau : la case de son école à elle (ENSAM Meknès), pas celle de Casablanca
+  assert.equal(await cndp(ADMIN), false);
+  // Elle ne lit toujours pas le suivi, et un visiteur ne peut pas la demander
+  assert.deepEqual(await q(AC, 'select * from public.admin_suivi'), []);
+  await refuse(q(null, 'select public.dossier_cndp_de_mon_ecole()', [], { role: 'anon' }), /permission denied/);
+  // Décochée : non à nouveau
+  await q(ADMIN, 'update public.admin_suivi set cndp_ok = false where id = $1', [r.id]);
+  assert.equal(await cndp(AC), false);
+});

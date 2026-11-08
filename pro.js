@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre, Embleme } from './ui.js';
 import { getLang, addAR } from './i18n.js';
-import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf, pionniersOf } from './logic.js';
+import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf, pionniersOf, legendeCarte, nomsDuMembre } from './logic.js';
 import { coordsOf, canonPays, countryCentroid, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
@@ -139,7 +139,7 @@ function Carte({ ctx }) {
   };
   return html`<div class="sub-page">
     <button type="button" class="btn ghost small back" onClick=${() => ctx.go('reseau/annuaire', { remplacer: true })}>← Tous les membres</button>
-    <p class="muted small">Où travaillent les lauréats de l’ENSAM Meknès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.</p>
+    <p class="muted small">${legendeCarte(nomsDuMembre(data, ctx.me))}</p>
     ${err ? html`<p class="warn-t small">${err}</p>` : null}
     <div class="map" ref=${ref} dir="ltr" role="img" aria-label="Carte des lauréats"></div>
     ${pt ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="pin"/> <span translate="no" dir="auto">${villeLabel(pt.ville)}</span>${pt.pays !== 'Maroc' ? `, ${paysLabel(pt.pays)}` : ''}</h2><span class="muted small">${pt.people.length} lauréat${pt.people.length > 1 ? 's' : ''}</span></div>

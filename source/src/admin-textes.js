@@ -1,7 +1,7 @@
 // Console d'administration : les messages prêts à copier (WhatsApp, email), en français et en arabe, et les chiffres qu'ils citent.
 // Aucun nom ni contact d'étudiant ; des lauréats, le prénom seulement, et seulement là où ils ont dit oui (merci, fondateurs).
 // Fonctions pures : pas d'écran ici, les rubriques (admin-animer.js, admin-ecoles.js, admin-partenaires.js, admin-outils.js) s'en servent.
-import { niveauOf, seasonOf, laureatCompte, entKey, classementFondateurs, NB_FONDATEURS, reponses48h, NIVEAUX, PARCOURS, parcoursOf, daysUntil } from './logic.js';
+import { niveauOf, seasonOf, laureatCompte, entKey, classementFondateurs, NB_FONDATEURS, reponses48h, NIVEAUX, PARCOURS, parcoursOf, daysUntil, nomsAPartager, NOMS_MEKNES, deLEcoleNommee } from './logic.js';
 import { estPartagee } from './origine.js';
 import { ecoleDe, ECOLE_DEFAUT, FORMULES, dh } from './admin-donnees.js';
 
@@ -39,7 +39,7 @@ export function aidesEntre(data, debut, fin) {
 // Ce que chaque lauréat a fait pour les étudiants ces 7 derniers jours (le merci de la semaine) : aides proposées sur une Demande,
 // mentorats acceptés ou terminés, relectures de CV rendues, réponses aux questions, offres publiées pour les étudiants,
 // recrutements confirmés. Le plus récent d'abord ; etudiants : les ids des étudiants aidés (comptés, jamais nommés).
-// Seulement entre membres de l'école (le message dit « de l'ENSAM Meknès »), comme le résumé de la semaine.
+// Seulement entre membres de l'école (le message la nomme), comme le résumé de la semaine.
 export const GESTES = {
   aide: ['aide proposée sur une Demande', 'aides proposées sur des Demandes'],
   mentorat: ['mentorat', 'mentorats'],
@@ -138,7 +138,9 @@ const ouverte = (o, now) => o.status === 'ouverte' && !(daysUntil(o.deadline, ne
 // ---------------------------------------------------------------------------
 // a) Le résumé de la semaine : pour les lauréats (promo null), ou pour une promo d'étudiants (ses offres seulement)
 // ---------------------------------------------------------------------------
-export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new Date(now)), lien = '', promo = null, ecole = ECOLE_DEFAUT } = {}) {
+// noms : ceux de l'école (nomsEcole) ; par défaut ceux de sa ligne dans data0.ecoles quand elle est ouverte (nomsAPartager ;
+// l'ENSAM Meknès : ses textes d'avant)
+export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new Date(now)), lien = '', promo = null, ecole = ECOLE_DEFAUT, noms = nomsAPartager(data0.ecoles, ecole || ECOLE_DEFAUT) } = {}) {
   const data = vueEcole(data0, ecole);
   const debut = now - 7 * J, ids = new Set((data.profiles || []).map(p => p.id));
   const membres = membresDe(data).filter(p => dans(p.created_at, debut, now));
@@ -162,7 +164,7 @@ export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new D
   const nomPromo = niveau !== null && NIVEAUX[niveau] ? `${promo} (${NIVEAUX[niveau].short})` : `${promo}`;
 
   const fr = [
-    niveau === null ? '✅ Cette semaine dans le Réseau ENSAM Meknès' : `✅ Cette semaine pour la promo ${nomPromo}`,
+    niveau === null ? `✅ Cette semaine dans le Réseau ${noms.nom}` : `✅ Cette semaine pour la promo ${nomPromo}`,
     nE || nL ? `📌 Nouveaux membres : ${[nE ? pl(nE, 'étudiant', 'étudiants') : '', nL ? pl(nL, 'lauréat', 'lauréats') : ''].filter(Boolean).join(' et ')}` : '',
     offres.length ? [`📌 ${niveau === null ? pl(offres.length, 'nouvelle offre', 'nouvelles offres') : `${pl(offres.length, 'nouvelle offre', 'nouvelles offres')} pour les ${NIVEAUX[niveau]?.short || promo}`} :`,
       ...top.map(o => `• ${o.titre} · ${o.entreprise}`), reste ? `• et ${pl(reste, 'autre', 'autres')}` : ''].filter(Boolean).join('\n') : '',
@@ -174,7 +176,7 @@ export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new D
   ].filter(Boolean).join('\n');
 
   const arTxt = [
-    niveau === null ? '✅ هذا الأسبوع في شبكة ENSAM مكناس' : `✅ هذا الأسبوع لدفعة ${nomPromo}`,
+    niveau === null ? `✅ هذا الأسبوع في شبكة ${noms.nomAr}` : `✅ هذا الأسبوع لدفعة ${nomPromo}`,
     nE || nL ? `📌 أعضاء جدد: ${[nE ? ar(nE, 'etudiant') : '', nL ? ar(nL, 'laureat') : ''].filter(Boolean).join(' و')}` : '',
     offres.length ? [`📌 ${niveau === null ? `عروض جديدة: ${offres.length}` : `عروض جديدة لطلبة ${NIVEAUX[niveau]?.short || promo}: ${offres.length}`}`,
       ...top.map(o => `• ${o.titre} · ${o.entreprise}`), reste ? `• و${ar(reste, 'autreOffre')}` : ''].filter(Boolean).join('\n') : '',
@@ -190,7 +192,8 @@ export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new D
 // ---------------------------------------------------------------------------
 // b) Le merci public : seulement les prénoms cochés (ceux qui ont dit oui), et combien d'étudiants ont été aidés
 // ---------------------------------------------------------------------------
-export function texteMerci(aidants, coches, { lien = '' } = {}) {
+// ecoleNoms : ceux de l'école (nomsEcole), l'ENSAM Meknès par défaut ; « noms », rendu, reste la liste des prénoms cités
+export function texteMerci(aidants, coches, { lien = '', ecoleNoms = NOMS_MEKNES } = {}) {
   const oui = new Set(coches || []);
   const noms = aidants.filter(a => oui.has(a.id)).map(a => a.prenom).filter(Boolean);
   // « ont aidé » : ceux qui ont aidé un étudiant ; les offres publiées sont comptées à part
@@ -198,13 +201,13 @@ export function texteMerci(aidants, coches, { lien = '' } = {}) {
   const nO = aidants.reduce((n, a) => n + (a.gestes.offre || 0), 0);
   const fr = [
     noms.length ? `🙏 Merci à ${listeNoms(noms, 'fr')} !` : '🙏 Merci aux lauréats qui ont aidé cette semaine !',
-    nL && nE ? `Cette semaine, ${nL > 1 ? `${nL} lauréats ont aidé` : '1 lauréat a aidé'} ${pl(nE, 'étudiant', 'étudiants')} de l’ENSAM Meknès : conseils, relectures de CV, stages et PFE.` : '',
+    nL && nE ? `Cette semaine, ${nL > 1 ? `${nL} lauréats ont aidé` : '1 lauréat a aidé'} ${pl(nE, 'étudiant', 'étudiants')} ${deLEcoleNommee(ecoleNoms.nom)} : conseils, relectures de CV, stages et PFE.` : '',
     nO ? `${nO > 1 ? `${nO} offres ont été publiées` : '1 offre a été publiée'} pour les étudiants.` : '',
     `Toi aussi, 20 minutes suffisent pour aider un étudiant :\n${lien}`,
   ].filter(Boolean).join('\n');
   const arTxt = [
     noms.length ? `🙏 شكرًا ${listeNoms(noms, 'ar')}!` : '🙏 شكرًا للخريجين الذين ساعدوا هذا الأسبوع!',
-    nL && nE ? `هذا الأسبوع، ساعد ${ar(nL, 'laureat')} ${ar(nE, 'etudiantC')} من ENSAM مكناس: نصائح، ومراجعة السير الذاتية، وتداريب ومشاريع نهاية الدراسة.` : '',
+    nL && nE ? `هذا الأسبوع، ساعد ${ar(nL, 'laureat')} ${ar(nE, 'etudiantC')} من ${ecoleNoms.nomAr}: نصائح، ومراجعة السير الذاتية، وتداريب ومشاريع نهاية الدراسة.` : '',
     nO ? `ونُشر ${ar(nO, 'offre')} للطلبة.` : '',
     `أنت أيضًا، 20 دقيقة تكفي لمساعدة طالب:\n${lien}`,
   ].filter(Boolean).join('\n');
@@ -220,20 +223,20 @@ export const messageAccordMerci = (a, langue = a?.langue) => (langue === 'ar'
 // ---------------------------------------------------------------------------
 // accords : en ligne, l'id → fondateur_public lu dans la table profiles (la vue des profils ne le donne pas) ; un fondateur
 // qui n'y est pas encore n'est pas cité. Sans accords (démo), le profil le porte. Un « non » écarte toujours le prénom.
-export function texteFondateurs(data, { liste = classementFondateurs(data), lien = '', max = 6, accords = null } = {}) {
+export function texteFondateurs(data, { liste = classementFondateurs(data), lien = '', max = 6, accords = null, noms = NOMS_MEKNES } = {}) {
   const prof = new Map((data.profiles || []).map(p => [p.id, p]));
   const tous = liste.map(f => prof.get(f.id)).filter(Boolean);
   const cite = p => (accords ? accords.has(p.id) && accords.get(p.id) !== false : p.fondateur_public !== false);
   const montres = tous.filter(cite).map(prenomDe).filter(Boolean).slice(0, max);
   const autres = tous.length - montres.length, reste = Math.max(0, NB_FONDATEURS - liste.length);
   const fr = [
-    '⭐ Membres fondateurs du Réseau ENSAM Meknès',
+    `⭐ Membres fondateurs du Réseau ${noms.nom}`,
     `Les ${NB_FONDATEURS} premiers lauréats qui aident un étudiant deviennent membres fondateurs, pour toujours.`,
     montres.length ? `Déjà : ${autres ? `${montres.join(', ')} et ${pl(autres, 'autre', 'autres')}` : listeNoms(montres, 'fr')}.` : '',
     reste ? `${reste > 1 ? `Il reste ${reste} places` : 'Il reste 1 place'}. Publie une offre, propose ton aide sur une Demande ou accepte un mentorat :\n${lien}` : `Les ${NB_FONDATEURS} places sont prises : merci à eux ! Le réseau continue :\n${lien}`,
   ].filter(Boolean).join('\n');
   const arTxt = [
-    '⭐ الأعضاء المؤسسون لشبكة ENSAM مكناس',
+    `⭐ الأعضاء المؤسسون لشبكة ${noms.nomAr}`,
     `أول ${NB_FONDATEURS} خريجًا يساعدون طالبًا يصبحون أعضاء مؤسسين، إلى الأبد.`,
     montres.length ? `حتى الآن: ${autres ? `${montres.join('، ')} و${ar(autres, 'autre')}` : listeNoms(montres, 'ar')}.` : '',
     reste ? `الأماكن المتبقية: ${reste} من ${NB_FONDATEURS}. انشر عرضًا، أو اقترح مساعدتك على طلب، أو اقبل مرافقة:\n${lien}` : `امتلأت الأماكن الـ${NB_FONDATEURS}: شكرًا لهم! والشبكة مستمرة:\n${lien}`,
@@ -271,9 +274,9 @@ export function laureatsSansOffre(data, ecole = ECOLE_DEFAUT) {
   return membresDe(vueEcole(data, ecole)).filter(p => p.role === 'laureat' && String(p.entreprise || '').trim() && !auteurs.has(p.id))
     .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'fr'));
 }
-export const messageOffreBoite = (p, lien = '', langue = p?.langue) => (langue === 'ar'
-  ? `مرحبا ${prenomDe(p)} 👋\nيبحث طلبة ENSAM مكناس عن تداريب ومشاريع نهاية الدراسة، وربما يوجد مكان لأحدهم في ${p.entreprise}.\nعرض في 30 ثانية: الصق نص الإعلان، والمنصة تملأ الباقي.\n${lien}\nشكرًا 🙏`
-  : `Bonjour ${prenomDe(p)} 👋\nLes étudiants de l’ENSAM Meknès cherchent des stages et des PFE, et il y a peut-être une place pour l’un d’eux chez ${p.entreprise}.\nUne offre en 30 secondes : colle le texte de l’annonce, la plateforme remplit le reste.\n${lien}\nMerci 🙏`);
+export const messageOffreBoite = (p, lien = '', langue = p?.langue, noms = NOMS_MEKNES) => (langue === 'ar'
+  ? `مرحبا ${prenomDe(p)} 👋\nيبحث طلبة ${noms.nomAr} عن تداريب ومشاريع نهاية الدراسة، وربما يوجد مكان لأحدهم في ${p.entreprise}.\nعرض في 30 ثانية: الصق نص الإعلان، والمنصة تملأ الباقي.\n${lien}\nشكرًا 🙏`
+  : `Bonjour ${prenomDe(p)} 👋\nLes étudiants ${deLEcoleNommee(noms.nom)} cherchent des stages et des PFE, et il y a peut-être une place pour l’un d’eux chez ${p.entreprise}.\nUne offre en 30 secondes : colle le texte de l’annonce, la plateforme remplit le reste.\n${lien}\nMerci 🙏`);
 export const OBJECTIF_OFFRES = 10;
 
 // f) Le rendez-vous du mois : l'événement prérempli (en ligne, 30 minutes), dans 7 jours à 19 h, dans la langue de l'admin
@@ -481,12 +484,13 @@ export function inscritsDepuis(data0, now = Date.now(), ecole = ECOLE_DEFAUT) {
 export const adresseCourte = u => String(u || '').replace(/^https?:\/\//, '').replace(/#.*$/, '').replace(/\/+$/, '');
 const ANNEE_AR = { 1: 'السنة الأولى', 2: 'السنة الثانية', 3: 'السنة الثالثة', 4: 'السنة الرابعة', 5: 'السنة الخامسة' };
 // Les textes de l'affiche, en français et en arabe côte à côte. pour : une promo d'étudiants (3A à 5A), ou « laureats »
-export function texteAffiche(pour, saison = seasonOf()) {
+// noms : ceux de l'école de l'affiche (nomsEcole) ; l'ENSAM Meknès par défaut, avec ses textes d'avant
+export function texteAffiche(pour, saison = seasonOf(), noms = NOMS_MEKNES) {
   const etu = pour !== 'laureats', n = etu ? niveauOf({ promo: pour }, saison) : 7, an = NIVEAUX[n]?.short || '';
   return {
     etudiants: etu, niveau: n,
     fr: {
-      titre: 'Rejoins le Réseau ENSAM Meknès',
+      titre: `Rejoins le Réseau ${noms.nom}`,
       pour: etu ? `Étudiants de ${an} · promo ${pour}` : 'Lauréats de toutes les promos',
       avantages: etu
         ? ['Stages, PFE et premiers emplois proposés par des lauréats', 'Ta Demande avec ton CV : les lauréats de ta filière te répondent', '20 minutes de conseil avec un lauréat']
@@ -496,7 +500,7 @@ export function texteAffiche(pour, saison = seasonOf()) {
       pied: 'Initiative de lauréats, indépendante de l’administration de l’école.',
     },
     ar: {
-      titre: 'انضم إلى شبكة ENSAM مكناس',
+      titre: `انضم إلى شبكة ${noms.nomAr}`,
       pour: etu ? `طلبة ${ANNEE_AR[n] || an} · دفعة ${pour}` : 'خريجو جميع الدفعات',
       avantages: etu
         ? ['تداريب ومشاريع نهاية الدراسة وأول وظيفة، يقترحها الخريجون', 'طلبك مع سيرتك الذاتية: يجيبك خريجو شعبتك', 'عشرون دقيقة من النصح مع خريج']

@@ -6,7 +6,7 @@
 // jour : la table manque, rien ne s'affiche.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Bouclier, Embleme, Modal, toast, celebrate, injectCSS, lienWhatsApp } from './ui.js';
-import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo, ecoleDe } from './logic.js';
+import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo, ecoleDe, nomsAPartager } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { MessageBtn } from './messages.js';
 import { lienDeMembre, messageInvitation, useCodeInvitation } from './invitation.js';
@@ -154,7 +154,8 @@ function PropositionCarte({ ctx, a }) {
   </section>`;
 }
 
-// Les chiffres du mois : la base les compte (les demandes des autres ne sont pas lisibles ici) ; en démo, logic.js
+// Les chiffres du mois : la base les compte (les demandes des autres ne sont pas lisibles ici) ; en démo, logic.js.
+// null : la base n'a pas encore répondu ; false : pas de chiffres (erreur, base d'avant, pas de connexion à la base)
 function useChiffres(ctx, a) {
   const { store, data } = ctx;
   const live = store.mode === 'live';
@@ -165,40 +166,54 @@ function useChiffres(ctx, a) {
     store.sb.rpc('chiffres_ma_promo', { p_debut: debutDuMois().toISOString() }).then(({ data: v, error }) => { if (vivant) setX(error || !v ? false : v); }, () => vivant && setX(false));
     return () => { vivant = false; };
   }, [live, a.id, data.placements, data.demandes]);
-  return live ? x : chiffresPromo(data, a.promo, a.filiere, debutDuMois());
+  return live ? (store.sb ? x : false) : chiffresPromo(data, a.promo, a.filiere, debutDuMois());
+}
+
+// Chaque case des chiffres du mois : le nombre, ce qui est arrivé ce mois-ci, et ses deux mots (un, plusieurs)
+const CASES_MOIS = [['inscrits', 'nouveaux', 'inscrit', 'inscrits'], ['demandes', 'demandes_mois', 'demande pourvue', 'demandes pourvues'], ['stages', 'stages_mois', 'stage ou emploi trouvé', 'stages et emplois trouvés']];
+// Les chiffres du mois (x : useChiffres). Leur place est gardée pendant que la base les compte : les mêmes cases, sans un
+// chiffre ni un mot à l'écran (des formes vides ; « inscrits » serait faux pour un seul), pour que rien ne bouge à leur
+// arrivée, ni « Envoyer sur WhatsApp » ni le bas de la carte. La hauteur d'une case ne dépend jamais des chiffres : ses deux
+// mots occupent la même place (l'autre, caché, garde la sienne), sa ligne « ce mois-ci » est là même vide. Pas de chiffres
+// (false) : rien, pas même une case vide. Les chiffres arrivés, la liste est neuve (key) : rien n'y passe par l'état d'attente
+// (les fondus du mouvement réduit, page.html, garderaient les mots cachés un instant).
+function ChiffresMois({ x }) {
+  if (x === false) return null;
+  const mois = new Date();
+  return html`<div class=${'amb-bloc' + (x ? '' : ' amb-attente')} aria-busy=${x ? null : 'true'}>
+    <p class="amb-mois">${`En ${MOIS[mois.getMonth()]} ${mois.getFullYear()}`}</p>
+    <ul key=${x ? 'chiffres' : 'attente'} class=${'amb-grille' + (x ? ' amb-chiffres' : '')} role="list" aria-hidden=${x ? null : 'true'}>${CASES_MOIS.map(([k, km, un, plus]) => {
+      const n = x?.[k], m = x?.[km], mots = n > 1 ? [plus, un] : [un, plus];
+      return html`<li key=${k}><b class=${x ? 'mono' : 'mono sq'}>${x ? n : ' '}</b><span class="amb-mot"><span>${mots[0]}</span><span aria-hidden="true">${mots[1]}</span></span><small>${m ? `+${m} ce mois-ci` : ' '}</small></li>`;
+    })}</ul>
+  </div>`;
 }
 
 function CarteAmbassadeur({ ctx, a }) {
   const { data, me, store, act } = ctx;
   const langue = getLang() === 'ar' ? 'ar' : 'fr';
-  // Le lien porte le code de l'ambassadeur (invitation nommée)
+  // Le lien porte le code de l'ambassadeur (invitation nommée) et son école ; les messages la nomment (l'ENSAM Meknès : ceux
+  // d'avant ; une école pas encore ouverte n'est pas nommée)
   const code = useCodeInvitation(ctx);
-  const lien = lienDeMembre(a.promo, langue, code);
+  const ecole = ecoleDe(me), noms = nomsAPartager(data.ecoles, ecole);
+  const lien = lienDeMembre(a.promo, langue, code, true, ecole);
   const chiffres = useChiffres(ctx, a);
   const reussites = reussitesDuGroupe(data, a.promo, a.filiere).slice(0, 3);
-  const mois = new Date();
   const retirer = () => act(async () => {
     await repondre(ctx, a, 'retire');
     toast('C’est noté : tu n’es plus ambassadeur de ta promo.', 'ok', 0, { annuler: () => act(() => annuler(ctx.store, a, () => repondre(ctx, a, 'accepte'))) });
   });
   const copier = async () => { try { await navigator.clipboard.writeText(lien); toast('Lien copié.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
-  const ligne = (n, mot, plus) => html`<li><b class="mono">${n}</b><span>${mot}</span>${plus ? html`<small>${plus}</small>` : null}</li>`;
   return html`<section class="amb-carte" id="amb-carte" aria-labelledby="amb-titre">
     <div class="amb-tete">
       <span class="amb-ico" aria-hidden="true"><${Embleme} id="ambassadeur" size=${22}/></span>
       <div class="grow"><p class="amb-oeil">Ambassadeur de ta promo</p><h3 class="amb-titre" id="amb-titre">${`Promo ${a.promo} · ${filiereCourte(a.filiere)}`}</h3></div>
     </div>
-    ${chiffres ? html`<div class="amb-bloc">
-      <p class="amb-mois">${`En ${MOIS[mois.getMonth()]} ${mois.getFullYear()}`}</p>
-      <ul class="amb-chiffres" role="list">
-        ${ligne(chiffres.inscrits, chiffres.inscrits > 1 ? 'inscrits' : 'inscrit', chiffres.nouveaux ? `+${chiffres.nouveaux} ce mois-ci` : '')}
-        ${ligne(chiffres.demandes, chiffres.demandes > 1 ? 'demandes pourvues' : 'demande pourvue', chiffres.demandes_mois ? `+${chiffres.demandes_mois} ce mois-ci` : '')}
-        ${ligne(chiffres.stages, chiffres.stages > 1 ? 'stages et emplois trouvés' : 'stage ou emploi trouvé', chiffres.stages_mois ? `+${chiffres.stages_mois} ce mois-ci` : '')}
-      </ul></div>` : null}
+    <${ChiffresMois} x=${chiffres}/>
     <div class="amb-bloc">
       <p class="amb-sous">Le lien de ta promo</p>
       <div class="amb-actions">
-        <a class="btn small tonal" id="amb-wa" href=${lienWhatsApp(messageInvitation(a.promo, langue, lien))} target="_blank" rel="noopener"><${Icon} name="send" size=${16}/> Envoyer sur WhatsApp</a>
+        <a class="btn small tonal" id="amb-wa" href=${lienWhatsApp(messageInvitation(a.promo, langue, lien, undefined, noms))} target="_blank" rel="noopener"><${Icon} name="send" size=${16}/> Envoyer sur WhatsApp</a>
         <button type="button" class="btn small ghost" id="amb-copier" onClick=${copier}><${Icon} name="link" size=${16}/> Copier le lien</button>
       </div>
     </div>
@@ -207,7 +222,7 @@ function CarteAmbassadeur({ ctx, a }) {
       ${reussites.length ? html`<ul class="amb-reussites" role="list">${reussites.map(pl => {
         const e = store.byId('profiles', pl.student_id);
         return html`<li key=${pl.id}><span class="grow"><span translate="no" dir="auto">${pl.entreprise}</span><small>${TYPE[pl.type] || TYPE.stage}${' · '}${timeAgo(pl.confirmed_at || pl.created_at)}${pl.partage_ok ? null : ' · sans nom'}</small></span>
-          <a class="btn tiny ghost amb-partager" href=${lienWhatsApp(texteReussite(pl, e, langue, lienDeMembre(e?.promo || a.promo, langue, code)))} target="_blank" rel="noopener"><${Icon} name="share" size=${14}/> Partager</a></li>`;
+          <a class="btn tiny ghost amb-partager" href=${lienWhatsApp(texteReussite(pl, e, langue, lienDeMembre(e?.promo || a.promo, langue, code, true, ecole), noms))} target="_blank" rel="noopener"><${Icon} name="share" size=${14}/> Partager</a></li>`;
       })}</ul>` : html`<p class="small muted">Quand quelqu’un de ta promo trouve un stage grâce au réseau, sa réussite arrive ici, prête à partager.</p>`}
       <p class="small muted">Seulement les réussites vérifiées des deux côtés. Le prénom n’apparaît que si la personne a accepté d’être citée.</p>
     </div>
@@ -296,11 +311,17 @@ injectCSS('ambassadeurs', `
 .amb-titre { margin: 0; font-size: var(--fs-4); }
 .amb-bloc { display: flex; flex-direction: column; gap: var(--sp-2); }
 .amb-mois, .amb-sous { margin: 0; font-size: var(--fs-2); font-weight: 600; color: var(--ink-2); }
-.amb-chiffres { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
-.amb-chiffres li { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0; }
-.amb-chiffres b { font-size: var(--fs-5, 1.4rem); line-height: 1.1; color: var(--tonal-ink); }
-.amb-chiffres span { font-size: var(--fs-2); line-height: 1.3; }
-.amb-chiffres small, .amb-reussites small, .amb-liste small, .amb-trouves small { display: block; color: var(--muted); font-size: var(--fs-1); }
+.amb-grille { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+.amb-grille li { display: flex; flex-direction: column; gap: 2px; min-inline-size: 0; }
+.amb-grille b { font-size: var(--fs-5, 1.4rem); line-height: 1.1; color: var(--tonal-ink); }
+.amb-mot { display: grid; font-size: var(--fs-2); line-height: 1.3; }
+.amb-mot > span { grid-area: 1 / 1; }
+.amb-mot > [aria-hidden], .amb-attente .amb-mot, .amb-attente small { visibility: hidden; }
+.amb-attente b { align-self: flex-start; inline-size: 2.2em; }
+.amb-attente .amb-mot { position: relative; }
+.amb-attente .amb-mot::after { content: ""; position: absolute; inset-block-start: .3em; inset-inline-start: 0; inline-size: min(100%, 5.5em); block-size: .75em; border-radius: var(--r-sm); visibility: visible; }
+.amb-carte .sq, .amb-attente .amb-mot::after { background-color: color-mix(in srgb, var(--surface) 70%, transparent); }
+.amb-grille small, .amb-reussites small, .amb-liste small, .amb-trouves small { display: block; color: var(--muted); font-size: var(--fs-1); }
 .amb-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .amb-carte .btn.tonal { background: var(--surface); }
 .amb-reussites, .amb-liste, .amb-trouves { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }

@@ -4,9 +4,9 @@ import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, Level
 import { useBrouillon, EnTetePage, vibrer } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
-import { ChoixRole, accordIci } from './entree.js';
+import { ChoixRole, accordIci, nomsDeLigne } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe, nomsAPartager } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -14,13 +14,13 @@ import { AnnuairePro } from './pro.js';
 import { CoupePromos } from './saison.js';
 import { EntreprisesPage } from './entreprises.js';
 import { EtrangerPage, CarteGuide, Drapeau } from './etranger.js';
-import { AgendaPage } from './agenda.js';
+import { AgendaPage, eventsFor } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
-import { oublierInvitation, ecoleInvitee } from './invitation.js';
+import { oublierInvitation, ecoleRetenue } from './invitation.js';
 import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
@@ -114,6 +114,13 @@ export function EntraidePage(ctx) {
   </div>`;
 }
 
+// Le message WhatsApp d'une question (#q-partage) : le lien l'ouvre dans son école (celle de la question, sinon celle du
+// membre), le texte la nomme (nomsAPartager : une école pas encore ouverte, « ENSAM » sans ville)
+export function texteQuestion(q, { data, store, me } = {}) {
+  const ecole = q.ecole || ecoleDe(me), n = nomsAPartager((data || store?.data)?.ecoles, ecole), lien = lienDirect('reseau/entraide/' + q.id, ecole);
+  return getLang() === 'ar' ? `سؤال على شبكة ${n.nomAr}: « ${q.titre} »\nيمكنك الجواب هنا: ${lien}` : `Question sur le Réseau ${n.nom} : « ${q.titre} »\nTu peux y répondre ici : ${lien}`;
+}
+
 function QuestionView({ ctx, q, onBack }) {
   const { data, store, me, act, openProfile, scores } = ctx;
   const [txt, setTxt] = useBrouillon(me.id + ':reponse:' + q.id, '');
@@ -127,7 +134,7 @@ function QuestionView({ ctx, q, onBack }) {
       <h2 class="q-title">${q.titre}</h2>
       ${q.body ? html`<p>${q.body}</p>` : null}
       <div class="row"><${Person} p=${au} onOpen=${openProfile} size=${30}/><span class="muted small">${timeAgo(q.created_at)}</span><span class="spacer"></span>
-        <${PartagerWhatsApp} id="q-partage" texte=${getLang() === 'ar' ? `سؤال على شبكة ENSAM مكناس: « ${q.titre} »\nيمكنك الجواب هنا: ${lienDirect('reseau/entraide/' + q.id)}` : `Question sur le Réseau ENSAM Meknès : « ${q.titre} »\nTu peux y répondre ici : ${lienDirect('reseau/entraide/' + q.id)}`}/>
+        <${PartagerWhatsApp} id="q-partage" texte=${texteQuestion(q, ctx)}/>
         ${(q.author_id === me.id || me.role === 'admin') ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette question et ses réponses ?', () => act(async () => { await store.remove('questions', q.id); onBack(); }))}>Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="question" id=${q.id}/>`}</div>
     </article>
     <h2 class="section-title">${ans.length} réponse${ans.length > 1 ? 's' : ''}</h2>
@@ -180,10 +187,12 @@ const VUES_ANNUAIRE = [['annuaire', 'Personnes'], ['entreprises', 'Entreprises']
 export function ReseauPage(ctx) {
   const { data, me, sub, go } = ctx;
   // Une rubrique encore vide reste cachée jusqu'à son premier contenu (l'administration voit tout) ; le classement et
-  // les talents ne sont pas pour les étudiants
+  // les talents ne sont pas pour les étudiants. Le même filtre que la rubrique elle-même : l'Agenda, les événements de son
+  // école ouverts à son rôle (eventsFor) ; l'Étranger, le guide (commun à toutes les écoles) et les lauréats de son école
+  // à l'étranger (etranger.js)
   const vide = {
-    agenda: !(data.evenements || []).length,
-    etranger: !(data.guide_pays || []).length && !data.profiles.some(p => p.role === 'laureat' && p.pays && norm(p.pays) !== 'maroc'),
+    agenda: !eventsFor(data, me).length,
+    etranger: !(data.guide_pays || []).length && !deMonEcole(data.profiles, me).some(p => p.role === 'laureat' && p.pays && norm(p.pays) !== 'maroc'),
     classement: ![...(ctx.scores?.values() || [])].some(x => x?.points > 0),
   };
   const ouverte = k => (me.role !== 'etudiant' || !['classement', 'talents'].includes(k)) && (me.role === 'admin' || !vide[k]);
@@ -621,11 +630,24 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   // Inscription courte : rôle, nom, promo, filière (et, pour un lauréat, s'il peut aider) ; le reste est replié sous « Facultatif »
   const [details, setDetails] = useState(!onboarding);
   const plus = !onboarding || details;
-  // Email de l'école obligatoire pour les étudiants (réglage de l'administration)
+  // L'école de l'inscription : celle du lien que la page suit, gardé sur cet appareil (l'ENSAM Meknès d'un lien d'invitation
+  // sans école aussi : ecoleRetenue), avant celle que le compte a reçue avec une demande de code (fini sur un autre appareil,
+  // sans lien, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
+  const ecoleIns = onboarding ? [ecoleRetenue(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
+  const autreEcole = ecoleIns && ecoleIns !== 'ensam-meknes' ? ecoleIns : null;
+  // Email de l'école obligatoire pour les étudiants : le réglage de l'administration (ENSAM Meknès) ; pour une autre école,
+  // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. À l'inscription, l'école de l'inscription : sa
+  // ligne pas lisible ici (école pas encore ouverte), rien à bloquer, la base répond « pas encore ouvert ». Dans « Mon
+  // profil », l'école du membre (la base lit celle du profil quand il passe côté étudiants) : sa ligne, qu'il lit toujours
+  const ecoleRegles = onboarding ? autreEcole : ecoleDe(initial) !== 'ensam-meknes' ? ecoleDe(initial) : null;
+  const ligneEcole = ecoleRegles && (store.data?.ecoles || []).find(e => e?.slug === ecoleRegles && (!onboarding || e.ouverte === true));
   const email = (store.session?.user?.email || '').toLowerCase();
-  const domaines = store.domainesEcole?.() || [];
+  const domaines = ecoleRegles ? (Array.isArray(ligneEcole?.domaines) ? ligneEcole.domaines.filter(d => typeof d === 'string' && d) : []) : store.domainesEcole?.() || [];
+  const obligatoire = ecoleRegles ? ligneEcole?.email_obligatoire === true : store.reglages?.email_ecole_obligatoire === true;
   const versEtudiant = !!onboarding || (!!initial && initial.role !== 'etudiant');
-  const ecoleBloque = versEtudiant && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !estEmailEcole(email, domaines);
+  const ecoleBloque = versEtudiant && f.role === 'etudiant' && obligatoire && domaines.length > 0 && !!email && !estEmailEcole(email, domaines);
+  // La base a refusé le profil : l'école du lien n'est pas encore ouverte (sa phrase reste au-dessus du bouton)
+  const [fermee, setFermee] = useState(false);
   // Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
   const promoN = +f.promo;
   const incoherent = incoherenceProfil(f.role, f.promo, S, an);
@@ -680,8 +702,10 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
     const coordChange = v3 && ['telephone', 'email', 'contact'].some(k => (champs[k] || '') !== (coord0[k] || ''));
     act(async () => {
       if (onboarding) {
-        // Venu par le lien d'une école : le compte est créé dans son réseau (la base refuse une école pas encore ouverte)
-        await store.insert('profiles', { id: store.userId, ...row, ...(ecoleInvitee() && ecoleInvitee() !== 'ensam-meknes' ? { ecole: ecoleInvitee() } : {}) }); oublierInvitation();
+        // Venu par le lien d'une école : le compte est créé dans son réseau. Une école pas encore ouverte, la base la refuse :
+        // sa phrase reste à l'écran (un message qui s'en va se manque), le compte et le lien sont gardés pour son ouverture
+        try { await store.insert('profiles', { id: store.userId, ...row, ...(autreEcole ? { ecole: autreEcole } : {}) }); } catch (e) { if (e?.message !== ECOLE_FERMEE) throw e; setFermee(true); return; }
+        oublierInvitation();
         // L'accueil s'annonce tout de suite : CV, photo et coordonnées suivent sans le retarder
         onInscrit?.();
         // La langue de l'inscription (celle d'un lien arabe, par exemple) devient celle du membre sur cet appareil
@@ -778,7 +802,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
     <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
     ${onboarding ? null : html`<h2 class="pf-titre titre-sec">Mes infos</h2>`}
-    ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
+    ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole} noms=${nomsDeLigne(ligneEcole)}/>`
       : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert" id="pf-ecole"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
@@ -806,7 +830,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       <div id="pf-facultatif">${plus ? html`${plusProfil}${partieVis}` : null}</div>` : plusProfil}`}
     </div>
     ${onboarding || !f.role ? null : html`<div class="pf-partie pf-vis" hidden=${!voir('visibilite')}>${partieVis}</div>`}
-    ${onboarding ? html`<div class="row-end pf-pied">${bouton}</div>`
+    ${onboarding ? html`<div class="row-end pf-pied">${fermee ? html`<div class="cf-warn" role="alert" id="pf-ferme" style="flex-basis:100%"><p><strong>${ECOLE_FERMEE}</strong></p><p class="small">Ton compte est gardé : reviens finir ton inscription dès son ouverture.</p></div>` : null}${bouton}</div>`
       : differe() ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span>${bouton}</div>`
       : html`<div class="row-end">${bouton}</div>`}
   </form>`;
@@ -822,6 +846,8 @@ function VisibleLaureats({ on, onChange }) {
 }
 
 // « Dernière étape » courte : rôle rappelé, bouton qui dit ce qui manque, choix « aider », réglages « Qui voit quoi » ligne par ligne
+// Le refus de la base pour le profil d'une école pas encore ouverte (protect_ecole), mot pour mot
+const ECOLE_FERMEE = 'Le réseau de cette école n’est pas encore ouvert.';
 const NIV_AR = { '1re année (cycle prépa)': 'السنة الأولى (السلك التحضيري)', '2e année (cycle prépa)': 'السنة الثانية (السلك التحضيري)', '3e année': 'السنة الثالثة', '4e année': 'السنة الرابعة', '5e année': 'السنة الخامسة' };
 addAR({
   'Quelques secondes, et tu es dans le réseau.': 'بضع ثوانٍ، وتصبح في الشبكة.',
@@ -839,6 +865,7 @@ addAR({
   'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي', 'Profil étudiant': 'ملف طالب', 'Profil lauréat': 'ملف خريج',
   'Tu as déjà ton diplôme ? Choisis « J’ai mon diplôme » : l’email de l’école n’est demandé qu’aux étudiants.': 'حصلت على شهادتك؟ اختر «حصلت على شهادتي»: بريد المدرسة مطلوب من الطلبة فقط.',
   'Ex. 2019': 'مثال: 2019', 'Enregistrement…': 'جارٍ الحفظ…',
+  [ECOLE_FERMEE]: 'شبكة هذه المدرسة غير مفتوحة بعد.', 'Ton compte est gardé : reviens finir ton inscription dès son ouverture.': 'حسابك محفوظ: عد لإكمال تسجيلك بمجرد افتتاحها.',
 }, [
   [/^En (\d{4}-\d{4}), tu es en (.+)\.$/, (y, l) => `في ${y}، أنت في ${NIV_AR[l] || l}.`],
   [/^Ex\. en 5A cette année : (\d{4})\. Ton année d’études avance toute seule chaque septembre\.$/, y => `مثال: في 5A هذه السنة: ${y}. تتقدّم سنتك الدراسية تلقائيًا كل شتنبر.`],

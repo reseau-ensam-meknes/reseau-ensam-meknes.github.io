@@ -51,6 +51,9 @@ create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
+-- Les règles des membres l'appellent ; aucune de celles qu'un visiteur sans compte traverse
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated, service_role;
 
 -- L'administration du réseau (école ENSAM Meknès) voit toutes les écoles ; celle d'une autre école ne voit que la sienne.
 -- En plpgsql : la colonne « ecole » n'existe pas encore à cet endroit d'une première installation.
@@ -62,6 +65,54 @@ exception when undefined_column then return public.is_admin();
 end $$;
 revoke all on function public.super_admin() from public, anon;
 grant execute on function public.super_admin() to authenticated, service_role;
+
+-- Ces comptes sont tous de mon école (un id vide ou inconnu : non). Pour l'administration d'une école, qui ne voit et ne
+-- fait que ce qui est de son école : ses règles (« admin de son ecole », seconde partie « Écoles »), ses fichiers, ses
+-- discussions. En plpgsql, comme super_admin : la colonne « ecole » et mon_ecole() viennent plus bas.
+create or replace function public.de_mon_ecole(variadic p_ids uuid[]) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare m text := public.mon_ecole();
+begin
+  return m is not null and cardinality(p_ids) > 0 and not exists (select 1 from unnest(p_ids) x
+    where x is null or not exists (select 1 from public.profiles p where p.id = x and p.ecole = m));
+end $$;
+revoke all on function public.de_mon_ecole(uuid[]) from public, anon;
+grant execute on function public.de_mon_ecole(uuid[]) to authenticated, service_role;
+
+-- La suite d'une suppression : une mise à jour qui ne fait que vider des liens vers des lignes qui n'existent plus. Quand
+-- un compte, une offre, une demande… s'en va, la base vide elle-même les liens « on delete set null » qui le visaient. Les
+-- gardes des tables (garde_ecole, protect_*) laissent passer cette mise à jour telle quelle : elles ne la refusent pas (le
+-- compte qui se supprime n'a plus d'école, « pas dans ton réseau ») et ne la remettent pas comme avant (un lien vers une
+-- ligne disparue, refusé ensuite au geste suivant de l'autre membre). Vrai seulement si chaque colonne changée devient vide,
+-- est une clé étrangère « on delete set null » de la table et visait une ligne qui n'existe plus : tant qu'une ligne existe,
+-- un lien vers elle ne peut que la viser, et vider un lien n'ouvre rien à personne. Ni un drapeau ni un réglage : rien
+-- qu'un membre puisse poser. Pour les déclencheurs seulement (aucun droit pour les membres ni les visiteurs).
+create or replace function public.liens_disparus(p_table regclass, p_avant jsonb, p_apres jsonb) returns boolean
+language plpgsql stable set search_path = public as $$
+declare r record; v_existe boolean; n int := 0;
+begin
+  for r in
+    select a.key, a.value as apres, p_avant -> a.key as avant, f.ref, f.col, f.typ
+    from jsonb_each(p_apres) a
+    left join lateral (
+      select k.confrelid::regclass as ref, b.attname as col, format_type(b.atttypid, b.atttypmod) as typ
+      from pg_constraint k
+      join pg_attribute c on c.attrelid = k.conrelid and c.attnum = k.conkey[1]
+      join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
+      where k.conrelid = p_table and k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and c.attname = a.key
+      limit 1) f on true
+    -- Une colonne calculée (generated) n'est pas encore calculée dans NEW avant l'écriture : elle ne compte pas
+    where a.value is distinct from p_avant -> a.key
+      and not exists (select 1 from pg_attribute g where g.attrelid = p_table and g.attname = a.key and g.attgenerated <> '')
+  loop
+    if r.apres <> 'null'::jsonb or r.avant is null or r.avant = 'null'::jsonb or r.ref is null then return false; end if;
+    execute format('select exists (select 1 from %s where %I = $1::%s)', r.ref, r.col, r.typ) into v_existe using r.avant #>> '{}';
+    if v_existe then return false; end if;
+    n := n + 1;
+  end loop;
+  return n > 0;
+end $$;
+revoke all on function public.liens_disparus(regclass, jsonb, jsonb) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
@@ -179,7 +230,13 @@ end $$;
 drop trigger if exists trg_protect_profile on public.profiles;
 create trigger trg_protect_profile before insert or update on public.profiles
   for each row execute function public.protect_profile();
-update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
+-- La table n'est touchée que s'il y a un compte à corriger : une mise à jour, même sans ligne, avancerait maj_tables et
+-- chaque page ouverte rechargerait la liste des membres à chaque passage de la mise à jour
+do $$ begin
+  if exists (select 1 from public.profiles where role = 'admin' and not admin_ok) then
+    update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Offres publiées (surtout par les lauréats)
@@ -262,6 +319,8 @@ begin
     end if;
     return new;
   end if;
+  -- L'offre a été supprimée (par son auteur, l'administration, avec un compte) : la candidature reste, détachée d'elle
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then new.updated_at := now(); return new; end if;
   select author_id into v_author from public.offers where id = old.offer_id;
   v_status := new.status; v_note := new.note; v_message := new.message;
@@ -358,6 +417,13 @@ create or replace function public.protect_placement() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
+  -- L'administration d'une école : la demande citée est celle de l'étudiant recruté (comme pour un lauréat, plus bas) ;
+  -- confirmé, le recrutement pourvoirait sinon la demande d'un autre membre (demande_reussie). Celle du réseau : comme avant.
+  if auth.uid() is not null and new.demande_id is not null and public.is_admin() and not public.super_admin()
+     and (tg_op = 'INSERT' or new.demande_id is distinct from old.demande_id or new.student_id is distinct from old.student_id)
+     and not exists (select 1 from public.demandes d where d.id = new.demande_id and d.auteur_id = new.student_id) then
+    raise exception 'Cette demande n’est pas celle de cet étudiant.';
+  end if;
   if tg_op = 'INSERT' then
     if auth.uid() is null then return new; end if;
     if public.is_admin() then
@@ -399,6 +465,8 @@ begin
     if new.status = 'confirme' and old.status <> 'confirme' then new.confirmed_at := now(); end if;
     return new;
   end if;
+  -- Le lauréat, l'offre ou la demande n'existent plus (un compte supprimé…) : le recrutement reste à l'étudiant, sans eux
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   v_status := new.status; v_merci := new.merci; v_note := new.note; v_partage := new.partage_ok;
   v_ent := new.entreprise; v_ville := new.ville; v_pays := new.pays; v_type := new.type;
   new := old;
@@ -559,7 +627,7 @@ language sql stable security definer set search_path = public as $$
   select u.email::text from public.mentorships m join auth.users u on u.id = m.student_id
   where m.id = p_id and m.status = 'acceptee' and m.mentor_id = auth.uid();
 $$;
-revoke all on function public.email_rdv(uuid) from public;
+revoke all on function public.email_rdv(uuid) from public, anon;
 grant execute on function public.email_rdv(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
@@ -678,7 +746,7 @@ begin
     where public.super_admin() or exists (select 1 from public.profiles p where p.id = u.id and p.ecole = public.mon_ecole())
     order by u.created_at desc;
 end $$;
-revoke all on function public.admin_comptes() from public;
+revoke all on function public.admin_comptes() from public, anon;
 grant execute on function public.admin_comptes() to authenticated;
 
 -- ---------------------------------------------------------------------
@@ -1001,9 +1069,12 @@ grant execute on function public.mon_parrain() to authenticated;
 create or replace function public.attribuer_parrains() returns int
 language plpgsql security definer set search_path = public as $$
 declare r record; n int := 0; v_s int := public.saison_courante();
+  -- L'administration d'une école : les étudiants de son école ; celle du réseau et la tâche de la base : toutes
+  v_tous boolean := auth.uid() is null or public.super_admin(); v_ecole text := public.mon_ecole();
 begin
   if auth.uid() is not null and not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
   for r in select p.id from public.profiles p where p.role = 'etudiant' and p.promo = v_s + 3
+      and (v_tous or p.ecole = v_ecole)
       and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = v_s)
       order by p.created_at loop
     if public.donner_parrain(r.id) is not null then n := n + 1; end if;
@@ -1423,8 +1494,9 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at, 'id', new.id)
     from public.profiles p
-    -- Écoles : celle du café (l'administration reçoit tout, comme dans push_filtre)
-    where p.id <> new.organisateur_id and (p.ecole = new.ecole or p.role = 'admin') and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
+    -- Écoles : celle du café (l'administration du réseau reçoit tout, comme dans push_filtre ; celle d'une autre école,
+    -- ce qui est de son école)
+    where p.id <> new.organisateur_id and (p.ecole = new.ecole or (p.role = 'admin' and p.ecole = 'ensam-meknes')) and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
     order by public.derniere_visite(p.id) desc nulls last
     limit 200;
@@ -1819,10 +1891,12 @@ begin
     perform public.noter_push(new.user_id, new.kind, -2);
     return null;
   end if;
-  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements,
-  -- et ce qu'elle fait notifie le membre concerné, quelle que soit son école). Les envois à plusieurs filtrent
+  -- Écoles : ce que fait un membre ne notifie que son école (l'administration du réseau reçoit tout, comme les
+  -- signalements, et ce qu'elle fait notifie le membre concerné, quelle que soit son école). L'administration d'une autre
+  -- école est un membre de son école ici : elle ne reçoit et ne notifie que son école. Les envois à plusieurs filtrent
   -- eux-mêmes l'école avant leur plafond (limit), sinon d'autres écoles prendraient les places.
-  if auth.uid() is not null and not public.is_admin() and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
+  if auth.uid() is not null and not public.super_admin() and exists (select 1 from public.profiles d where d.id = new.user_id
+      and not (d.role = 'admin' and d.ecole = 'ensam-meknes')
       and d.ecole is distinct from (select e.ecole from public.profiles e where e.id = auth.uid())) then return null; end if;
   return new;
 exception when others then raise warning 'push_filtre : %', sqlerrm; return new;  -- dans le doute, la notification part
@@ -2016,9 +2090,15 @@ create table if not exists public.demandes_contact (
   check (demandeur_id <> cible_id)
 );
 
+-- Qui est en contact avec qui. La règle des coordonnées, la vue profils (voit_champ) et la messagerie (peut_discuter) le
+-- demandent pour l'appelant lui-même. Un membre qui l'appelle avec d'autres ids n'a de réponse que pour un lien où il
+-- est ; l'administration, pour deux membres de son école (celle du réseau : partout) ; la base seule (sans membre) : tout.
 create or replace function public.en_relation(p_viewer uuid, p_owner uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_viewer is not null and p_owner is not null and (
+  select p_viewer is not null and p_owner is not null
+    and (auth.uid() is null or auth.uid() = p_viewer or auth.uid() = p_owner or public.super_admin()
+         or (public.is_admin() and public.de_mon_ecole(p_viewer, p_owner)))
+    and (
     exists (select 1 from public.demandes_contact d where d.status = 'acceptee'
       and ((d.demandeur_id = p_viewer and d.cible_id = p_owner) or (d.demandeur_id = p_owner and d.cible_id = p_viewer)))
     or exists (select 1 from public.applications a join public.offers o on o.id = a.offer_id
@@ -2026,6 +2106,8 @@ language sql stable security definer set search_path = public as $$
     or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id
       where x.status = 'acceptee' and ((d.auteur_id = p_owner and x.laureat_id = p_viewer) or (d.auteur_id = p_viewer and x.laureat_id = p_owner))));
 $$;
+revoke all on function public.en_relation(uuid, uuid) from public, anon;
+grant execute on function public.en_relation(uuid, uuid) to authenticated, service_role;
 
 create or replace function public.protect_demande_contact() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -2054,7 +2136,12 @@ create trigger trg_protect_demande_contact before insert or update on public.dem
 insert into public.coordonnees (id, contact)
   select id, left(trim(contact), 200) from public.profiles where coalesce(trim(contact), '') <> ''
   on conflict (id) do nothing;
-update public.profiles set contact = null where contact is not null;
+-- Seulement s'il reste un contact à vider (comme plus haut pour admin_ok : maj_tables n'avance pas pour rien)
+do $$ begin
+  if exists (select 1 from public.profiles where contact is not null) then
+    update public.profiles set contact = null where contact is not null;
+  end if;
+end $$;
 
 create or replace function public.contact_vers_coordonnees() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -2100,14 +2187,18 @@ begin
   if p_owner = auth.uid() or a = 'tous' then return true; end if;
   if public.is_admin() then return true; end if;
   if a = 'laureats' and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
-  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
-  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
+  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande, ceux de l'école de la
+  -- demande (ceux qui la lisent) ; une demande d'une autre école n'ouvre pas le CV à un lauréat d'ici
+  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match')
+       and d.ecole = (select public.mon_ecole()))
      and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
   -- CV de l'étudiant : le lauréat qui a un match avec lui le lit (page Match, section « Match » en fin de fichier ;
   -- peut_voir_cv, pour le stockage « cv », passe aussi par ici)
   if p_champ = 'cv' and exists (select 1 from public.matchs m where m.etudiant_id = p_owner and m.laureat_id = auth.uid()) then return true; end if;
   return public.en_relation(auth.uid(), p_owner);
 end $$;
+revoke all on function public.voit_champ(uuid, jsonb, text) from public, anon;
+grant execute on function public.voit_champ(uuid, jsonb, text) to authenticated, service_role;
 
 -- =====================================================================
 --  Écoles : chaque école a son réseau, dans la même base (première partie, la seconde est à la fin du fichier).
@@ -2133,9 +2224,22 @@ $$;
 revoke all on function public.mon_ecole() from public, anon;
 grant execute on function public.mon_ecole() to authenticated, service_role;
 
--- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau
+-- L'école que montre la page d'entrée : celle du membre connecté, sinon celle du lien de l'école (?ecole=…, p_ecole),
+-- sinon ENSAM Meknès. null tant que le réseau de cette école n'est pas ouvert (ou qu'elle n'existe pas) : rien ne s'affiche.
+-- Ici, dès la première partie : les chiffres et les fondateurs de la page d'entrée (plus bas) la demandent aussi.
+create or replace function public.ecole_entree(p_ecole text default null) returns text
+language sql stable security definer set search_path = public as $$
+  select e.slug from public.ecoles e where e.slug = coalesce(public.mon_ecole(), p_ecole, 'ensam-meknes') and e.ouverte;
+$$;
+revoke all on function public.ecole_entree(text) from public, anon, authenticated;
+
+-- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau. Un visiteur sans compte : les écoles
+-- ouvertes, par une règle à lui qui n'appelle aucune fonction (mon_ecole et super_admin ne lui sont pas permises : une
+-- seule règle pour les deux rôles lui refusait toute lecture, « permission denied for function »)
 drop policy if exists "lecture" on public.ecoles;
-create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+create policy "lecture" on public.ecoles for select to authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+drop policy if exists "lecture visiteurs" on public.ecoles;
+create policy "lecture visiteurs" on public.ecoles for select to anon using (ouverte);
 drop policy if exists "administration" on public.ecoles;
 create policy "administration" on public.ecoles for all to authenticated using (public.super_admin()) with check (public.super_admin());
 
@@ -2248,6 +2352,12 @@ create or replace function public.protect_relecture() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.relectures_cv%rowtype; v_role text;
 begin
+  -- Le relecteur n'existe plus (son compte supprimé) : une relecture pas encore rendue redevient ouverte à tous, sans son
+  -- brouillon, comme quand il passe la main ; une relecture rendue garde sa synthèse
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then
+    if old.status = 'en_cours' then new.status := 'demandee'; new.pris_at := null; new.synthese := null; end if;
+    return new;
+  end if;
   if auth.uid() is null or public.is_admin() then return new; end if;
   select role into v_role from public.profiles where id = auth.uid();
   if tg_op = 'INSERT' then
@@ -2323,8 +2433,10 @@ declare v_owner uuid; v_vis jsonb;
 begin
   if auth.uid() is null then return false; end if;
   begin v_owner := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
-  if v_owner = auth.uid() or public.is_admin() then return true; end if;
+  if v_owner = auth.uid() or public.super_admin() then return true; end if;
   if (select ecole from public.profiles where id = v_owner) is distinct from public.mon_ecole() then return false; end if;
+  -- L'administration d'une école : les CV de son école (celle du réseau : tous, plus haut)
+  if public.is_admin() then return true; end if;
   if exists (select 1 from public.relectures_cv r where r.cv_path = p_name and r.status <> 'annulee'
       and (r.reviewer_id = auth.uid() or (r.reviewer_id is null and r.status = 'demandee'
         and exists (select 1 from public.profiles l where l.id = auth.uid() and l.role = 'laureat')))) then
@@ -2334,6 +2446,8 @@ begin
   if not found then return false; end if;
   return public.voit_champ(v_owner, v_vis, 'cv');
 end $$;
+revoke all on function public.peut_voir_cv(text) from public, anon;
+grant execute on function public.peut_voir_cv(text) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------
 -- Banque d'entretiens : les questions posées, par entreprise, partagées après l'entretien
@@ -2386,6 +2500,8 @@ create or replace function public.protect_entretien() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.entretiens%rowtype;
 begin
+  -- L'offre a été supprimée : l'entretien reste, détaché d'elle
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   new.questions := array(select left(trim(x), 300) from unnest(coalesce(new.questions, '{}')) x where trim(x) <> '' limit 20);
   if auth.uid() is null or public.is_admin() then return new; end if;
   if tg_op = 'INSERT' then
@@ -2495,13 +2611,16 @@ create index if not exists guide_pays_historique_guide on public.guide_pays_hist
 create or replace function public.protect_guide() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- Son auteur a supprimé son compte : le guide et son historique restent, sans auteur
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if tg_op = 'UPDATE' then
     new.pays := old.pays; new.section := old.section; new.created_at := old.created_at;
     if new.contenu is distinct from old.contenu then
       insert into public.guide_pays_historique (guide_id, contenu, updated_by, updated_at) values (old.id, old.contenu, old.updated_by, old.updated_at);
     end if;
   end if;
-  if auth.uid() is not null and not public.is_admin() then
+  -- Le guide est commun à toutes les écoles : l'administration d'une école l'écrit comme un membre (celle du réseau, toujours)
+  if auth.uid() is not null and not public.super_admin() then
     if public.cle_lieu(new.pays) = 'maroc' or not exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'laureat' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)) then
       raise exception 'Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.';
     end if;
@@ -2561,6 +2680,8 @@ language sql stable security definer set search_path = public as $$
   select coalesce(array(select lower(trim(x)) from jsonb_array_elements_text(
     (select valeur from public.reglages where cle = 'domaines_ecole' and jsonb_typeof(valeur) = 'array')) x where trim(x) <> ''), '{}');
 $$;
+revoke all on function public.domaines_ecole() from public, anon;
+grant execute on function public.domaines_ecole() to authenticated, service_role;
 
 -- Domaines et email obligatoire d'une école : ENSAM Meknès garde ses réglages (Administration > Réglages), les autres
 -- écoles ont les leurs dans ecoles (seconde partie « Écoles », plus bas)
@@ -2609,11 +2730,18 @@ create table if not exists public.verifications_pairs (
   check (laureat_id <> verificateur_id)
 );
 
+-- Les confirmations d'un lauréat par des lauréats vérifiés de sa promo : les membres de son école les lisent déjà
+-- (verifications_pairs et la vue profils). Un membre d'une autre école, ou son administration, a 0 ; l'administration du
+-- réseau et la base seule, le vrai compte. protect_profile (la vérification automatique) le demande pour le lauréat
+-- lui-même, son administration ou qui vient de le confirmer : tous de son école.
 create or replace function public.pairs_valides(p_id uuid, p_promo int) returns int
 language sql stable security definer set search_path = public as $$
   select count(*)::int from public.verifications_pairs v join public.profiles x on x.id = v.verificateur_id
-  where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo;
+  where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo
+    and (auth.uid() is null or auth.uid() = p_id or public.super_admin() or public.de_mon_ecole(p_id));
 $$;
+revoke all on function public.pairs_valides(uuid, int) from public, anon;
+grant execute on function public.pairs_valides(uuid, int) to authenticated, service_role;
 
 create or replace function public.protect_verification_pair() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -2722,8 +2850,9 @@ begin
       -- evenement (celle de la fonction d'avant) ; quelle que soit la version de la fonction, chaque événement a sa ligne
       jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'id', new.id, 'evenement', new.id)
     from public.profiles p
-    -- Écoles : celle de l'événement (l'administration reçoit tout, comme dans push_filtre)
-    where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
+    -- Écoles : celle de l'événement (l'administration du réseau reçoit tout, comme dans push_filtre ; celle d'une autre
+    -- école, ce qui est de son école)
+    where p.id is distinct from new.author_id and (p.ecole = new.ecole or (p.role = 'admin' and p.ecole = 'ensam-meknes'))
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
@@ -2890,11 +3019,12 @@ begin
     execute format('drop policy if exists "suppression proprietaire" on public.%I', t);
   end loop;
 end $$;
--- Réglages : lisibles par tous (même sans compte), modifiés par l'administration
+-- Réglages : lisibles par tous (même sans compte), modifiés par l'administration du réseau (ce sont ceux de l'ENSAM
+-- Meknès ; une autre école a les siens dans ecoles)
 create policy "lecture membres" on public.reglages for select to anon, authenticated using (true);
-create policy "ecriture proprietaire" on public.reglages for insert to authenticated with check (public.is_admin());
-create policy "modif proprietaire" on public.reglages for update to authenticated using (public.is_admin());
-create policy "suppression proprietaire" on public.reglages for delete to authenticated using (public.is_admin());
+create policy "ecriture proprietaire" on public.reglages for insert to authenticated with check (public.super_admin());
+create policy "modif proprietaire" on public.reglages for update to authenticated using (public.super_admin());
+create policy "suppression proprietaire" on public.reglages for delete to authenticated using (public.super_admin());
 grant select on public.reglages to anon;
 -- Confirmations entre lauréats : visibles des membres ; on retire la sienne
 create policy "lecture membres" on public.verifications_pairs for select to authenticated using (true);
@@ -3333,9 +3463,12 @@ begin
       perform public.pousser(new.reviewer_id, 'merci', jsonb_build_object('nom', v_nom, 'r', new.id));
     end if;
   elsif tg_table_name = 'signalements' then
+    -- L'administration du réseau, et celle de l'école de qui signale
     insert into public.push_queue (user_id, kind, data)
     select a.id, 'signalement', jsonb_build_object('motif', new.motif, 'id', new.id)
-    from public.profiles a where a.role = 'admin' and exists (select 1 from public.push_subscriptions x where x.user_id = a.id)
+    from public.profiles a where a.role = 'admin'
+      and (a.ecole = 'ensam-meknes' or a.ecole = (select r.ecole from public.profiles r where r.id = new.auteur_id))
+      and exists (select 1 from public.push_subscriptions x where x.user_id = a.id)
     order by public.derniere_visite(a.id) desc nulls last
     limit 10;
   end if;
@@ -3414,7 +3547,8 @@ create policy "suppression proprietaire" on public.avis_stage for delete to auth
 create policy "lecture membres" on public.guide_pays for select to authenticated using (true);
 create policy "ecriture proprietaire" on public.guide_pays for insert to authenticated with check (true);
 create policy "modif proprietaire" on public.guide_pays for update to authenticated using (true);
-create policy "suppression proprietaire" on public.guide_pays for delete to authenticated using (public.is_admin());
+-- Le guide est commun à toutes les écoles : le retirer revient à l'administration du réseau
+create policy "suppression proprietaire" on public.guide_pays for delete to authenticated using (public.super_admin());
 create policy "lecture membres" on public.guide_pays_historique for select to authenticated using (true);
 -- Signalements : l'auteur et l'administration
 create policy "lecture membres" on public.signalements for select to authenticated using (auteur_id = auth.uid() or public.is_admin());
@@ -3565,7 +3699,9 @@ language sql stable security definer set search_path = public as $$
     and not exists (select 1 from public.blocages b
       where (b.user_id = p_moi and b.bloque_id = p_autre) or (b.user_id = p_autre and b.bloque_id = p_moi))
     and (
-      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin')
+      -- L'administration du réseau écrit à tous ; celle d'une autre école, aux membres de son école
+      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin'
+        and (a.ecole = 'ensam-meknes' or exists (select 1 from public.profiles b where b.id = p_autre and b.ecole = a.ecole)))
       or exists (select 1 from public.messages m where m.author_id = p_autre and m.dest_id = p_moi)
       or public.en_relation(p_moi, p_autre) or public.en_relation(p_autre, p_moi)
       or exists (select 1 from public.mentorships m where m.mentor_id is not null and m.status in ('demande','acceptee','terminee')
@@ -3728,10 +3864,17 @@ alter table public.signalements drop constraint if exists signalements_cible_typ
 alter table public.signalements add constraint signalements_cible_type_check
   check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande','reponse_demande'));
 
+-- Seule l'administration l'apprend (règle « lecture membres » des messages, fichiers du chat) : celle de l'école des deux
+-- membres du message, celle du réseau pour tous ; la base seule (sans membre) aussi. Un membre n'a jamais de réponse,
+-- même l'auteur du message ou celui qui l'a reçu : il saurait qui l'a signalé.
 create or replace function public.message_signale(p_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id);
+  select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id)
+    and (auth.uid() is null or public.super_admin() or (public.is_admin()
+         and exists (select 1 from public.messages m where m.id = p_id and public.de_mon_ecole(m.author_id, m.dest_id))));
 $$;
+revoke all on function public.message_signale(uuid) from public, anon;
+grant execute on function public.message_signale(uuid) to authenticated, service_role;
 
 alter table public.messages enable row level security;
 alter table public.blocages enable row level security;
@@ -3803,8 +3946,12 @@ create or replace function public.peut_lire_fichier_chat(p_name text) returns bo
 language sql stable security definer set search_path = public as $$
   select auth.uid() is not null and (
     (storage.foldername(p_name))[1] = auth.uid()::text or (storage.foldername(p_name))[2] = auth.uid()::text
-    or (public.is_admin() and exists (select 1 from public.messages m where m.fichier = p_name and public.message_signale(m.id))));
+    -- L'administration : un fichier signalé ; celle d'une école, d'une conversation entre membres de son école
+    or (public.is_admin() and exists (select 1 from public.messages m where m.fichier = p_name and public.message_signale(m.id)
+      and (public.super_admin() or public.de_mon_ecole(m.author_id, m.dest_id)))));
 $$;
+revoke all on function public.peut_lire_fichier_chat(text) from public, anon;
+grant execute on function public.peut_lire_fichier_chat(text) to authenticated, service_role;
 do $$ begin
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
     values ('chat', 'chat', false, 5242880, array['image/jpeg','image/png','image/webp','audio/webm','audio/ogg','audio/mp4','audio/mpeg','audio/aac'])
@@ -4040,7 +4187,16 @@ declare v_p record; v public.demandes;
 begin
   -- Suites automatiques (match, pourvue) : faites par la base elle-même
   if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  -- Le lauréat du match n'existe plus (son compte supprimé) : la demande reste à son auteur, qui la rouvre ou la ferme
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then
+    -- L'administration d'une école : l'aide retenue est une aide de cette demande. Une aide d'une autre demande (d'une
+    -- autre école) serait close à la fin de celle-ci (suite_demande). Celle du réseau : comme avant.
+    if auth.uid() is not null and new.proposition_id is not null and not public.super_admin()
+       and (tg_op = 'INSERT' or new.proposition_id is distinct from old.proposition_id)
+       and not exists (select 1 from public.propositions x where x.id = new.proposition_id and x.demande_id = new.id) then
+      raise exception 'Cette aide n’est pas une aide de cette demande.';
+    end if;
     if tg_op = 'UPDATE' then new.updated_at := now(); end if;
     return new;
   end if;
@@ -4282,6 +4438,8 @@ language sql stable security definer set search_path = public as $$
   select case when cardinality(coalesce(public.parcours_de((select a.filiere from public.profiles a where a.id = d.auteur_id)), '{}'::text[])) = 0
     then d.created_at else d.created_at + interval '24 hours' end;
 $$;
+revoke all on function public.demande_large_le(public.demandes) from public, anon;
+grant execute on function public.demande_large_le(public.demandes) to authenticated, service_role;
 
 alter table public.demandes add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
 create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
@@ -4395,10 +4553,14 @@ grant execute on function public.pouls_reseau() to authenticated;
 -- Page d'entrée (visiteur sans compte) : trois totaux, jamais un nom ni une ligne.
 -- Lauréats inscrits (l'administration n'est pas comptée), leurs promos, et les entreprises où ils travaillent.
 -- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
-create or replace function public.chiffres_publics() returns jsonb
+-- L'école : celle du membre connecté ; sans compte, celle de la page d'entrée (ecole_entree : le lien ?ecole=…, p_ecole,
+-- sinon ENSAM Meknès). Une école inconnue ou pas encore ouverte : des zéros, comme une école où personne n'est inscrit.
+-- Une seule version (p_ecole facultatif) : avec deux, l'appel sans argument du site serait ambigu.
+drop function if exists public.chiffres_publics();
+create or replace function public.chiffres_publics(p_ecole text default null) returns jsonb
 language sql stable security definer set search_path = public as $$
   with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles
-    where role = 'laureat' and not admin_ok and ecole = coalesce(public.mon_ecole(), 'ensam-meknes')),
+    where role = 'laureat' and not admin_ok and ecole = (select coalesce(public.mon_ecole(), public.ecole_entree(p_ecole)))),
   ks as (select distinct k from l where k is not null and k <> '')
   select jsonb_build_object(
     'laureats', (select count(*) from l),
@@ -4409,16 +4571,20 @@ language sql stable security definer set search_path = public as $$
       cross join lateral generate_series(1, array_length(string_to_array(a.k, ' '), 1) - 1) i
       join ks b on b.k = array_to_string((string_to_array(a.k, ' '))[1:i], ' ')));
 $$;
-revoke all on function public.chiffres_publics() from public;
-grant execute on function public.chiffres_publics() to anon, authenticated;
+revoke all on function public.chiffres_publics(text) from public;
+grant execute on function public.chiffres_publics(text) to anon, authenticated;
 
 -- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
 -- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
+-- L'offre d'une école dont le réseau n'est pas encore ouvert : null aussi (comme une offre inconnue), sauf pour un membre
+-- de cette école. En plpgsql : la colonne « ecole » des offres n'existe pas encore ici dans une première installation.
 create or replace function public.offre_partagee(p_id uuid) returns jsonb
-language sql stable security definer set search_path = public as $$
-  select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
-  from public.offers o where o.id = p_id;
-$$;
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
+    from public.offers o join public.ecoles e on e.slug = o.ecole
+    where o.id = p_id and (e.ouverte or o.ecole = public.mon_ecole()));
+end $$;
 revoke all on function public.offre_partagee(uuid) from public;
 grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
@@ -4433,7 +4599,10 @@ grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 alter table public.profiles add column if not exists fondateur_public boolean;
 create index if not exists profiles_photo_fondateur on public.profiles (photo_path) where fondateur_public;
 
-create or replace function public.fondateurs_classement() returns table (id uuid, at timestamptz, type text, rang int)
+-- Le classement d'une école : chaque appel donne l'école (null ou une école inconnue : personne). Sans argument,
+-- l'ENSAM Meknès, comme avant que l'école ne soit demandée. Ouvert seulement aux fonctions de la base.
+drop function if exists public.fondateurs_classement();
+create or replace function public.fondateurs_classement(p_ecole text default 'ensam-meknes') returns table (id uuid, at timestamptz, type text, rang int)
 language sql stable security definer set search_path = public as $$
   with c as (
     select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
@@ -4447,24 +4616,30 @@ language sql stable security definer set search_path = public as $$
       where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
   ), premiere as (
     select distinct on (c.l) c.l, c.at, c.k from c
-      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = p_ecole
       where c.at is not null
       order by c.l, c.at, c.k
   )
   select l, at, k, (row_number() over (order by at, l))::int from premiere order by at, l limit 25;
 $$;
-revoke all on function public.fondateurs_classement() from public, anon, authenticated;
+revoke all on function public.fondateurs_classement(text) from public, anon, authenticated;
 
 -- Le bandeau des fondateurs. Un membre connecté reçoit tout le classement (les profils lui sont déjà visibles) et
 -- son propre choix (mon_choix). Un visiteur sans compte reçoit les totaux, et seulement les fondateurs qui ont dit oui
 -- (prénom et nom, filière, promo, type et date de la première contribution, chemin de la photo) ; pas de champ id,
 -- mais le chemin de la photo commence par l'id du membre (photos/<id>/…) : il n'est donné que pour qui a dit oui.
-create or replace function public.fondateurs_publics() returns jsonb
+-- L'école : celle du membre connecté ; sans compte, celle de la page d'entrée (ecole_entree : le lien ?ecole=…, p_ecole,
+-- sinon ENSAM Meknès). Une école inconnue ou pas encore ouverte : aucun fondateur, comme une école où personne n'a encore
+-- aidé (total 0). Une seule version (p_ecole facultatif) : avec deux, l'appel sans argument du site serait ambigu.
+drop function if exists public.fondateurs_publics();
+create or replace function public.fondateurs_publics(p_ecole text default null) returns jsonb
 language sql stable security definer set search_path = public as $$
-  with f as (
+  with qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre,
+      coalesce(public.mon_ecole(), public.ecole_entree(p_ecole)) as ecole),
+  f as (
     select c.id, c.at, c.type, c.rang, p.full_name, p.filiere, p.promo, p.photo_path, p.verified, p.fondateur_public
-    from public.fondateurs_classement() c join public.profiles p on p.id = c.id
-  ), qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre)
+    from qui cross join lateral public.fondateurs_classement(qui.ecole) c join public.profiles p on p.id = c.id
+  )
   select jsonb_build_object(
     'max', 25,
     'total', (select count(*) from f),
@@ -4476,8 +4651,8 @@ language sql stable security definer set search_path = public as $$
         order by f.rang) from f where q.membre or f.fondateur_public is true), '[]'::jsonb))
   from qui q;
 $$;
-revoke all on function public.fondateurs_publics() from public;
-grant execute on function public.fondateurs_publics() to anon, authenticated;
+revoke all on function public.fondateurs_publics(text) from public;
+grant execute on function public.fondateurs_publics(text) to anon, authenticated;
 
 -- Seul le membre lui-même dit oui : l'administration peut le retirer de la page d'entrée, jamais l'y mettre
 create or replace function public.protect_fondateur_public() returns trigger
@@ -4494,14 +4669,18 @@ create trigger trg_protect_fondateur_public before update of fondateur_public on
 
 -- Photos de la page d'entrée : le stockage « photos » reste privé ; un visiteur peut seulement obtenir un lien temporaire
 -- (createSignedUrl) vers la photo actuelle d'un fondateur qui a dit oui. Rien d'autre n'est lisible sans compte.
+-- La règle du stockage ne connaît que le nom du fichier, pas l'école que regarde le visiteur : c'est le propriétaire qui
+-- décide (le profil dont c'est la photo actuelle, son propre oui, un réseau ouvert, et une place parmi les fondateurs
+-- de SON école). La photo d'un membre d'une école pas encore ouverte n'est jamais lisible sans compte.
 create or replace function public.photo_fondateur_publique(p_name text) returns boolean
 language plpgsql stable security definer set search_path = public as $$
-declare v uuid;
+declare v uuid; v_ecole text;
 begin
   -- D'abord le profil (index partiel, une ligne au plus) : le classement n'est calculé que pour une photo consentie
-  select p.id into v from public.profiles p where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
+  select p.id, p.ecole into v, v_ecole from public.profiles p join public.ecoles e on e.slug = p.ecole and e.ouverte
+    where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
   if v is null then return false; end if;
-  return exists (select 1 from public.fondateurs_classement() c where c.id = v);
+  return exists (select 1 from public.fondateurs_classement(v_ecole) c where c.id = v);
 end $$;
 revoke all on function public.photo_fondateur_publique(text) from public;
 grant execute on function public.photo_fondateur_publique(text) to anon;
@@ -5534,8 +5713,9 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180), 'id', new.id)
   from public.profiles p
-  -- Écoles : celle de l'annonce (l'administration reçoit tout, comme dans push_filtre)
-  where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
+  -- Écoles : celle de l'annonce (l'administration du réseau reçoit tout, comme dans push_filtre ; celle d'une autre
+  -- école, ce qui est de son école)
+  where p.id is distinct from new.author_id and (p.ecole = new.ecole or (p.role = 'admin' and p.ecole = 'ensam-meknes'))
     and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
   order by public.derniere_visite(p.id) desc nulls last
@@ -5777,6 +5957,8 @@ language plpgsql security definer set search_path = public as $$
 declare v public.matchs;
 begin
   if auth.uid() is null then return new; end if;
+  -- L'offre du match a été supprimée : le match reste, sans elle
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   v := old;
   if auth.uid() = old.etudiant_id then v.vu_etudiant_at := coalesce(old.vu_etudiant_at, case when new.vu_etudiant_at is not null then now() end); end if;
   if auth.uid() = old.laureat_id then v.vu_laureat_at := coalesce(old.vu_laureat_at, case when new.vu_laureat_at is not null then now() end); end if;
@@ -5832,7 +6014,9 @@ language sql stable security definer set search_path = public as $$
     and not exists (select 1 from public.blocages b
       where (b.user_id = p_moi and b.bloque_id = p_autre) or (b.user_id = p_autre and b.bloque_id = p_moi))
     and (
-      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin')
+      -- L'administration du réseau écrit à tous ; celle d'une autre école, aux membres de son école
+      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin'
+        and (a.ecole = 'ensam-meknes' or exists (select 1 from public.profiles b where b.id = p_autre and b.ecole = a.ecole)))
       or exists (select 1 from public.messages m where m.author_id = p_autre and m.dest_id = p_moi)
       or public.en_relation(p_moi, p_autre) or public.en_relation(p_autre, p_moi)
       or exists (select 1 from public.mentorships m where m.mentor_id is not null and m.status in ('demande','acceptee','terminee')
@@ -5881,15 +6065,22 @@ create table if not exists public.sponsorises (
   constraint sponsorises_dates check (fin >= debut)
 );
 create index if not exists sponsorises_en_cours on public.sponsorises (debut, fin) where actif;
+-- L'école de la carte ; sans école : une carte pour toutes les écoles (écrite par l'administration du réseau)
+alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 
 -- Écrite par l'administration seulement ; la base garde l'auteur et la date, et nettoie la carte comme le site
 -- (normaliserSponsorise) : textes sans espaces autour, listes vides = tout le monde, domaine sans « https:// » ni « www. »
 create or replace function public.protect_sponsorise() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- L'admin qui l'a écrite a supprimé son compte (ou a été supprimé) : la carte reste, sans auteur
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is not null and not public.is_admin() then
     raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
   end if;
+  -- L'administration d'une école écrit pour son école : une carte sans école (pour toutes les écoles) est de la sienne.
+  -- Les règles refusent ensuite une autre école ; toutes les écoles restent à l'administration du réseau.
+  if auth.uid() is not null and not public.super_admin() then new.ecole := coalesce(new.ecole, public.mon_ecole()); end if;
   if tg_op = 'UPDATE' then
     new.id := old.id; new.created_by := old.created_by; new.created_at := old.created_at;
   else
@@ -5912,11 +6103,19 @@ drop policy if exists "lecture membres" on public.sponsorises;
 drop policy if exists "ecriture admin" on public.sponsorises;
 drop policy if exists "modif admin" on public.sponsorises;
 drop policy if exists "suppression admin" on public.sponsorises;
+-- Chaque école ses cartes (comme « reseau de l'ecole ») : un membre lit les cartes en cours de son école et celles de
+-- toutes les écoles (sans école) ; l'administration d'une école, toutes celles de son école (sa console) et celles de
+-- toutes les écoles, qu'elle n'écrit pas ; l'administration du réseau (super_admin) lit et écrit tout
 create policy "lecture membres" on public.sponsorises for select to authenticated using (
-  public.is_admin() or (actif and current_date between debut and fin));
-create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (public.is_admin());
-create policy "modif admin" on public.sponsorises for update to authenticated using (public.is_admin()) with check (public.is_admin());
-create policy "suppression admin" on public.sponsorises for delete to authenticated using (public.is_admin());
+  (public.is_admin() or (actif and current_date between debut and fin))
+  and (ecole is null or ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (
+  public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "modif admin" on public.sponsorises for update to authenticated
+  using (public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())))
+  with check (public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
+create policy "suppression admin" on public.sponsorises for delete to authenticated using (
+  public.is_admin() and (ecole = (select public.mon_ecole()) or (select public.super_admin())));
 
 -- Une ligne par carte, membre, jour et geste ('vue' ou 'clic') : un membre compte une fois par jour pour chacun.
 -- Aucune règle de lecture ni d'écriture : seules compter_sponsorise() et bilan_sponsorises() y touchent.
@@ -5932,7 +6131,6 @@ alter table public.sponsorises_comptes enable row level security;
 revoke all on public.sponsorises_comptes from public, anon, authenticated;
 
 -- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
-alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
 language sql stable set search_path = public as $$
   select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin and (s.ecole is null or s.ecole = p.ecole)
@@ -5959,6 +6157,7 @@ revoke all on function public.compter_sponsorise(uuid, text) from public, anon;
 grant execute on function public.compter_sponsorise(uuid, text) to authenticated;
 
 -- Les totaux de chaque carte, pour l'administration seule : vues, clics, membres différents. Jamais un nom ni un identifiant.
+-- Les cartes qu'elle lit : celle d'une école, les cartes de son école et de toutes les écoles ; celle du réseau, toutes.
 create or replace function public.bilan_sponsorises() returns table (sponsorise_id uuid, vues int, clics int, membres int)
 language plpgsql stable security definer set search_path = public as $$
 begin
@@ -5966,6 +6165,7 @@ begin
   return query
     select s.id, (count(c.kind) filter (where c.kind = 'vue'))::int, (count(c.kind) filter (where c.kind = 'clic'))::int, (count(distinct c.user_id))::int
     from public.sponsorises s left join public.sponsorises_comptes c on c.sponsorise_id = s.id
+    where public.super_admin() or s.ecole is null or s.ecole = public.mon_ecole()
     group by s.id;
 end $$;
 revoke all on function public.bilan_sponsorises() from public, anon;
@@ -6390,18 +6590,26 @@ begin
     v := to_jsonb(new) ->> split_part(tg_argv[i], ':', 1);
     continue when v is null;
     execute format('select ecole from public.%I where id = $1', split_part(tg_argv[i], ':', 2)) into e using v::uuid;
-    if e is distinct from m then raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501'; end if;
+    if e is distinct from m then
+      -- La suite d'une suppression (le compte qui se supprime n'a plus d'école, l'offre visée n'existe plus) : la ligne ne
+      -- fait que perdre un lien, elle ne vise personne de nouveau
+      if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
+      raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501';
+    end if;
   end loop;
   return new;
 end $$;
 revoke all on function public.garde_ecole() from public, anon, authenticated;
 
+-- La demande d'un recrutement aussi : confirmé, il la pourvoit (demande_reussie) ; une demande d'une autre école était
+-- pourvue (et ses aides closes) par un recrutement de celle-ci. Un lauréat ne cite que la demande en match avec lui,
+-- déjà de son école (protect_placement).
 do $$
 declare r record;
 begin
   for r in select * from (values
     ('mentorships', array['student_id:profiles','mentor_id:profiles']), ('relectures_cv', array['student_id:profiles','reviewer_id:profiles']),
-    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers']),
+    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers','demande_id:demandes']),
     ('demandes_contact', array['cible_id:profiles']), ('match_choix', array['cible_profil:profiles','cible_offre:offers']),
     ('propositions', array['demande_id:demandes']), ('reponses_demandes', array['demande_id:demandes']),
     ('applications', array['offer_id:offers']), ('messages', array['dest_id:profiles']), ('comments', array['offer_id:offers']),
@@ -6413,6 +6621,37 @@ begin
     execute format('drop trigger if exists aa_garde_ecole on public.%I', r.t);
     execute format('create trigger aa_garde_ecole before insert or update on public.%I for each row execute function public.garde_ecole(%s)',
       r.t, (select string_agg(quote_literal(c), ', ') from unnest(r.a) c));
+  end loop;
+end $$;
+
+-- L'école d'une ligne qui vient sous un contenu (une réponse, un vote, une réaction, un bravo, une inscription à un café ou
+-- à un événement) ou qui concerne un membre (le recrutement déclaré pour un étudiant, la confirmation d'un lauréat) : celle
+-- de ce contenu ou de ce membre. La valeur par défaut (l'école de qui écrit) se trompait quand l'administration du réseau
+-- écrit dans une autre école, ou quand la base écrit seule : la ligne était de l'ENSAM Meknès, invisible là où elle compte.
+-- Pour un membre, rien ne change (garde_ecole lui refuse déjà le contenu d'une autre école). Argument : « colonne:table » ;
+-- la table citée a un id et une école. Comme pour les ambassadeurs (protect_ambassadeur_insert).
+create or replace function public.ecole_du_parent() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v text; e text;
+begin
+  v := to_jsonb(new) ->> split_part(tg_argv[0], ':', 1);
+  if v is not null then
+    execute format('select ecole from public.%I where id = $1', split_part(tg_argv[0], ':', 2)) into e using v::uuid;
+    if e is not null then new.ecole := e; end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.ecole_du_parent() from public, anon, authenticated;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values ('answers', 'question_id:questions'), ('votes', 'answer_id:answers'), ('reactions', 'offer_id:offers'),
+    ('kudos', 'placement_id:placements'), ('cafe_participants', 'cafe_id:cafes'), ('evenement_participants', 'evenement_id:evenements'),
+    ('placements', 'student_id:profiles'), ('verifications_pairs', 'laureat_id:profiles')) as x(t, a) loop
+    -- Avant les autres déclencheurs (ordre alphabétique) : ils voient déjà la bonne école
+    execute format('drop trigger if exists a0_ecole_du_parent on public.%I', r.t);
+    execute format('create trigger a0_ecole_du_parent before insert on public.%I for each row execute function public.ecole_du_parent(%L)', r.t, r.a);
   end loop;
 end $$;
 
@@ -7222,7 +7461,8 @@ declare
   v_debut timestamptz := ((now() at time zone 'UTC')::date - 6)::timestamp at time zone 'UTC';
   v_cron jsonb; v_http jsonb; v_r jsonb;
 begin
-  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  -- Des totaux de tout le réseau (budget, tâches de la base) : à l'administration du réseau, pas à celle d'une école
+  if not public.super_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
   -- pg_cron et pg_net ne sont pas toujours là, ni lisibles : alors null, sans erreur
   begin
     select jsonb_build_object('existe', true, 'at', d.start_time, 'statut', d.status) into v_cron
@@ -7352,7 +7592,8 @@ create table if not exists public.admin_suivi (
 create index if not exists admin_suivi_type on public.admin_suivi (type, etape);
 alter table public.admin_suivi enable row level security;
 drop policy if exists "administration" on public.admin_suivi;
-create policy "administration" on public.admin_suivi for all to authenticated using (public.is_admin()) with check (public.is_admin());
+-- Le suivi des écoles et des partenaires du réseau : à l'administration du réseau, pas à celle d'une école
+create policy "administration" on public.admin_suivi for all to authenticated using (public.super_admin()) with check (public.super_admin());
 revoke all on public.admin_suivi from anon;
 
 create or replace function public.admin_suivi_maj() returns trigger
@@ -7364,20 +7605,27 @@ end $$;
 drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
 create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
 
+-- La console d'une école demande si son école est au dossier CNDP (la case « ajoutée au dossier CNDP » de son suivi, que
+-- l'administration du réseau coche) sans lire le suivi lui-même. Oui seulement pour l'administration de cette école ;
+-- non pour tout autre compte. Pas pour un visiteur.
+create or replace function public.dossier_cndp_de_mon_ecole() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(public.is_admin() and exists (select 1 from public.admin_suivi s
+    where s.type = 'ecole' and s.ecole_slug = public.mon_ecole() and s.cndp_ok), false);
+$$;
+revoke all on function public.dossier_cndp_de_mon_ecole() from public, anon;
+grant execute on function public.dossier_cndp_de_mon_ecole() to authenticated;
+
 -- =====================================================================
 --  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
 --  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
 --  ouverte aux visiteurs ne rend que des lignes de l'école du visiteur (ecole_entree : sans compte, celle du lien
---  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert).
+--  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert). Une photo, elle, suit
+--  l'école de son propriétaire (la règle du stockage ne connaît que le nom du fichier).
 -- =====================================================================
 
--- L'école que montre la page d'entrée : celle du membre connecté, sinon celle du lien de l'école (?ecole=…, p_ecole),
--- sinon ENSAM Meknès. null tant que le réseau de cette école n'est pas ouvert (ou qu'elle n'existe pas) : rien ne s'affiche.
-create or replace function public.ecole_entree(p_ecole text default null) returns text
-language sql stable security definer set search_path = public as $$
-  select e.slug from public.ecoles e where e.slug = coalesce(public.mon_ecole(), p_ecole, 'ensam-meknes') and e.ouverte;
-$$;
-revoke all on function public.ecole_entree(text) from public, anon, authenticated;
+-- L'école que montre la page d'entrée : ecole_entree(p_ecole), dans la première partie « Écoles » (les chiffres et les
+-- fondateurs de la page d'entrée s'en servent aussi, plus haut que cette section).
 
 -- Invitation nommée. code_invitation : 8 caractères (a-z, 0-9), créé à la demande par mon_code_invitation(), stable ensuite.
 -- invite_par : le membre dont le code était dans le lien d'inscription (métadonnée « invite_par » du compte), de la même
@@ -7522,13 +7770,13 @@ revoke all on function public.visages_publics(text) from public;
 grant execute on function public.visages_publics(text) to anon, authenticated;
 
 -- Le stockage « photos » reste privé : un visiteur obtient seulement un lien temporaire vers la photo actuelle d'un lauréat
--- vérifié de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
--- La règle du stockage ne sait pas quelle école le visiteur regarde : sans compte, seulement les photos de l'ENSAM Meknès
--- (la page d'entrée d'une autre école montre les initiales).
+-- vérifié qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
+-- La règle du stockage ne sait pas quelle école le visiteur regarde : c'est le propriétaire de la photo qui décide (son oui,
+-- et le réseau de SON école ouvert). La photo d'un membre d'une école pas encore ouverte n'est jamais lisible sans compte.
 create or replace function public.photo_visage_publique(p_name text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat'
-    and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes'));
+  select exists (select 1 from public.profiles p join public.ecoles e on e.slug = p.ecole and e.ouverte
+    where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat' and not p.admin_ok);
 $$;
 revoke all on function public.photo_visage_publique(text) from public;
 grant execute on function public.photo_visage_publique(text) to anon;
@@ -7605,6 +7853,166 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.reussites_publiques(text) from public;
 grant execute on function public.reussites_publiques(text) to anon, authenticated;
+
+-- =====================================================================
+--  Écoles : l'administration d'une école (rôle admin d'une école autre que l'ENSAM Meknès) ne voit et ne fait que ce
+--  qui est de son école. Les règles des tables privées laissent tout à « l'administration » (is_admin) : elle lisait,
+--  modifiait et supprimait les comptes, les candidatures, les messages signalés… de toutes les écoles, et pouvait
+--  promouvoir admin un compte de Meknès (l'administration du réseau). Une règle restrictive s'ajoute à celles de
+--  chaque table, sans les toucher : la ligne doit être de son école (ses membres, ou le contenu sous lequel elle
+--  est). Pour un membre (pas admin) et pour l'administration du réseau (super_admin), elle est toujours vraie : rien
+--  ne change. Les tables à colonne ecole de la règle « reseau de l'ecole » (seconde partie « Écoles ») l'ont déjà.
+--  Relançable.
+-- =====================================================================
+do $$
+declare r record; v_e text;
+begin
+  for r in select * from (values
+    ('profiles', 'ecole = (select public.mon_ecole())'),
+    ('liste_officielle', 'ecole = (select public.mon_ecole())'),
+    ('entretiens', 'ecole = (select public.mon_ecole())'),
+    ('avis_stage', 'ecole = (select public.mon_ecole())'),
+    ('enquetes_insertion', 'ecole = (select public.mon_ecole())'),
+    ('applications', 'public.de_mon_ecole(student_id)'),
+    ('attestations', 'public.de_mon_ecole(laureat_id)'),
+    ('blocages', 'user_id = auth.uid() or public.de_mon_ecole(user_id)'),
+    ('coordonnees', 'id = auth.uid() or public.de_mon_ecole(id)'),
+    ('demandes_contact', 'public.de_mon_ecole(demandeur_id, cible_id)'),
+    ('invitations', 'public.de_mon_ecole(laureat_id, student_id)'),
+    ('matchs', 'public.de_mon_ecole(etudiant_id, laureat_id)'),
+    ('messages', 'author_id = auth.uid() or dest_id = auth.uid() or public.de_mon_ecole(author_id, dest_id)'),
+    ('parrainages', 'public.de_mon_ecole(filleul_id, parrain_id)'),
+    ('retours_cv', 'public.de_mon_ecole(profil_id, auteur_id)'),
+    ('signalements', 'public.de_mon_ecole(auteur_id)'),
+    ('liens_rdv', 'exists (select 1 from public.mentorships m where m.id = liens_rdv.id and m.ecole = (select public.mon_ecole()))'),
+    ('comments', 'exists (select 1 from public.offers o where o.id = comments.offer_id and o.ecole = (select public.mon_ecole()))'),
+    ('propositions', 'exists (select 1 from public.demandes d where d.id = propositions.demande_id and d.ecole = (select public.mon_ecole()))'),
+    ('reponses_demandes', 'exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id and d.ecole = (select public.mon_ecole()))'),
+    ('relecture_commentaires', 'exists (select 1 from public.relectures_cv x where x.id = relecture_commentaires.relecture_id and x.ecole = (select public.mon_ecole()))'),
+    ('reactions_publiques', 'exists (select 1 from public.offers o where o.id = reactions_publiques.offer_id and o.ecole = (select public.mon_ecole()))'
+      || ' or exists (select 1 from public.demandes d where d.id = reactions_publiques.demande_id and d.ecole = (select public.mon_ecole()))')
+  ) as x(t, e) loop
+    v_e := format('not (select public.is_admin()) or (select public.super_admin()) or (%s)', r.e);
+    execute format('drop policy if exists "admin de son ecole" on public.%I', r.t);
+    execute format('create policy "admin de son ecole" on public.%I as restrictive for all to authenticated using (%s) with check (%s)', r.t, v_e, v_e);
+  end loop;
+end $$;
+
+-- Les fichiers (CV, photos de profil, photos et vocaux du chat) : l'administration d'une école ne retire que ceux de son
+-- école (le dossier de leur propriétaire ; pour le chat, celui de l'auteur et celui du destinataire). La lecture suit
+-- déjà l'école (peut_voir_cv, photo_de_mon_ecole, peut_lire_fichier_chat).
+do $$ begin
+  drop policy if exists "admin de son ecole" on storage.objects;
+  create policy "admin de son ecole" on storage.objects as restrictive for delete to authenticated using (
+    not (select public.is_admin()) or (select public.super_admin()) or bucket_id not in ('cv', 'photos', 'chat')
+    or (storage.foldername(name))[1] = auth.uid()::text
+    or (bucket_id <> 'chat' and public.de_mon_ecole(public.uuid_ou_null((storage.foldername(name))[1])))
+    or (bucket_id = 'chat' and public.de_mon_ecole(public.uuid_ou_null((storage.foldername(name))[1]), public.uuid_ou_null((storage.foldername(name))[2]))));
+exception when others then raise notice 'Stockage : règle de l’administration d’une école non posée : %', sqlerrm;
+end $$;
+
+-- Ce que l'administration d'une école écrit dans les contenus de son école (« reseau de l'ecole » : la ligne y est déjà)
+-- ne met personne d'une autre école à la place d'un auteur, d'un organisateur, d'un participant… : les règles le lui
+-- permettent (« ou l'administration »), et garde_ecole ne vérifie que les liens vers une autre ligne. Une personne
+-- déjà là (un événement de son école publié par l'administration du réseau) reste. Pour un membre (ces colonnes sont
+-- les siennes) et pour l'administration du réseau, rien à vérifier. Arguments : les colonnes, des ids de profiles, ou
+-- « colonne:table » pour une ligne d'une table qui a une école (l'offre d'un entretien, le recrutement d'un avis).
+-- Le lauréat d'une aide proposée : sans cette garde, l'administration de Casablanca mettait un lauréat de Meknès dans une
+-- aide acceptée, et l'étudiant de Casablanca et lui lisaient leurs coordonnées (en_relation). L'auteur d'un entretien ou
+-- d'un avis de stage : il le lirait, et son propre avis sur cette entreprise et cette saison serait refusé. « Invité par »,
+-- « traité par » : personne d'une autre école non plus.
+create or replace function public.garde_admin_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare i int; c text; t text; v text; ok boolean;
+begin
+  if auth.uid() is null or not public.is_admin() or public.super_admin() then return new; end if;
+  for i in 0 .. tg_nargs - 1 loop
+    c := split_part(tg_argv[i], ':', 1); t := nullif(split_part(tg_argv[i], ':', 2), '');
+    v := to_jsonb(new) ->> c;
+    continue when v is null or (tg_op = 'UPDATE' and v is not distinct from to_jsonb(old) ->> c);
+    if t is null then
+      ok := public.de_mon_ecole(v::uuid);
+    else
+      execute format('select exists (select 1 from public.%I x where x.id = $1 and x.ecole = public.mon_ecole())', t) into ok using v::uuid;
+    end if;
+    if not ok then
+      raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501';
+    end if;
+  end loop;
+  return new;
+end $$;
+revoke all on function public.garde_admin_ecole() from public, anon, authenticated;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('offers', array['author_id']), ('questions', array['author_id']), ('demandes', array['auteur_id','laureat_id']),
+    ('startups', array['fondateur_id']), ('annonces', array['author_id']), ('evenements', array['author_id']),
+    ('cafes', array['organisateur_id']), ('cafe_participants', array['user_id']), ('evenement_participants', array['user_id']),
+    ('verifications_pairs', array['verificateur_id']), ('propositions', array['laureat_id']),
+    ('entretiens', array['author_id','offer_id:offers']), ('avis_stage', array['author_id','placement_id:placements']),
+    ('profiles', array['invite_par']), ('signalements', array['traite_par'])
+  ) as x(t, a) loop
+    -- Après a0_ecole_du_parent et aa_garde_ecole (ordre alphabétique), avant les autres déclencheurs
+    execute format('drop trigger if exists ab_garde_admin_ecole on public.%I', r.t);
+    execute format('create trigger ab_garde_admin_ecole before insert or update on public.%I for each row execute function public.garde_admin_ecole(%s)',
+      r.t, (select string_agg(quote_literal(c), ', ') from unnest(r.a) c));
+  end loop;
+end $$;
+
+-- =====================================================================
+--  Liens vers des lignes disparues : les gardes d'avant liens_disparus (en haut du fichier) remettaient le lien qu'une
+--  suppression venait de vider. Une offre supprimée par son auteur restait visée par ses candidatures, ses entretiens, ses
+--  recrutements et ses matchs (puis « pas dans ton réseau » quand l'étudiant confirmait ou gardait ses notes) ; la carte
+--  sponsorisée d'un admin supprimé gardait son auteur disparu. Ces liens sont vidés ici, comme la clé étrangère le prévoit
+--  (« on delete set null ») : la ligne reste, rien d'autre n'y change. Une base saine n'a rien à vider ; relançable.
+--  Une table n'est touchée que s'il y a un lien à vider (une mise à jour, même vide, préviendrait les pages ouvertes :
+--  maj_tables). Une ligne peut avoir plusieurs liens disparus (un recrutement dont la demande, le lauréat et l'offre
+--  n'existent plus) : elle est mise à jour une seule fois, tous ses liens disparus vidés ensemble. Vidés un par un, le
+--  deuxième échouait : une ligne déjà changée dans la transaction voit toutes ses clés étrangères vérifiées à nouveau, et
+--  celle d'un lien encore à vider vise une ligne disparue.
+-- =====================================================================
+do $$
+declare r record; v boolean;
+begin
+  for r in select k.conrelid::regclass as t,
+      array_agg(a.attname::text order by a.attname) as cols,
+      array_agg(format('(x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))', a.attname, k.confrelid::regclass, b.attname, a.attname)
+        order by a.attname) as vides
+    from pg_constraint k
+    join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
+    join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
+    where k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and k.connamespace = 'public'::regnamespace
+    group by k.conrelid
+    order by 1
+  loop
+    execute format('select exists (select 1 from %s x where %s)', r.t, array_to_string(r.vides, ' or ')) into v;
+    continue when not v;
+    -- Chaque lien vidé seulement là où il vise une ligne disparue ; les autres gardent leur valeur
+    execute format('update %s x set %s where %s', r.t,
+      (select string_agg(format('%I = case when %s then null else x.%I end', c, d, c), ', ') from unnest(r.cols, r.vides) as u(c, d)),
+      array_to_string(r.vides, ' or '));
+  end loop;
+end $$;
+
+-- =====================================================================
+--  Ce qu'un visiteur sans compte peut faire exécuter. Supabase permet à tous (public, anon) chaque nouvelle fonction ;
+--  une fonction SECURITY DEFINER tourne avec tous les droits. Un visiteur garde seulement celles de la page d'entrée, des
+--  liens partagés et des liens des emails, chacune revue (tests/sql/test-droits-visiteurs.mjs en tient la liste exacte).
+--  Les fonctions de déclencheur ne s'appellent pas : un déclencheur tourne sans le droit d'exécuter sa fonction (vérifié
+--  à sa création seulement). Personne n'a à les exécuter ; ce bloc, en fin de fichier, les couvre toutes. Relançable.
+-- =====================================================================
+do $$
+declare r record;
+begin
+  for r in select p.oid::regprocedure as f from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.prokind = 'f' and p.prosecdef and p.prorettype = 'trigger'::regtype
+    order by 1
+  loop
+    execute format('revoke all on function %s from public, anon, authenticated', r.f);
+  end loop;
+end $$;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

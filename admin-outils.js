@@ -11,7 +11,7 @@ import { addAR, getLang } from './i18n.js';
 import { ajouterIcones } from './entree.js';
 import { glyph, SOMBRE, TUILE_DEFS, TUILE } from './logo.js';
 import { MessageBtn } from './messages.js';
-import { NIVEAUX, lienPromo, seasonLabel } from './logic.js';
+import { NIVEAUX, lienPromo, seasonLabel, ecoleDesTextes } from './logic.js';
 import { CarteMessage, ChoixLangue, Puces, promosEtudiantes, lienSite } from './admin-animer.js';
 import { vueEcole, membresDe, prenomDe, dateLongue, chiffresRapport, offresRecentes, texteOffresBRE, texteVisuel, consentementsDonnes,
   messageAccordVisuel, nomFichierVisuel, inscritsDepuis, adresseCourte, texteAffiche } from './admin-textes.js';
@@ -126,15 +126,18 @@ const jourMois = d => { const x = new Date(d); return `${deux(x.getDate())}/${de
 export function OutilsAdmin({ ctx }) {
   const qr = useQR();
   useEffect(() => nettoyerImpression, []);
+  // L'affiche et le mode événement sont ceux de l'école que regarde la console quand elle est ouverte (son nom, ses liens) ;
+  // sinon ceux de l'école de l'administration. Le rapport, les offres récentes et les visuels restent ceux d'avant.
+  const ecoleTextes = ecoleDesTextes(ctx);
   return html`<div class="adm-outils">
     <section class="panel adm-tete">
       <h2 class="h-ico"><${Icon} name="imprimante"/> Affiches et rapport</h2>
       <p class="small muted">Pour faire venir les promos et rendre compte à l’école : des affiches avec QR code, un écran pour les événements, le rapport du mois, les offres récentes et les visuels des réussites. Aucun nom d’étudiant, sauf sur un visuel, avec son accord.</p>
     </section>
     <div class="adm-cartes">
-      <${Affiche} ctx=${ctx} qr=${qr}/>
+      <${Affiche} ctx=${ctx} qr=${qr} ecoleTextes=${ecoleTextes}/>
       <div class="adm-pile">
-        <${ModeEvenement} ctx=${ctx} qr=${qr}/>
+        <${ModeEvenement} ctx=${ctx} qr=${qr} ecoleTextes=${ecoleTextes}/>
         <${OffresBRE} ctx=${ctx}/>
       </div>
     </div>
@@ -146,19 +149,19 @@ export function OutilsAdmin({ ctx }) {
 // ---------------------------------------------------------------------------
 // a) L'affiche A4 d'une promo
 // ---------------------------------------------------------------------------
-function Affiche({ ctx, qr }) {
+function Affiche({ ctx, qr, ecoleTextes: { slug: ecole, noms } }) {
   const { saison } = ctx;
   const [pour, setPour] = useState(saison + 1);
   const feuille = useRef();
   const items = [...promosEtudiantes(saison), ['laureats', 'Lauréats']];
   // L'adresse du QR code : la page de la promo (courte à recopier, elle ouvre l'inscription avec la promo remplie)
-  const lien = pour === 'laureats' ? lienSite('fr') : lienPromo(pour, 'fr', true, location.href);
+  const lien = pour === 'laureats' ? lienSite('fr', ecole) : lienPromo(pour, 'fr', true, location.href, ecole);
   return html`<section class="panel adm-carte" id="ou-affiche" aria-labelledby="ou-affiche-t">
     <h3 class="h-ico adm-carte-t" id="ou-affiche-t"><${Icon} name="qr"/> <span>Affiche à imprimer</span></h3>
     <p class="small muted">Une affiche A4 par promo, en français et en arabe, avec un grand QR code qui ouvre l’inscription. À coller là où passent les étudiants, avec l’accord des lieux.</p>
     <${Puces} items=${items} value=${pour} onChange=${setPour} label="Pour qui ?" id="ou-affiche-pour"/>
     <figure class="ou-affiche-cadre" ref=${feuille}>
-      <${AfficheA4} a=${texteAffiche(pour, saison)} lien=${lien} qr=${qr}/>
+      <${AfficheA4} a=${texteAffiche(pour, saison, noms)} lien=${lien} qr=${qr} noms=${noms}/>
       <figcaption class="sr-only">Aperçu de l’affiche A4</figcaption>
     </figure>
     <div class="adm-msg-act">
@@ -171,13 +174,13 @@ function Affiche({ ctx, qr }) {
 // Tout le texte de l'affiche est écrit dans ses deux langues : rien n'y est traduit (translate="no" sur chaque texte).
 // Sa mise en page ne change pas avec la langue du site (dir="ltr") : c'est la même affiche pour tout le monde.
 const Deux = ({ f, r }) => html`<span class="af-fr" lang="fr" dir="ltr" translate="no">${f}</span><span class="af-ar" lang="ar" dir="rtl" translate="no">${r}</span>`;
-function AfficheA4({ a, lien, qr }) {
+function AfficheA4({ a, lien, qr, noms }) {
   const { fr, ar } = a, court = adresseCourte(lien);
   const titreQR = getLang() === 'ar' ? `رمز QR: ${court}` : `QR code : ${court}`;
   return html`<div class="affiche" dir="ltr">
     <div class="af-tete">
       <${LogoPlat} cls="af-logo"/>
-      <p class="af-marque"><${Deux} f="Réseau ENSAM Meknès" r="شبكة ENSAM مكناس"/></p>
+      <p class="af-marque"><${Deux} f=${`Réseau ${noms.nom}`} r=${`شبكة ${noms.nomAr}`}/></p>
       <p class="af-gratuit"><${Deux} f=${fr.gratuit} r=${ar.gratuit}/></p>
     </div>
     <div class="af-corps">
@@ -202,7 +205,7 @@ function AfficheA4({ a, lien, qr }) {
 // ---------------------------------------------------------------------------
 // b) Le mode événement
 // ---------------------------------------------------------------------------
-function ModeEvenement({ ctx, qr }) {
+function ModeEvenement({ ctx, qr, ecoleTextes }) {
   const { saison } = ctx;
   const [promo, setPromo] = useState('');
   const [ouvert, setOuvert] = useState(false);
@@ -220,12 +223,12 @@ function ModeEvenement({ ctx, qr }) {
     <div class="adm-msg-act">
       <button type="button" class="btn small tonal" id="ou-ev-ouvrir" ref=${bouton} disabled=${!qr} onClick=${() => setOuvert(true)}><${Icon} name="plein-ecran" size=${15}/> Plein écran</button>
     </div>
-    ${ouvert && qr ? html`<${EcranEvenement} ctx=${ctx} qr=${qr} promo=${promo ? Number(promo) : null} onClose=${fermer}/>` : null}
+    ${ouvert && qr ? html`<${EcranEvenement} ctx=${ctx} qr=${qr} promo=${promo ? Number(promo) : null} onClose=${fermer} ecoleTextes=${ecoleTextes}/>` : null}
   </section>`;
 }
 
 // L'écran est le même dans les deux langues (dir="ltr") : le QR code à gauche, le compteur à droite
-function EcranEvenement({ ctx, qr, promo, onClose }) {
+function EcranEvenement({ ctx, qr, promo, onClose, ecoleTextes: { slug: ecole, noms } }) {
   const ecran = useRef(), fermerBtn = useRef();
   const [now, setNow] = useState(Date.now());
   const fermer = useRef(onClose);
@@ -257,14 +260,14 @@ function EcranEvenement({ ctx, qr, promo, onClose }) {
       if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
     };
   }, []);
-  const lien = promo ? lienPromo(promo, 'fr', false, location.href) : lienSite('fr');
+  const lien = promo ? lienPromo(promo, 'fr', false, location.href, ecole) : lienSite('fr', ecole);
   const court = adresseCourte(lien);
-  const { aujourdhui, semaine } = inscritsDepuis(ctx.data, Math.max(now, Date.now()));
+  const { aujourdhui, semaine } = inscritsDepuis(ctx.data, Math.max(now, Date.now()), ecole);
   const titreQR = getLang() === 'ar' ? `رمز QR: ${court}` : `QR code : ${court}`;
   return html`<div class="ev-ecran" id="ou-ev-ecran" ref=${ecran} role="dialog" aria-modal="true" aria-labelledby="ou-ev-titre" dir="ltr">
     <button type="button" class="btn small ev-fermer" id="ou-ev-fermer" ref=${fermerBtn} onClick=${() => fermer.current()}><${Icon} name="x" size=${16}/> Fermer</button>
-    <div class="ev-marque"><${LogoPlat} cls="ev-logo"/><span class="ev-marque-t"><span lang="fr" dir="ltr" translate="no">Réseau ENSAM Meknès</span><span lang="ar" dir="rtl" translate="no">شبكة ENSAM مكناس</span></span></div>
-    <h2 class="ev-titre" id="ou-ev-titre"><span lang="fr" dir="ltr" translate="no">Rejoins le Réseau ENSAM Meknès</span><span class="ev-titre-ar" lang="ar" dir="rtl" translate="no">انضم إلى شبكة ENSAM مكناس</span></h2>
+    <div class="ev-marque"><${LogoPlat} cls="ev-logo"/><span class="ev-marque-t"><span lang="fr" dir="ltr" translate="no">${`Réseau ${noms.nom}`}</span><span lang="ar" dir="rtl" translate="no">${`شبكة ${noms.nomAr}`}</span></span></div>
+    <h2 class="ev-titre" id="ou-ev-titre"><span lang="fr" dir="ltr" translate="no">${`Rejoins le Réseau ${noms.nom}`}</span><span class="ev-titre-ar" lang="ar" dir="rtl" translate="no">${`انضم إلى شبكة ${noms.nomAr}`}</span></h2>
     <div class="ev-centre">
       <div class="ev-qr-bloc">
         <div class="ev-qr" dangerouslySetInnerHTML=${{ __html: qr.qrSVG(lien, { titre: titreQR }) }}></div>

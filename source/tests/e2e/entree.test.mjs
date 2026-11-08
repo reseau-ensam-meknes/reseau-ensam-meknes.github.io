@@ -550,9 +550,10 @@ test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', 
 
 // Un membre déjà connecté sur cet appareil (session gardée), ouvert sur « hash ». push : un navigateur qui peut recevoir
 // des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android. permission : la réponse du membre
-// à la demande du navigateur, qui arrive après « delai » millisecondes ; les demandes sont comptées (window.__demandes)
-async function membre({ hash = '', push = false, permission = 'default', delai = 0 } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+// à la demande du navigateur, qui arrive après « delai » millisecondes ; les demandes sont comptées (window.__demandes) ;
+// langue : celle choisie sur cet appareil ; largeur : celle de l'écran (390 px : un téléphone)
+async function membre({ hash = '', push = false, permission = 'default', delai = 0, langue = 'fr', largeur = 390 } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (push) await ctx.addInitScript(([permission, delai]) => {
     const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
@@ -571,12 +572,12 @@ async function membre({ hash = '', push = false, permission = 'default', delai =
     };
     if (!('PushManager' in window)) window.PushManager = function PushManager() {};
   }, [permission, delai]);
-  await ctx.addInitScript(uid => {
+  await ctx.addInitScript(([uid, langue]) => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
-    localStorage.setItem('ensam-lang', 'fr');
+    localStorage.setItem('ensam-lang', langue);
     const now = Math.floor(Date.now() / 1000);
     localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
-  }, UID);
+  }, [UID, langue]);
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   await page.goto(site.adresse + hash);
@@ -847,6 +848,10 @@ test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepte
   ambFaux = [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null, created_at: now }];
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   const m = await membre();
+  // Les chiffres du mois arrivent de la base (chiffres_ma_promo) une fois la carte de l'ambassadeur là : retenus ici jusqu'à
+  // ce que le test ait lu la carte qui les attend
+  let lacher; const reponse = new Promise(ok => { lacher = ok; });
+  await m.ctx.route('**/rest/v1/rpc/chiffres_ma_promo', r => reponse.then(() => r.continue()).catch(() => {}));
   await m.page.waitForSelector('[data-pas^="am"], .af-accueil .todo > li[data-cle^="am"]', { timeout: 15000 });
   await m.page.waitForTimeout(1500);
   assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/ambassadeurs_proposer'), 'la base est appelée à l’ouverture');
@@ -861,6 +866,12 @@ test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepte
   assert.deepEqual(site.appels.find(a => a.u === '/sb/rest/v1/ambassadeurs' && a.m === 'PATCH')?.corps, { statut: 'accepte' });
   await m.page.keyboard.press('Escape');
   await m.page.waitForSelector('#amb-carte');
+  // En attendant la base : la carte et le lien de la promo, sans un chiffre (jamais « 0 inscrit » faute de réponse)
+  assert.doesNotMatch(await m.page.locator('#amb-carte').innerText(), /\d\s*(inscrit|demande|stage)/, 'pas de chiffre avant la réponse de la base');
+  assert.ok(await m.page.isVisible('#amb-wa'));
+  // Puis les chiffres, lus une fois arrivés
+  lacher();
+  await m.page.waitForSelector('#amb-carte .amb-chiffres');
   const t = await m.page.locator('#amb-carte').innerText();
   assert.match(t, /12\s*inscrits\s*\+3 ce mois-ci/);
   assert.match(t, /4\s*stages et emplois trouvés/);
@@ -1000,33 +1011,38 @@ test('message envoyé avec un jeton refusé et un renouvellement refusé : il re
 test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la réponse de la base, la mise à jour arrive sans bruit ; jamais pour un autre compte', async () => {
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   site.tables.coordonnees = [{ id: UID, telephone: '0612345678' }, { id: AUTEUR, telephone: '0698765432' }];
-  let tenir = false; const tenus = [];
-  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+  let tenir = false, retenue = null; const tenus = [], passees = new Set(), repondues = [];
+  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => { if (tenir) { tenus.push(r); return retenue?.(); } passees.add(r.request()); return r.continue(); }) });
+  // Une requête au moins partie vers la base, et retenue (10 s au plus) ; repondues : ce que la base a rendu pendant ce temps
+  // (une requête laissée passer juste avant, par la page d'avant le rechargement, ne compte pas)
+  const tenue = () => new Promise((ok, ko) => { if (tenus.length) return ok(); retenue = ok; setTimeout(() => ko(new Error('rien n’est parti vers la base')), 10e3).unref(); });
+  m.page.on('response', r => { if (tenir && /\/sb\/rest\/v1\//.test(r.url()) && !passees.has(r.request())) repondues.push(r.url()); });
   await m.page.waitForSelector(ACCUEIL);
   let c = null;
   for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
   assert.ok(c, 'une copie de l’accueil est gardée');
   assert.equal(c.uid, UID);
   assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
-  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il vient de l'appareil, puisque la base est tenue.
-  // La mise à jour part juste après lui (rafraichir, store.js), parfois quand il est déjà affiché : on attend qu'elle soit
-  // demandée, et l'accueil est toujours là.
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il peut paraître avant même que la mise à jour
+  // parte (elle attend la session de Supabase, dont un autre onglet peut tenir le verrou) : on attend qu'elle parte, retenue ;
+  // l'accueil est toujours là, et la base n'a encore rien rendu
   tenir = true;
   await m.page.reload();
   await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
-  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
-  assert.ok(tenus.length > 0, 'la mise à jour est demandée à la base');
-  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste là tant que la base ne répond pas');
+  await tenue();
+  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste pendant que la mise à jour attend la base');
+  assert.deepEqual(repondues, [], 'la base n’a pas encore répondu');
   assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForTimeout(1200);
   assert.equal(await m.page.locator('.toast').count(), 0, 'la mise à jour arrive sans message');
   assert.ok(await m.page.isVisible(ACCUEIL));
-  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée
+  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée (avant que la page
+  // demande quoi que ce soit à la base pour ce compte) ; 1,5 s au moins pour qu'elle ait le temps de paraître si elle le devait
   const AUTRE = '00000000-0000-4000-8000-0000000000c3';
   await m.page.evaluate(id => { const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k)); s.user.id = id; localStorage.setItem(k, JSON.stringify(s)); }, AUTRE);
   tenir = true;
-  await m.page.reload(); await m.page.waitForTimeout(1500);
+  await m.page.reload(); await Promise.all([tenue(), m.page.waitForTimeout(1500)]);
   assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'rien de l’autre compte');
   assert.equal(await lireCacheMembre(m.page), null, 'la copie est effacée');
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
@@ -2124,4 +2140,1026 @@ test('membre en ligne : le lien de « Fais venir ta promo » porte son code ; «
   assert.equal(await m.page.locator('#promo-invites').count(), 0);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Écoles : la page d'entrée d'un lien d'école (?ecole=) demande les chiffres et les fondateurs de cette école-là ; un membre
+// d'une autre école que l'ENSAM Meknès voit son école dans l'onglet, la marque, la carte et le lien de sa promo
+// ---------------------------------------------------------------------------
+const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', couleur: '#225588', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+const OMAR = { rang: 1, type: 'offre', at: '2026-10-23T09:12:00Z', nom: 'Omar Alami', filiere: 'Génie Industriel', promo: 2019, photo: null, verifie: true, id: null };
+const lignesEntree = page => page.$$eval('.auth-chiffres span', x => x.map(e => e.textContent));
+
+test('entrée par le lien d’une école (?ecole=) : ses chiffres et ses fondateurs à elle ; rien, jamais ceux de l’ENSAM Meknès, si la base ne rend rien', async () => {
+  const corps = nom => site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + nom).map(a => a.corps);
+  // La base de demain : {} pour l'ENSAM Meknès (comme avant) ; l'école demandée sinon (null : pas ouverte, ou inconnue)
+  const PAR_ECOLE = {
+    'ensa-fes': [{ laureats: 4, entreprises: 2, promos: 1 }, { max: 25, total: 1, places: 24, mon_choix: null, fondateurs: [OMAR] }],
+    'fst-settat': [{ laureats: 0, entreprises: 0, promos: 0 }, { max: 25, total: 0, places: 25, mon_choix: null, fondateurs: [] }],
+  };
+  const regler = (ancienne = false) => {
+    site.rpc.chiffres_publics = c => (!c?.p_ecole ? { laureats: 39, entreprises: 19, promos: 14 } : ancienne ? undefined : PAR_ECOLE[c.p_ecole]?.[0] ?? null);
+    site.rpc.fondateurs_publics = c => (!c?.p_ecole ? reponse()(false) : ancienne ? undefined : PAR_ECOLE[c.p_ecole]?.[1] ?? null);
+  };
+  regler();
+  // Le lien d'une école ouverte : ses chiffres, son fondateur ; chaque demande porte l'école du lien
+  let s = await visiteur({ query: '?ecole=ensa-fes&promo=2019', largeur: 390, hauteur: 844 });
+  await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+  assert.deepEqual(await lignesEntree(s.page), ['4 lauréats', '2 entreprises', '1 promo']);
+  await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+  assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Omar Alami']);
+  assert.equal(await s.page.locator('.fd-public .fd-totaux').innerText(), '1 membre fondateur · 24 places restantes');
+  await s.app(); await s.page.waitForTimeout(400);
+  assert.deepEqual(await lignesEntree(s.page), ['4 lauréats', '2 entreprises', '1 promo'], 'l’application reprend les chiffres de l’école');
+  for (const nom of ['chiffres_publics', 'fondateurs_publics']) {
+    const l = corps(nom);
+    assert.ok(l.length && l.every(c => JSON.stringify(c) === '{"p_ecole":"ensa-fes"}'), `${nom} : l’école du lien, jamais {} (${JSON.stringify(l)})`);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Pas encore ouverte (la base rend null), inconnue (null), ouverte sans personne (zéro), ou une base d'avant qui ne
+  // connaît pas p_ecole (404) : ni chiffres ni fondateurs ; jamais ceux de l'ENSAM Meknès à la place
+  for (const [ecole, ancienne] of [['ecole-exemple', false], ['ensa-oujda', false], ['fst-settat', false], ['ensa-fes', true]]) {
+    site.vider(); regler(ancienne);
+    s = await visiteur({ query: `?ecole=${ecole}`, largeur: 390, hauteur: 844 });
+    await s.app(); await s.page.waitForTimeout(600);
+    const quoi = `${ecole}${ancienne ? ' (base d’avant)' : ''}`;
+    assert.equal(await s.page.locator('.auth-chiffres span').count(), 0, quoi);
+    assert.equal(await s.page.locator('.fd-public').count(), 0, quoi);
+    assert.doesNotMatch(await s.page.locator('#entree').innerText(), /39 lauréats|Hajeb|Sedki|membres? fondateurs?/, quoi);
+    for (const nom of ['chiffres_publics', 'fondateurs_publics']) {
+      const l = corps(nom);
+      assert.ok(l.length && l.every(c => c?.p_ecole === ecole), `${nom} ${quoi} : ${JSON.stringify(l)}`);
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Sans lien d'école, ou le lien de l'ENSAM Meknès : la demande d'avant ({}), ses chiffres et ses fondateurs
+  for (const query of ['', '?ecole=ensam-meknes']) {
+    site.vider(); regler();
+    s = await visiteur({ query, largeur: 390, hauteur: 844 });
+    await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+    assert.deepEqual(await lignesEntree(s.page), ['39 lauréats', '19 entreprises', '14 promos']);
+    await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+    assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Abderrahman Hajeb', 'Hamza Sedki']);
+    for (const nom of ['chiffres_publics', 'fondateurs_publics']) assert.ok(corps(nom).length && corps(nom).every(c => JSON.stringify(c) === '{}'), `${nom} ${query}`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+for (const langue of ['fr', 'ar']) test(`membre en ligne d’une autre école (${langue}) : l’onglet, la marque, la carte et le lien de sa promo disent son école ; l’ENSAM Meknès comme avant`, async () => {
+  const ar = langue === 'ar';
+  site.inscrits.push({ ...ETUDIANT, ecole: 'ensa-fes', consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.ecoles = [FES];
+  site.rpc.mon_code_invitation = (_c, m) => (m ? 'salma234' : undefined);
+  let m = await membre({ hash: '#parcours', langue, largeur: 1280 });
+  await m.page.waitForFunction(() => /ecole%3Densa-fes%26de%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 15000 });
+  let texte = new URL(await m.page.getAttribute('#promo-wa', 'href')).searchParams.get('text');
+  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}e/?ecole=ensa-fes&de=salma234`), texte);
+  assert.match(texte, ar ? /أنا على «شبكة ENSA فاس»:/ : /Je suis sur le Réseau ENSA Fès :/);
+  assert.doesNotMatch(texte, /Meknès|مكناس/);
+  assert.match(await m.page.title(), /^(\(\d+\) )?Réseau ENSA Fès$/);
+  assert.equal(await m.page.locator('.side .brand-txt span').innerText(), ar ? 'فاس · الخريجون والطلبة' : 'Fès · Lauréats & étudiants');
+  const brand = await m.page.locator('.side .brand-txt span').boundingBox(), side = await m.page.locator('.side .brand').boundingBox();
+  assert.ok(brand.x >= side.x - 1 && brand.x + brand.width <= side.x + side.width + 1, 'la marque tient dans la barre latérale');
+  await m.page.evaluate(() => { location.hash = '#reseau/annuaire/carte'; });
+  await m.page.waitForSelector('.sub-page .map', { timeout: 15000 });
+  assert.equal(await m.page.locator('.sub-page > p.muted.small').first().innerText(), ar
+    ? 'أين يعمل خريجو ENSA فاس. انقر على نقطة لترى من هناك. بالأزرق المغرب، وبالبرتقالي الخارج.'
+    : 'Où travaillent les lauréats de l’ENSA Fès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.');
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET'), 'la ligne de son école est lue');
+  if (ar) assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Fès|Lauréats|Où travaillent|Réseau/.test(x))), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Un membre de l'ENSAM Meknès : tout comme avant (son école n'est pas dans le lien, les textes d'avant)
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.ecoles = [{ slug: 'ensam-meknes', nom: 'ENSAM Meknès', ouverte: true, created_at: '2026-10-21T00:00:00Z' }, FES];
+  site.rpc.mon_code_invitation = (_c, mm) => (mm ? 'salma234' : undefined);
+  m = await membre({ hash: '#parcours', langue, largeur: 1280 });
+  await m.page.waitForFunction(() => /de%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 15000 });
+  texte = new URL(await m.page.getAttribute('#promo-wa', 'href')).searchParams.get('text');
+  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}?de=salma234`), texte);
+  assert.match(texte, ar ? /أنا على «شبكة ENSAM مكناس»:/ : /Je suis sur le Réseau ENSAM Meknès :/);
+  assert.match(await m.page.title(), /^(\(\d+\) )?Réseau ENSAM Meknès$/);
+  assert.equal(await m.page.locator('.side .brand-txt span').innerText(), ar ? 'مكناس · الخريجون والطلبة' : 'Meknès · Lauréats & étudiants');
+  await m.page.evaluate(() => { location.hash = '#reseau/annuaire/carte'; });
+  await m.page.waitForSelector('.sub-page .map', { timeout: 15000 });
+  assert.equal(await m.page.locator('.sub-page > p.muted.small').first().innerText(), ar
+    ? 'أين يعمل خريجو ENSAM مكناس. انقر على نقطة لترى من هناك. بالأزرق المغرب، وبالبرتقالي الخارج.'
+    : 'Où travaillent les lauréats de l’ENSAM Meknès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Lien d'une école ouvert dans le navigateur d'une application sur iPhone ou iPad : « Ouvrir dans Safari » (le geste de la
+// carte) ouvre l'adresse affichée, et Safari n'a rien de ce que la page a gardé ici. L'adresse garde donc ce que « Ouvrir
+// dans Chrome » emporte sur Android (la promo, qui invite, l'école, la langue, le rôle choisi, l'étape) ; ailleurs, elle
+// reste propre, comme à la fin de l'inscription
+// ---------------------------------------------------------------------------
+const INSTAGRAM_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.32.81 (iPhone15,3; iOS 18_5; fr_FR; fr; scale=3.00; 1290x2796; 645432123)';
+const SAFARI_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
+const OMAR_FES = c => (c?.p_ecole === 'ensa-fes' && c?.p_code === 'omar2019' ? { prenom: 'Omar', promo: 2019, role: 'laureat' } : null);
+const adresseDe = page => page.evaluate(() => Object.fromEntries(new URLSearchParams(location.search)));
+const gardes = page => page.evaluate(() => ['ensam-invite-promo', 'ensam-invite-ecole', 'ensam-invite-de', 'ensam-role-choisi'].map(k => localStorage.getItem(k)));
+const quand = (page, k, v) => page.waitForFunction(([k, v]) => new URLSearchParams(location.search).get(k) === v, [k, v], { timeout: 8000 });
+
+test('navigateur d’une application sur iPhone : l’adresse garde le lien de l’école pour Safari (promo, qui invite, école, rôle, étape, arabe), la même après un rechargement ; propre à la fin de l’inscription, et ailleurs', async () => {
+  site.rpc.invitation_de = OMAR_FES; site.tables.ecoles = [FES];
+  const s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM_IOS, query: '?promo=2019&ecole=ensa-fes&de=omar2019' });
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  await quand(s.page, 'mode', 'inscription');
+  assert.deepEqual(await adresseDe(s.page), { promo: '2019', de: 'omar2019', ecole: 'ensa-fes', mode: 'inscription' }, 'le rôle que la promo laisse deviner n’est pas un choix');
+  // Le rôle touché, l'étape changée puis revenue, l'arabe : l'adresse suit
+  await s.page.click('#au-je-laureat'); await quand(s.page, 'role', 'laureat');
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")'); await quand(s.page, 'mode', 'connexion');
+  await s.page.click('.entree-form button.linkish:has-text("Créer un compte")'); await quand(s.page, 'mode', 'inscription');
+  await s.page.click('.entree-top .lang-btn'); await quand(s.page, 'lang', 'ar');
+  assert.deepEqual(await adresseDe(s.page), { promo: '2019', de: 'omar2019', ecole: 'ensa-fes', role: 'laureat', mode: 'inscription', lang: 'ar' });
+  const adresse = await s.page.evaluate(() => location.href);
+  // Rechargée ici : la même page, et la même adresse
+  await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 }); await quand(s.page, 'lang', 'ar');
+  assert.equal(await s.page.evaluate(() => location.href), adresse);
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await s.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true');
+  assert.equal(await s.page.getAttribute('.entree-form', 'aria-label'), 'إنشاء حسابي', 'toujours « Créer mon compte »');
+  assert.deepEqual(await gardes(s.page), ['2019', 'ensa-fes', 'omar2019', 'laureat']);
+  // Safari ouvre cette adresse, sans rien de ce que l'application a gardé : le même lien, et une adresse propre
+  const v = await visiteur({ largeur: 390, hauteur: 844, ua: SAFARI_IOS, langue: null, query: new URL(adresse).search });
+  await v.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.equal(await v.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await gardes(v.page), ['2019', 'ensa-fes', 'omar2019', 'laureat']);
+  assert.equal(await v.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await v.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true');
+  assert.equal(await v.page.getAttribute('.entree-form', 'aria-label'), 'إنشاء حسابي');
+  assert.ok(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').every(a => a.corps?.p_ecole === 'ensa-fes'));
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+  // L'inscription finie ici : l'adresse propre
+  await s.page.click('.entree-top .lang-btn'); await s.page.waitForFunction(() => !new URLSearchParams(location.search).has('lang'));
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.equal(await adresseDe(s.page).then(x => x.ecole), 'ensa-fes', 'jusqu’à la dernière étape');
+  await s.page.fill('#pf-name', 'Karim Bennani');
+  await s.page.selectOption('#pf-fil', { index: 1 }); await s.page.click('#pf-aide-oui');
+  await s.page.click('.pf-pied .btn');
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  assert.equal(await s.page.evaluate(() => location.search), '');
+  assert.deepEqual(await gardes(s.page), [null, null, null, null]);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Ailleurs (Android, même dans une application ; Safari ; un ordinateur), l'adresse reste propre, comme avant
+  for (const ua of [INSTAGRAM, SAFARI_IOS, undefined]) {
+    site.vider(); site.rpc.invitation_de = OMAR_FES; site.tables.ecoles = [FES];
+    const a = await visiteur({ largeur: 390, hauteur: 844, ua, query: '?promo=2019&ecole=ensa-fes&de=omar2019' });
+    await a.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+    // Le rôle touché (gardé, montré : l'adresse aurait suivi dans le même geste), puis deux images (l'effet de l'étape aussi)
+    await a.page.click('#au-je-laureat');
+    await a.page.waitForFunction(() => localStorage.getItem('ensam-role-choisi') === 'laureat' && document.getElementById('au-je-laureat')?.getAttribute('aria-pressed') === 'true');
+    await a.page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.equal(await a.page.evaluate(() => location.pathname + location.search), '/', ua || 'ordinateur');
+    assert.deepEqual(a.erreurs, []);
+    await a.ctx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Inscription par le lien d'une école : l'école part avec la demande de code (comme qui invite) ; un compte commencé sur
+// un autre appareil (rien de gardé ici) finit quand même dans son école ; une école pas encore ouverte le dit, et le redit
+// ---------------------------------------------------------------------------
+const CASA = { slug: 'ensam-casa', nom: 'ENSAM Casablanca', nom_court: 'ENSAM', ville: 'Casablanca', nom_ar: 'ENSAM الدار البيضاء', ouverte: false, created_at: '2026-10-01T00:00:00Z' };
+const FERMEE = 'Le réseau de cette école n’est pas encore ouvert.';
+// La base refuse le profil d'une école pas encore ouverte (protect_ecole) : 42501 et sa phrase
+const refusEcole = ctx => ctx.route(/\/sb\/rest\/v1\/profiles(\?|$)/, r => (r.request().method() === 'POST'
+  ? r.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', details: null, hint: null, message: FERMEE }) }) : r.continue()));
+async function finirLaureat(page, { choisir = false } = {}) {
+  if (choisir) await page.click('#pf-je-laureat');
+  await page.fill('#pf-name', 'Karim Bennani'); await page.fill('#pf-promo', '2019');
+  await page.selectOption('#pf-fil', { index: 1 }); await page.click('#pf-aide-oui');
+  await page.click('.pf-pied .btn');
+}
+
+test('inscription par le lien d’une école : l’école part avec la demande de code, et un compte commencé sur un autre appareil finit dans son école', async () => {
+  site.tables.ecoles = [FES];
+  const otp = email => site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === email).pop()?.corps;
+  // Sur le téléphone du lien : la demande de code porte l'école (le compte la garde), puis le profil part dans son école
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes' });
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'karim@gmail.com'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  assert.equal(otp('karim@gmail.com').data.ecole, 'ensa-fes');
+  assert.equal(otp('karim@gmail.com').create_user, true);
+  await s.ctx.close();
+  // Le même compte, fini sur un autre appareil où rien n'est gardé (ni lien, ni école) : l'école du compte
+  s = await visiteur({ largeur: 390, hauteur: 844 });
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-ecole')), null);
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'karim@gmail.com'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code'); await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.equal(otp('karim@gmail.com').create_user, false, 'se connecter : le compte est celui du premier appareil');
+  await finirLaureat(s.page, { choisir: true });
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'ENSAM Meknès (sans lien d'école, ou son lien) : la demande et le profil d'avant, sans école
+  for (const query of ['', '?ecole=ensam-meknes']) {
+    site.vider(); site.tables.ecoles = [FES];
+    s = await visiteur({ largeur: 390, hauteur: 844, query });
+    await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+    assert.deepEqual(Object.keys(otp('hamza@gmail.com').data).sort(), ['consent_at', 'consent_version', 'emails_hebdo', 'langue', 'par_code', 'role_choisi'], query);
+    await finirLaureat(s.page);
+    await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+    assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, query);
+    await s.ctx.close();
+  }
+});
+
+for (const langue of ['fr', 'ar']) test(`lien d’une école pas encore ouverte (${langue}) : à la dernière étape, « ${FERMEE} » reste à l’écran, et le lien est gardé`, async () => {
+  site.tables.ecoles = [FES, CASA];
+  const s = await visiteur({ largeur: 390, hauteur: 844, langue, query: '?ecole=ensam-casa', avant: refusEcole });
+  await sInscrire(s.page, { role: 'laureat', email: 'nawal@gmail.com' });
+  await finirLaureat(s.page);
+  await s.page.waitForSelector('.auth-card.wide.onb #pf-ferme', { timeout: 15000 });
+  assert.match(await s.page.locator('#pf-ferme').innerText(), langue === 'ar' ? /^شبكة هذه المدرسة غير مفتوحة بعد\./ : /^Le réseau de cette école n’est pas encore ouvert\./);
+  assert.equal(await s.page.locator('#pf-ferme').getAttribute('role'), 'alert');
+  assert.ok(await s.page.isVisible('#pf-ferme'), 'en vue, au-dessus du bouton');
+  assert.equal(await s.page.locator('.toast-zone').filter({ hasText: langue === 'ar' ? 'شبكة هذه المدرسة' : FERMEE }).count(), 0, 'dit une fois, pas en plus dans un message qui s’en va');
+  assert.ok(await s.page.isVisible('.auth-card.wide.onb .pf-pied .btn'), 'la dernière étape reste là');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-ecole')), 'ensam-casa', 'gardé jusqu’à son ouverture');
+  assert.equal(site.inscrits.length, 0);
+  if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /école|ouvert|compte|inscription/.test(x))), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// La page d'entrée du lien d'une école ouverte dit son nom (sa ligne de la table des écoles) : la marque, la situation (et,
+// à la dernière étape, ses longues phrases), la porte dessinée, l'onglet, en français et en arabe. Une école pas encore
+// ouverte, ou inconnue : la page d'avant, sans autre nom. L'ENSAM Meknès : la page d'avant, sans rien demander de plus.
+// ---------------------------------------------------------------------------
+const NOMS_FES = { fr: { marque: 'Réseau ENSA Fès', diplome: 'Diplôme ENSA', etudiant: 'De la 1re à la 5e année à l’ENSA Fès', laureat: 'De l’ENSA Fès, en poste ou en recherche d’emploi' },
+  ar: { marque: 'شبكة ENSA فاس', diplome: 'شهادة ENSA', etudiant: 'من السنة الأولى إلى الخامسة في ENSA فاس', laureat: 'من ENSA فاس، في وظيفة أو في بحث عن عمل' } };
+const NOMS_MEKNES = { fr: { marque: 'Réseau ENSAM Meknès', diplome: 'Diplôme ENSAM', etudiant: 'De la 1re à la 5e année à l’ENSAM Meknès', laureat: 'De l’ENSAM Meknès, en poste ou en recherche d’emploi' },
+  ar: { marque: 'شبكة ENSAM مكناس', diplome: 'شهادة ENSAM', etudiant: 'من السنة الأولى إلى الخامسة في ENSAM مكناس', laureat: 'من ENSAM مكناس، في وظيفة أو في بحث عن عمل' } };
+// Les lectures de la table des écoles par la page (l'adresse entière : le faux Supabase ne note que le chemin)
+const lecturesEcoles = ctx => { const l = []; ctx.on('request', r => { if (/\/sb\/rest\/v1\/ecoles(\?|$)/.test(r.url())) l.push(r.url()); }); return l; };
+const marque = page => page.locator('.entree-marque').innerText().then(x => x.trim());
+const quandMarque = (page, m) => page.waitForFunction(m => document.querySelector('.entree-marque')?.innerText.trim() === m, m, { timeout: 8000 });
+async function phrasesDerniereEtape(page) {
+  await page.click('#pf-role-changer'); await page.waitForSelector('#pf-je-etudiant');
+  return [await page.locator('#pf-je-etudiant .small').innerText(), await page.locator('#pf-je-laureat .small').innerText()];
+}
+
+for (const langue of ['fr', 'ar']) test(`lien d’une école ouverte (${langue}) : la page d’entrée et la dernière étape disent son nom ; pas encore ouverte ou inconnue : la page d’avant ; l’ENSAM Meknès : rien de plus, pas même une lecture`, async () => {
+  const N = NOMS_FES[langue], M = NOMS_MEKNES[langue], ar = langue === 'ar';
+  site.tables.ecoles = [FES, CASA];
+  let lues = [];
+  let s = await visiteur({ largeur: 390, hauteur: 844, langue, query: '?ecole=ensa-fes', avant: ctx => { lues = lecturesEcoles(ctx); } });
+  await quandMarque(s.page, N.marque);
+  assert.equal(await s.page.locator('#au-je-laureat .small').innerText(), N.diplome);
+  assert.equal(await s.page.locator('#au-je-etudiant .small').innerText(), ar ? 'من السنة الأولى إلى الخامسة' : '1re à 5e année');
+  assert.equal(await s.page.title(), 'Réseau ENSA Fès');
+  await s.page.waitForSelector('.entree-scene .scene .g-txt', { timeout: 8000 });
+  assert.equal(await s.page.locator('.entree-scene .g-txt').textContent(), 'ENSA · FÈS', 'la porte dessinée');
+  assert.doesNotMatch(await s.page.locator('#entree').innerText(), /Meknès|مكناس/);
+  assert.equal(lues.length, 1, 'sa ligne, lue une fois');
+  assert.match(lues[0], /[?&]slug=eq\.ensa-fes(&|$)/);
+  await s.app();
+  assert.equal(await marque(s.page), N.marque, 'l’application reprend la page telle quelle');
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.deepEqual(await phrasesDerniereEtape(s.page), [N.etudiant, N.laureat]);
+  // Rechargée à la dernière étape (le compte est là, sans la page d'entrée) : les mêmes phrases, de sa ligne
+  await s.page.reload(); await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.deepEqual(await phrasesDerniereEtape(s.page), [N.etudiant, N.laureat], 'rechargée');
+  if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /ENSA|Réseau|Diplôme|année|poste/.test(x))), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Pas encore ouverte, ou inconnue : la page d'avant, jamais un autre nom que celui de l'ENSAM Meknès
+  for (const ecole of ['ensam-casa', 'ensa-oujda']) {
+    site.vider(); site.tables.ecoles = [FES, CASA];
+    s = await visiteur({ largeur: 390, hauteur: 844, langue, query: `?ecole=${ecole}` });
+    await quandMarque(s.page, M.marque);
+    assert.equal(await s.page.locator('#au-je-laureat .small').innerText(), M.diplome, ecole);
+    assert.equal(await s.page.title(), 'Réseau ENSAM Meknès', ecole);
+    await s.page.waitForSelector('.entree-scene .scene .g-txt', { timeout: 8000 });
+    assert.equal(await s.page.locator('.entree-scene .g-txt').textContent(), 'ENSAM · MEKNÈS', ecole);
+    assert.doesNotMatch(await s.page.locator('#entree').innerText(), /Casablanca|الدار البيضاء|Fès|فاس|Oujda/, ecole);
+    await sInscrire(s.page, { role: 'laureat', email: 'nawal@gmail.com' });
+    assert.deepEqual(await phrasesDerniereEtape(s.page), [M.etudiant, M.laureat], ecole);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // L'ENSAM Meknès (sans lien d'école, ou son lien) : la page d'avant, et pas une lecture de plus
+  for (const query of ['', '?ecole=ensam-meknes']) {
+    site.vider(); site.tables.ecoles = [FES, CASA];
+    s = await visiteur({ largeur: 390, hauteur: 844, langue, query, avant: ctx => { lues = lecturesEcoles(ctx); } });
+    assert.equal(await marque(s.page), M.marque, query);
+    assert.equal(await s.page.locator('#au-je-laureat .small').innerText(), M.diplome, query);
+    assert.equal(await s.page.title(), 'Réseau ENSAM Meknès', query);
+    await s.app();
+    assert.deepEqual(lues, [], `${query} : la page d’entrée ne lit pas la table des écoles`);
+    await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+    assert.deepEqual(await phrasesDerniereEtape(s.page), [M.etudiant, M.laureat], query);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// L'email de l'école : les domaines et la règle de l'école ouverte du lien (sa ligne, comme la base) ; sans domaine, rien n'est
+// dit ; l'ENSAM Meknès garde ceux de ses réglages
+const FES_EMAIL = { ...FES, domaines: ['ensa-fes.ma'] };
+const reglagesObligatoire = ctx => ctx.route(/\/sb\/rest\/v1\/reglages(\?|$)/, r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }, { cle: 'email_ecole_obligatoire', valeur: true }]) }));
+const indice = page => page.locator('.entree-form .field:has(#au-email) .field-hint').allInnerTexts().then(x => x.join(' | '));
+async function emailEtudiant(page, email) {
+  await page.fill('#au-email', email);
+  await page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000 });
+}
+
+test('lien d’une école ouverte : l’email de l’école, ses domaines et sa règle (« Email de l’école reconnu », indice, refus) ; sans domaine, rien ; l’ENSAM Meknès comme avant', async () => {
+  const otp = () => site.appels.filter(a => a.u === '/sb/auth/v1/otp');
+  // Obligatoire pour l'école du lien
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes' });
+  await s.page.click('#au-je-etudiant'); await emailEtudiant(s.page, 'amine@ensa-fes.ma');
+  await s.page.waitForSelector('#au-ecole', { timeout: 8000 });
+  assert.equal(await s.page.locator('#au-ecole').innerText(), 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.');
+  await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+  await s.page.waitForFunction(() => !document.getElementById('au-ecole'));
+  assert.equal(await indice(s.page), 'Côté étudiants : inscris-toi avec ton email de l’école (@ensa-fes.ma). Ton compte est alors vérifié tout de suite.');
+  await s.page.fill('#au-email', 'amine@gmail.com'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('.entree-form .auth-msg.err', { timeout: 8000 });
+  assert.equal(await s.page.locator('.entree-form .auth-msg.err').innerText(), 'Inscris-toi avec ton email de l’école.');
+  assert.equal(otp().length, 0, 'rien ne part');
+  await s.page.fill('#au-email', 'amine@ensa-fes.ma'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code');
+  assert.equal(otp().pop().corps.email, 'amine@ensa-fes.ma');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // De préférence seulement pour l'école du lien, même quand l'ENSAM Meknès l'exige : l'email de l'école est conseillé, un
+  // autre passe, et la dernière étape ne le bloque pas non plus (la règle de son école, comme la base)
+  site.vider(); site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: false }];
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: reglagesObligatoire });
+  await s.page.click('#au-je-etudiant'); await emailEtudiant(s.page, 'amine@gmail.com');
+  await s.page.waitForFunction(() => /@ensa-fes\.ma/.test(document.querySelector('.entree-form .field-hint')?.textContent || ''), null, { timeout: 8000 });
+  assert.equal(await indice(s.page), 'Côté étudiants : de préférence avec ton email de l’école (@ensa-fes.ma). Ton compte est alors vérifié tout de suite.');
+  await s.page.check('#au-ok'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code'); await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  await s.page.fill('#pf-name', 'Amine Alaoui'); await s.page.fill('#pf-promo', String(S + 1));
+  await s.page.selectOption('#pf-fil', { index: 1 });
+  assert.equal(await s.page.locator('#pf-ecole').count(), 0, 'pas la règle de l’ENSAM Meknès');
+  await s.page.click('.pf-pied .btn');
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Une école ouverte sans domaine : rien n'est dit, même pour un email de l'ENSAM Meknès
+  site.vider(); site.tables.ecoles = [FES];
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: reglagesObligatoire });
+  await quandMarque(s.page, 'Réseau ENSA Fès');
+  await s.page.click('#au-je-etudiant'); await emailEtudiant(s.page, 'amine@ensam-umi.ac.ma');
+  assert.equal(await s.page.locator('#au-ecole').count(), 0);
+  await s.page.fill('#au-email', 'amine@gmail.com');
+  assert.equal(await indice(s.page), '');
+  await s.page.check('#au-ok'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'ENSAM Meknès : ses réglages, comme avant (l'école ouverte d'un autre lien n'y change rien)
+  site.vider(); site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: false }];
+  s = await visiteur({ largeur: 390, hauteur: 844 });
+  await s.page.click('#au-je-etudiant'); await emailEtudiant(s.page, 'amine@ensam-umi.ac.ma');
+  await s.page.waitForSelector('#au-ecole', { timeout: 8000 });
+  await s.page.fill('#au-email', 'amine@ensa-fes.ma');
+  await s.page.waitForFunction(() => !document.getElementById('au-ecole'));
+  assert.equal(await indice(s.page), 'Côté étudiants : de préférence avec ton email de l’école (@ensam-umi.ac.ma). Ton compte est alors vérifié tout de suite.');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Membre d'une autre école que l'ENSAM Meknès, déjà connecté sur cet appareil. email : celui de son compte ; avant(ctx) : le
+// réseau à régler avant la première visite ; attendre : ce qui dit que la page est là
+// ---------------------------------------------------------------------------
+async function membreDe({ hash = '', langue = 'fr', largeur = 390, email = 'membre@exemple.ma', avant, attendre = '.me-btn' } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(([uid, langue, email]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email, user_metadata: {}, app_metadata: {} } }));
+  }, [UID, langue, email]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  if (attendre) await page.waitForSelector(attendre, { timeout: 15000 });
+  return { ctx, page, erreurs };
+}
+
+// « Mon profil » : un lauréat qui passe côté étudiants (« Je suis à l’école ») suit les domaines et la règle d'email de son
+// école, sa ligne de la table des écoles, comme la base (protect_profile lit l'école du profil) ; l'ENSAM Meknès garde ses
+// réglages. Les enregistrements de son profil : les PATCH de /profiles
+const LAUREAT_2019 = { ...ETUDIANT, role: 'laureat', promo: 2019, consent_at: '2025-10-01T10:00:00Z' };
+const versEtudiant = async page => {
+  await page.waitForSelector('#profil-infos .pf-infos > .seg > button', { timeout: 15000 });
+  await page.click('#profil-infos .pf-infos > .seg > button:first-child');
+  await page.waitForFunction(() => document.querySelector('#profil-infos .pf-infos > .seg > button:first-child')?.classList.contains('on'));
+};
+const enregistrements = () => site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH');
+
+for (const langue of ['fr', 'ar']) test(`Mon profil d’un membre d’une autre école (${langue}) : « Je suis à l’école » demande l’email de son école (ses domaines, sa règle) ; l’ENSAM Meknès comme avant`, async () => {
+  const ar = langue === 'ar';
+  // Son école exige l'email de l'école (la règle de l'ENSAM Meknès, elle, ne l'exige pas)
+  site.inscrits.push({ ...LAUREAT_2019, ecole: 'ensa-fes' });
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  let m = await membreDe({ hash: '#profil', langue });
+  await versEtudiant(m.page);
+  await m.page.waitForSelector('#pf-ecole', { timeout: 8000 });
+  const bloc = await m.page.locator('#pf-ecole').innerText();
+  assert.match(bloc, /@ensa-fes\.ma/, 'les domaines de son école');
+  assert.doesNotMatch(bloc, /ensam-umi/, 'jamais ceux de l’ENSAM Meknès');
+  assert.match(bloc, ar ? /حساب الطالب يستعمل بريد المدرسة\./ : /Un compte étudiant utilise l’email de l’école\./);
+  assert.equal(await m.page.getAttribute('#profil-infos .row-end > button.btn.primary', 'data-manque'), 'ecole', 'le bouton mène à l’email de l’école, rien ne part');
+  assert.equal(await m.page.locator('#profil-infos .row-end > button.btn.primary').innerText(), ar ? 'استعمل بريد المدرسة' : 'Utilise l’email de l’école');
+  if (ar) assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /email|compte|rôle|école/i.test(x))), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Un membre de l'ENSAM Meknès : les réglages de l'administration, comme avant (la ligne d'une autre école n'y change rien)
+  site.vider(); site.inscrits.push({ ...LAUREAT_2019 });
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  m = await membreDe({ hash: '#profil', langue, avant: reglagesObligatoire });
+  await versEtudiant(m.page);
+  await m.page.waitForSelector('#pf-ecole', { timeout: 8000 });
+  const blocM = await m.page.locator('#pf-ecole').innerText();
+  assert.match(blocM, /@ensam-umi\.ac\.ma/);
+  assert.doesNotMatch(blocM, /ensa-fes/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('Mon profil d’un membre d’une autre école : la règle de l’ENSAM Meknès ne le bloque pas (son école ne l’exige pas, ou son email est celui de son école), et son profil étudiant s’enregistre', async () => {
+  for (const [email, obligatoire] of [['membre@exemple.ma', false], ['salma@ensa-fes.ma', true]]) {
+    const quoi = `${email}, obligatoire : ${obligatoire}`;
+    site.vider(); site.inscrits.push({ ...LAUREAT_2019, ecole: 'ensa-fes' });
+    site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: obligatoire }];
+    const m = await membreDe({ hash: '#profil', email, avant: reglagesObligatoire });
+    await versEtudiant(m.page);
+    await m.page.fill('#pf-promo', String(S + 1));
+    // La promo prise : il ne reste rien, ou l'email de l'école
+    await m.page.waitForFunction(() => { const b = document.querySelector('#profil-infos .row-end > button.btn.primary'); return b && (!b.dataset.manque || b.dataset.manque === 'ecole'); });
+    assert.equal(await m.page.locator('#pf-ecole').count(), 0, `${quoi} : pas la règle de l’ENSAM Meknès`);
+    assert.equal(await m.page.getAttribute('#profil-infos .row-end > button.btn.primary', 'data-manque'), null, quoi);
+    await m.page.click('#profil-infos .row-end > button.btn.primary');
+    await m.page.waitForFunction(() => /Profil enregistré/.test(document.querySelector('.toast-zone')?.textContent || ''), null, { timeout: 8000 });
+    assert.equal(enregistrements().pop()?.corps?.role, 'etudiant', quoi);
+    assert.equal(site.inscrits.find(x => x.id === UID)?.role, 'etudiant', quoi);
+    assert.deepEqual(m.erreurs, [], quoi);
+    await m.ctx.close();
+  }
+});
+
+// L'accueil d'un membre d'une autre école : la porte dessinée dit son école (sa ligne : « ENSA · FÈS », comme la page d'entrée
+// du lien d'une école ouverte), jamais l'ENSAM Meknès, pas même un instant, ni après le passage à l'arabe ; sans sa ligne,
+// « ENSAM ». Un membre de l'ENSAM Meknès : la porte d'avant, au caractère près. window.__bandes : les noms que la porte a
+// portés, notés à chaque changement de la page
+const PORTE = '.home-hero .scene .g-txt';
+const noterBandes = ctx => ctx.addInitScript(() => {
+  window.__bandes = [];
+  new MutationObserver(() => {
+    const t = document.querySelector('.home-hero .scene .g-txt')?.textContent;
+    if (t && window.__bandes[window.__bandes.length - 1] !== t) window.__bandes.push(t);
+  }).observe(document, { childList: true, subtree: true, characterData: true });
+});
+const quandPorte = (page, b) => page.waitForFunction(([sel, b]) => document.querySelector(sel)?.textContent === b, [PORTE, b], { timeout: 15000 });
+
+test('accueil d’un membre d’une autre école : la porte dessinée dit son école (sa ligne), jamais l’ENSAM Meknès, même en passant à l’arabe ; l’ENSAM Meknès comme avant', async () => {
+  for (const [ecole, bande] of [['ensa-fes', 'ENSA · FÈS'], ['ensam-casa', 'ENSAM · CASABLANCA'], ['ensa-oujda', 'ENSAM']]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ecole, consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = [FES, CASA];
+    const m = await membreDe({ avant: noterBandes });
+    await m.page.waitForSelector(PORTE, { timeout: 15000 });
+    await quandPorte(m.page, bande).catch(() => {});
+    assert.equal(await m.page.locator(PORTE).textContent(), bande, ecole);
+    // L'arabe : le dessin est refait pour l'autre sens, le nom reste
+    await m.page.click('.top .lang-btn');
+    await m.page.waitForFunction(() => document.documentElement.dir === 'rtl' && document.querySelector('.home-hero .scene svg')?.getAttribute('preserveAspectRatio')?.startsWith('xMinYMax'), null, { timeout: 15000 });
+    assert.equal(await m.page.locator(PORTE).textContent(), bande, `${ecole} : en arabe`);
+    const vues = await m.page.evaluate(() => window.__bandes);
+    assert.ok(!vues.includes('ENSAM · MEKNÈS'), `${ecole} : la porte a porté ${JSON.stringify(vues)}`);
+    assert.deepEqual(m.erreurs, [], ecole);
+    await m.ctx.close();
+  }
+  // L'ENSAM Meknès : le dessin tel quel, sans rien de posé dessus, en français et en arabe (la ligne d'une autre école n'y
+  // change rien)
+  for (const langue of ['fr', 'ar']) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = [{ slug: 'ensam-meknes', nom: 'ENSAM Meknès', ouverte: true, created_at: '2026-10-21T00:00:00Z' }, FES];
+    const m = await membreDe({ langue, avant: noterBandes });
+    await m.page.waitForSelector(ACCUEIL, { timeout: 15000 }); await m.page.waitForSelector(PORTE, { timeout: 15000 });
+    assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET'), 'les écoles sont lues');
+    const tel = await m.page.evaluate(async align => {
+      const { sceneMarkup } = await import(new URL('scene.js', location.href).href);
+      const d = document.createElement('div'); d.innerHTML = sceneMarkup(align, 'meet');
+      return d.innerHTML === document.querySelector('.home-hero .scene').innerHTML;
+    }, langue === 'ar' ? 'xMinYMax' : 'xMaxYMax');
+    assert.ok(tel, `${langue} : le dessin d’avant`);
+    assert.equal(await m.page.locator(PORTE).textContent(), 'ENSAM · MEKNÈS');
+    assert.deepEqual(await m.page.evaluate(() => window.__bandes), ['ENSAM · MEKNÈS']);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  }
+});
+
+// L'école gardée par le lien d'une autre école (ensam-invite-ecole), puis un lien d'invitation de l'ENSAM Meknès (?promo=,
+// &de=, sans école) : la page d'entrée, la demande de code, qui invite et le profil sont ceux de l'ENSAM Meknès ; dans le
+// navigateur d'une application, l'adresse gardée pour Safari et « Ouvrir dans Chrome » ne disent plus l'école effacée. Une
+// simple visite la garde ; un lien qui dit son école la remplace
+const ecoleGardee = page => page.evaluate(() => localStorage.getItem('ensam-invite-ecole'));
+test('école gardée par un ancien lien, puis un lien d’invitation sans école : l’ENSAM Meknès partout (page, code, qui invite, profil, Safari, Chrome) ; une simple visite la garde ; un lien qui dit son école la remplace', async () => {
+  const otp = email => site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === email).pop()?.corps;
+  const corps = nom => site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + nom).map(a => a.corps);
+  const NADIA = c => (c?.p_code === 'nadia219' ? { prenom: 'Nadia', promo: 2019, role: 'laureat' } : null);
+  // Le lien d'une promo de l'ENSAM Meknès, après celui de l'ENSAM Casablanca (pas encore ouverte)
+  site.tables.ecoles = [FES, CASA];
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensam-casa' } });
+  assert.equal(await ecoleGardee(s.page), null, 'effacée');
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+  assert.equal('ecole' in (otp('hamza@gmail.com').data || {}), false, `la demande de code sans école : ${JSON.stringify(otp('hamza@gmail.com').data)}`);
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, 'le profil de l’ENSAM Meknès');
+  for (const nom of ['chiffres_publics', 'fondateurs_publics']) assert.ok(corps(nom).every(c => JSON.stringify(c) === '{}'), `${nom} : ${JSON.stringify(corps(nom))}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le lien de qui invite (&de=, sans promo), après celui de l'ENSA Fès (ouverte) : qui invite, cherché à l'ENSAM Meknès
+  site.vider(); site.tables.ecoles = [FES, CASA]; site.rpc.invitation_de = NADIA;
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?de=nadia219', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.equal(await ecoleGardee(s.page), null, 'effacée');
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  assert.ok(corps('invitation_de').length && corps('invitation_de').every(c => JSON.stringify(c) === '{"p_code":"nadia219"}'), JSON.stringify(corps('invitation_de')));
+  await s.app();
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès', 'l’application reprend la page telle quelle');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Dans le navigateur d'une application : l'adresse gardée pour Safari (iPhone), « Ouvrir dans Chrome » (Android)
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM_IOS, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await quand(s.page, 'mode', 'inscription');
+  assert.deepEqual(await adresseDe(s.page), { promo: '2019', mode: 'inscription' }, 'iPhone : pas d’école dans l’adresse');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await s.page.waitForSelector('#au-appli-chrome', { timeout: 8000 });
+  const intent = await s.page.getAttribute('#au-appli-chrome', 'href');
+  const vers = new URL('https://' + intent.slice('intent://'.length).split('#Intent;')[0]).searchParams;
+  assert.deepEqual([vers.get('promo'), vers.has('ecole')], ['2019', false], `Android : ${intent}`);
+  assert.doesNotMatch(decodeURIComponent(intent), /ecole=/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Une simple visite : l'école gardée reste, et la page la dit
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await quandMarque(s.page, 'Réseau ENSA Fès');
+  assert.equal(await ecoleGardee(s.page), 'ensa-fes');
+  await s.ctx.close();
+  // Un lien qui dit son école : elle remplace celle d'avant
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019&ecole=ensa-fes', stockage: { 'ensam-invite-ecole': 'ensam-casa' } });
+  await quandMarque(s.page, 'Réseau ENSA Fès');
+  assert.equal(await ecoleGardee(s.page), 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// La carte de l'ambassadeur ne saute pas quand les chiffres du mois arrivent de la base (chiffres_ma_promo, retenus ici
+// jusqu'au lacher()) : leur place est gardée, sans un chiffre ni un mot qui pourrait être faux (des formes vides), et
+// « Envoyer sur WhatsApp » (#amb-wa), comme le bas de la carte, restent où ils sont. reponse : 'ok' (la base du faux
+// Supabase : 12 inscrits, +3 ce mois-ci…), d'autres chiffres, 'null' (rien) ou 'erreur'
+const AMB_ACCEPTE = () => { const now = new Date().toISOString(); return [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'accepte', par: 'auto', propose_at: now, repondu_at: now, created_at: now }]; };
+const posCarte = page => page.evaluate(() => {
+  const c = document.getElementById('amb-carte').getBoundingClientRect(), w = document.getElementById('amb-wa').getBoundingClientRect();
+  return { wa: Math.round(w.top - c.top), haut: Math.round(c.height) };
+});
+async function carteRetenue({ largeur = 390, langue = 'fr', reponse = 'ok' } = {}) {
+  ambFaux = AMB_ACCEPTE(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let lacher; const tenue = new Promise(ok => { lacher = ok; });
+  const repondre = r => (reponse === 'ok' ? r.continue() : reponse === 'erreur' ? r.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"x"}' })
+    : r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reponse === 'null' ? null : reponse) }));
+  const m = await membreDe({ largeur, langue, avant: ctx => ctx.route('**/rest/v1/rpc/chiffres_ma_promo', r => tenue.then(() => repondre(r)).catch(() => {})) });
+  await m.page.waitForSelector('#amb-carte #amb-wa', { timeout: 15000 });
+  return { ...m, lacher };
+}
+const UN_ZERO = { inscrits: 1, nouveaux: 0, demandes: 0, demandes_mois: 0, stages: 1, stages_mois: 0 };
+
+for (const [largeur, langue] of [[390, 'fr'], [390, 'ar'], [360, 'fr']]) test(`carte de l’ambassadeur (${largeur} px, ${langue}) : les chiffres du mois arrivent sans rien faire bouger, leur place gardée sans un chiffre ; un, zéro : pareil`, async () => {
+  for (const reponse of ['ok', UN_ZERO]) {
+    const quoi = JSON.stringify(reponse);
+    site.vider();
+    const m = await carteRetenue({ largeur, langue, reponse });
+    const avant = await posCarte(m.page);
+    // En attendant la base : pas un chiffre, pas un mot (« inscrits » serait faux pour un seul)
+    if (langue === 'fr') assert.doesNotMatch(await m.page.locator('#amb-carte').innerText(), /\d\s*(inscrit|demande|stage)/, quoi);
+    assert.deepEqual(await m.page.$$eval('#amb-carte .amb-grille li', l => l.map(x => x.innerText.trim()).filter(Boolean)), [], `${quoi} : rien d’écrit dans les cases qui attendent`);
+    m.lacher();
+    await m.page.waitForSelector('#amb-carte .amb-chiffres', { timeout: 10000 });
+    assert.deepEqual(await posCarte(m.page), avant, `${quoi} : « Envoyer sur WhatsApp » et le bas de la carte restent où ils sont`);
+    const nombres = await m.page.$$eval('#amb-carte .amb-chiffres b', bs => bs.map(b => b.textContent));
+    assert.deepEqual(nombres, reponse === 'ok' ? ['12', '2', '4'] : ['1', '0', '1'], quoi);
+    const t = await m.page.locator('#amb-carte').innerText();
+    if (langue === 'fr') assert.match(t, reponse === 'ok' ? /12\s*inscrits\s*\+3 ce mois-ci[\s\S]*2\s*demandes pourvues[\s\S]*4\s*stages et emplois trouvés/ : /1\s*inscrit\s+0\s*demande pourvue\s+1\s*stage ou emploi trouvé/);
+    else assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /inscrit|demande|stage|mois|En /.test(x))), []);
+    assert.doesNotMatch(t, /\binscrits?\s+inscrits?\b|pourvues?\s+demandes?/, `${quoi} : un seul mot par chiffre à l’écran`);
+    assert.deepEqual(m.erreurs, [], quoi);
+    await m.ctx.close();
+  }
+});
+
+test('carte de l’ambassadeur : la base ne rend pas de chiffres (erreur, rien) : pas de case vide qui reste', async () => {
+  for (const reponse of ['erreur', 'null']) {
+    site.vider();
+    const m = await carteRetenue({ reponse });
+    m.lacher();
+    await m.page.waitForFunction(() => !document.querySelector('#amb-carte [aria-busy="true"]'), null, { timeout: 10000 });
+    assert.equal(await m.page.locator('#amb-carte .amb-mois, #amb-carte .amb-chiffres, #amb-carte .amb-bloc ul.amb-grille').count(), 0, reponse);
+    assert.deepEqual(await m.page.$$eval('#amb-carte > .amb-bloc > .amb-sous', l => l.map(x => x.textContent)), ['Le lien de ta promo', 'Réussites à partager'], `${reponse} : le lien de la promo et les réussites, rien d’autre`);
+    assert.ok(await m.page.isVisible('#amb-wa'));
+    assert.deepEqual(m.erreurs, [], reponse);
+    await m.ctx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Le lien d'une autre école tant que sa ligne n'est pas là (elle arrive, ou sa lecture échoue : 8 s, 5xx, réseau) : ni la
+// marque, ni la porte dessinée, ni l'onglet ne disent l'ENSAM Meknès, pas même une image (« ENSAM », sans ville) ; ni ses
+// domaines ni sa règle d'email. Sa ligne relue (le magasin arrive, le réseau revient, « Recevoir mon code ») : ses noms à
+// elle. Une lecture qui échoue n'est pas une école pas encore ouverte (celle-là, la page d'avant).
+// ---------------------------------------------------------------------------
+// Chaque image (requestAnimationFrame), dès la première : la marque, la porte dessinée et l'onglet ; et les lectures de la
+// ligne de l'école finies dans la page (window.__lues : le fetch rendu, ce qui le suit déjà fait quand la page le voit)
+const imagesNotees = ctx => ctx.addInitScript(() => {
+  const vues = window.__vues = []; let avant = '';
+  const noter = () => {
+    const v = { marque: document.querySelector('.entree-marque')?.innerText.trim() || '', porte: document.querySelector('.entree-scene .g-txt')?.textContent || '', onglet: document.title };
+    const k = JSON.stringify(v);
+    if (k !== avant) { avant = k; vues.push(v); }
+    requestAnimationFrame(noter);
+  };
+  requestAnimationFrame(noter);
+  window.__lues = 0;
+  const f = window.fetch;
+  window.fetch = (...a) => { const p = f(...a); return /\/rest\/v1\/ecoles\?/.test(String(a[0]?.url || a[0])) ? p.finally(() => { window.__lues++; }) : p; };
+});
+const vuesMeknes = page => page.evaluate(() => window.__vues).then(v => v.filter(x => /Meknès|مكناس|MEKNÈS/.test(x.marque + x.porte + x.onglet)));
+const lues = (page, n) => page.waitForFunction(n => window.__lues >= n, n, { timeout: 15000 });
+const porte = page => page.locator('.entree-scene .g-txt').textContent();
+const quandPorteEntree = (page, t) => page.waitForFunction(t => document.querySelector('.entree-scene .g-txt')?.textContent === t, t, { timeout: 8000 });
+const neutre = async page => [await marque(page), await porte(page), await page.title()];
+const NEUTRE = { fr: 'Réseau ENSAM', ar: 'شبكة ENSAM' };
+// La ligne de l'école : la première lecture retenue jusqu'à lacher() (lâchée une fois la porte dessinée, la page d'entrée
+// attend cette lecture-là sans en faire une autre), puis une erreur 503 tant que panne() ; sinon la ligne du faux Supabase
+async function lectureEcole(ctx, panne = () => false) {
+  let n = 0, lacher; const retenue = new Promise(ok => { lacher = ok; });
+  const repondre = r => (panne() ? r.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"service unavailable"}' }) : r.continue());
+  await ctx.route(/\/sb\/rest\/v1\/ecoles(\?|$)/, r => (++n === 1 ? retenue.then(() => repondre(r)) : repondre(r)).catch(() => {}));
+  return { lacher, lectures: () => n };
+}
+const porteDessinee = page => page.waitForSelector('.entree-scene .scene .g-txt', { timeout: 8000 });
+
+for (const langue of ['fr', 'ar']) test(`lien d’une école ouverte (${langue}), sa ligne en retard : « ENSAM » en attendant (marque, porte, onglet), jamais l’ENSAM Meknès, pas même une image ; puis ses noms`, async () => {
+  const N = NOMS_FES[langue];
+  site.tables.ecoles = [FES];
+  let L;
+  const s = await visiteur({ largeur: 390, hauteur: 844, langue, query: '?ecole=ensa-fes', avant: async ctx => { await imagesNotees(ctx); L = await lectureEcole(ctx); } });
+  // La porte dessinée est là, la ligne pas encore
+  await porteDessinee(s.page);
+  assert.deepEqual(await neutre(s.page), [NEUTRE[langue], 'ENSAM', 'Réseau ENSAM']);
+  L.lacher();
+  await quandMarque(s.page, N.marque);
+  await quandPorteEntree(s.page, 'ENSA · FÈS');
+  assert.equal(await s.page.title(), 'Réseau ENSA Fès');
+  assert.deepEqual(await vuesMeknes(s.page), [], 'aucune image ne dit l’ENSAM Meknès');
+  const vues = await s.page.evaluate(() => window.__vues);
+  assert.ok(vues.some(v => v.porte === 'ENSAM' && v.onglet === 'Réseau ENSAM' && v.marque === NEUTRE[langue]), JSON.stringify(vues));
+  assert.equal(L.lectures(), 1, 'sa ligne, lue une fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'ENSAM Meknès (sans lien, son lien, le lien d'une promo) : son nom à chaque image, la porte telle quelle, comme avant
+  for (const query of ['', '?ecole=ensam-meknes', '?promo=2019']) {
+    site.vider(); site.tables.ecoles = [FES];
+    const m = await visiteur({ largeur: 390, hauteur: 844, langue, query, avant: imagesNotees });
+    await porteDessinee(m.page);
+    await m.app();
+    const v = await m.page.evaluate(() => window.__vues);
+    assert.deepEqual(v.filter(x => (x.onglet && x.onglet !== 'Réseau ENSAM Meknès') || (x.porte && x.porte !== 'ENSAM · MEKNÈS') || (x.marque && x.marque !== NOMS_MEKNES[langue].marque)), [], query);
+    assert.equal(await m.page.locator('.entree-scene .g-txt').evaluate(t => [...t.attributes].map(a => a.name).join(' ')), 'class x y text-anchor', `${query} : la porte telle quelle`);
+    assert.equal(await m.page.evaluate(() => window.__lues), 0, `${query} : pas une lecture de la table des écoles`);
+    assert.deepEqual(m.erreurs, [], query);
+    await m.ctx.close();
+  }
+});
+
+test('lien d’une école ouverte, sa ligne illisible (503) : « ENSAM » partout, ni les domaines ni la règle de l’ENSAM Meknès ; l’email de son école passe, la demande de code dit son école', async () => {
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  let L;
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: async ctx => { await imagesNotees(ctx); await reglagesObligatoire(ctx); L = await lectureEcole(ctx, () => true); } });
+  await porteDessinee(s.page);
+  L.lacher(); await lues(s.page, 1);
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  // Le magasin (et les réglages de l'ENSAM Meknès) arrivé : la ligne relue, toujours illisible ; rien ne change
+  await s.app(); await lues(s.page, 2);
+  await s.page.click('#au-je-etudiant');
+  await emailEtudiant(s.page, 'amine@ensa-fes.ma');
+  assert.equal(await indice(s.page), '', 'ni les domaines de l’ENSAM Meknès, ni sa règle');
+  assert.equal(await s.page.locator('#au-ecole').count(), 0);
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code', { timeout: 8000 });
+  const otp = site.appels.filter(a => a.u === '/sb/auth/v1/otp').pop()?.corps;
+  assert.deepEqual([otp?.email, otp?.data?.ecole], ['amine@ensa-fes.ma', 'ensa-fes']);
+  assert.equal(L.lectures(), 3, 'relue quand le magasin arrive, puis par « Recevoir mon code »');
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  assert.deepEqual(await vuesMeknes(s.page), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien d’une école ouverte, sa ligne illisible puis relue : ses noms quand le magasin arrive, quand le réseau revient, ou à « Recevoir mon code » (et sa règle)', async () => {
+  const ouvrir = async ({ magasin } = {}) => {
+    site.vider(); site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+    const x = { panne: true };
+    const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: async ctx => {
+      await imagesNotees(ctx); x.L = await lectureEcole(ctx, () => x.panne);
+      if (magasin) await ctx.route(/\/store\.js(\?|$)/, r => magasin.then(() => r.continue()).catch(() => {}));
+    } });
+    await porteDessinee(s.page);
+    x.L.lacher(); await lues(s.page, 1);
+    assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+    return Object.assign(x, s);
+  };
+  const fes = async (s, lectures) => {
+    await quandMarque(s.page, 'Réseau ENSA Fès');
+    await quandPorteEntree(s.page, 'ENSA · FÈS');
+    assert.equal(await s.page.title(), 'Réseau ENSA Fès');
+    assert.equal(s.L.lectures(), lectures);
+    assert.deepEqual(await vuesMeknes(s.page), []);
+    assert.deepEqual(s.erreurs, []);
+  };
+  // Le magasin arrive après l'échec : la ligne relue, ses noms
+  let lacherMagasin; const magasin = new Promise(ok => { lacherMagasin = ok; });
+  let s = await ouvrir({ magasin });
+  s.panne = false; lacherMagasin();
+  await s.app();
+  await fes(s, 2);
+  await s.ctx.close();
+  // Le réseau revient (le magasin déjà là, sa relecture échouée aussi)
+  s = await ouvrir();
+  await s.app(); await lues(s.page, 2);
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  s.panne = false;
+  await s.page.evaluate(() => dispatchEvent(new Event('online')));
+  await fes(s, 3);
+  await s.ctx.close();
+  // « Recevoir mon code » relit la ligne : ses noms, et sa règle (l'email de son école, obligatoire)
+  s = await ouvrir();
+  await s.app(); await lues(s.page, 2);
+  s.panne = false;
+  await s.page.click('#au-je-etudiant');
+  await emailEtudiant(s.page, 'amine@gmail.com');
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('.entree-form .auth-msg.err', { timeout: 8000 });
+  assert.equal(await s.page.locator('.entree-form .auth-msg.err').innerText(), 'Inscris-toi avec ton email de l’école.');
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp').length, 0);
+  await fes(s, 3);
+  assert.match(await indice(s.page), /@ensa-fes\.ma/);
+  assert.doesNotMatch(await indice(s.page), /ensam-umi/);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// L'école du compte est celle du lien que la page suit. Un compte né de la demande de code sur le lien d'une autre école
+// (le compte la garde dans ses données), fini plus tard par le lien d'une promo de l'ENSAM Meknès (?promo=, sans école) sur
+// un autre appareil : le profil part sans école et rejoint l'ENSAM Meknès (une école pas encore ouverte ne le bloque plus),
+// et le compte ne dit plus l'autre école (null l'efface) : la dernière étape finie ailleurs, sans lien, va aussi à l'ENSAM
+// Meknès. Un compte de l'ENSAM Meknès, ou une page sans lien : la mise à jour du compte d'avant, à l'octet.
+// ---------------------------------------------------------------------------
+// La base refuse le profil d'une école pas encore ouverte (protect_ecole), et celui-là seulement
+const refusCasa = ctx => ctx.route(/\/sb\/rest\/v1\/profiles(\?|$)/, r => {
+  const c = r.request().method() === 'POST' ? JSON.parse(r.request().postData() || 'null') : null;
+  return (Array.isArray(c) ? c[0] : c)?.ecole === 'ensam-casa'
+    ? r.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', details: null, hint: null, message: FERMEE }) }) : r.continue();
+});
+const profilsEnvoyes = () => site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'POST').map(a => (Array.isArray(a.corps) ? a.corps[0] : a.corps));
+const majsCompte = () => site.appels.filter(a => a.u === '/sb/auth/v1/user' && a.m === 'PUT').map(a => a.corps?.data);
+// La dernière étape finie (l'accueil) ou refusée (« pas encore ouvert ») : ce qui arrive en premier
+const etapeFinie = page => page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb') || document.querySelector('#pf-ferme'), null, { timeout: 15000 });
+// La première demande de code, sur le lien de l'autre école : le compte naît avec son école
+async function commencerPar(slug, email) {
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=' + slug });
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', email); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === email).pop().corps.data.ecole, slug);
+  await s.ctx.close();
+}
+
+for (const autre of [CASA, FES]) test(`compte commencé par le lien de l’${autre.nom} (${autre.ouverte ? 'ouverte' : 'pas encore ouverte'}), puis le lien d’une promo de l’ENSAM Meknès sur un autre appareil : le profil part sans école et l’inscription se finit ; le compte ne dit plus l’autre école (la dernière étape finie ailleurs, sans lien : l’ENSAM Meknès aussi)`, async () => {
+  site.tables.ecoles = [FES, CASA];
+  await commencerPar(autre.slug, 'karim@gmail.com');
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019', avant: refusCasa });
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  await finirLaureat(s.page);
+  await etapeFinie(s.page);
+  assert.equal(await s.page.locator('#pf-ferme').count(), 0, `pas « ${FERMEE} »`);
+  assert.deepEqual(profilsEnvoyes().map(p => 'ecole' in p), [false], `le profil part sans école : ${JSON.stringify(profilsEnvoyes())}`);
+  assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, 'le profil de l’ENSAM Meknès');
+  assert.deepEqual(majsCompte().map(d => ['ecole' in d, d.ecole]), [[true, null]], `le compte ne dit plus l’autre école : ${JSON.stringify(majsCompte())}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le code donné sur la page du lien de la promo, puis la dernière étape finie ailleurs, sur la page sans lien (connexion)
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  await commencerPar(autre.slug, 'karim@gmail.com');
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019' });
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  await s.ctx.close();
+  s = await visiteur({ largeur: 390, hauteur: 844, avant: refusCasa });
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'karim@gmail.com'); await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code'); await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  await finirLaureat(s.page, { choisir: true });
+  await etapeFinie(s.page);
+  assert.equal(await s.page.locator('#pf-ferme').count(), 0, `pas « ${FERMEE} »`);
+  assert.deepEqual(profilsEnvoyes().map(p => 'ecole' in p), [false], `fini ailleurs, sans école : ${JSON.stringify(profilsEnvoyes())}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('compte de l’ENSAM Meknès (son lien, celui d’une promo, ou aucun), ou page sans lien : à l’inscription, la mise à jour du compte d’avant (sans école), et le profil d’avant', async () => {
+  const CLES = ['consent_at', 'consent_version', 'emails_hebdo', 'langue', 'role_choisi'];
+  for (const query of ['', '?promo=2019', '?ecole=ensam-meknes']) {
+    site.vider(); site.tables.ecoles = [FES, CASA];
+    const s = await visiteur({ largeur: 390, hauteur: 844, query });
+    await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+    assert.deepEqual(majsCompte().map(d => Object.keys(d)), [CLES], query);
+    await finirLaureat(s.page);
+    await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+    assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, query);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Un compte né sur le lien de l'ENSA Fès, l'inscription reprise sur une page sans lien (un autre appareil) : la page ne suit
+  // aucun lien, l'école du compte reste (la mise à jour d'avant), et le profil y va
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  await commencerPar('ensa-fes', 'karim@gmail.com');
+  const s = await visiteur({ largeur: 390, hauteur: 844 });
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.deepEqual(majsCompte().map(d => Object.keys(d)), [CLES]);
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Une offre ou une question partagée sur WhatsApp (#od-partage, #q-partage) : le lien l'ouvre dans son école (celle de
+// l'offre ou de la question : &ecole=, après ?lang=ar), par la page neutre du site (e.html : son aperçu ne nomme aucune école),
+// le texte la nomme (une école pas encore ouverte : « ENSAM », sans ville). Ouvert par un visiteur : la page d'entrée de son
+// école, l'offre attendue, et l'inscription y va (la demande de code, le profil) ; le service worker, une fois installé, fait
+// suivre la même chose sans passer par la page neutre. L'ENSAM Meknès : le message d'avant, à l'octet, en français et en arabe.
+// ---------------------------------------------------------------------------
+const QUESTION = '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', TITRE_Q = 'Comment préparer un entretien chez OCP ?';
+const messageDe = async (page, sel) => { await page.waitForSelector(sel, { timeout: 15000 }); return decodeURIComponent((await page.getAttribute(sel, 'href')).split('https://wa.me/?text=')[1]); };
+// Les offres de son école (la base ne donne que celles-là) ; ecole null : celles d'avant, sans école
+const offresDe = ecole => ctx => ctx.route(/\/sb\/rest\/v1\/offers(\?|$)/, r => (r.request().method() === 'GET'
+  ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OFFRES.map(o => ({ ...o, ...(ecole ? { ecole } : {}) }))) }) : r.continue()));
+
+for (const langue of ['fr', 'ar']) test(`offre et question partagées par un membre d’une autre école (${langue}) : le lien dit son école, le texte la nomme (« ENSAM » pour une école pas encore ouverte) ; ouvert par un visiteur, son école, jusqu’au profil ; l’ENSAM Meknès, le message d’avant à l’octet`, async () => {
+  const ar = langue === 'ar';
+  const lienDe = (ecole, h) => site.adresse + (ecole ? 'e.html' : '') + (ar ? '?lang=ar' : '') + (ecole ? (ar ? '&' : '?') + 'ecole=' + ecole : '') + '#' + h;
+  const offre = (n, l) => (ar ? `PFE Lean manufacturing · OCP\nعرض منشور على شبكة ${n}. افتحه هنا: ${l}` : `PFE Lean manufacturing · OCP\nOffre partagée sur le Réseau ${n}. Ouvre-la ici : ${l}`);
+  const question = (n, l) => (ar ? `سؤال على شبكة ${n}: « ${TITRE_Q} »\nيمكنك الجواب هنا: ${l}` : `Question sur le Réseau ${n} : « ${TITRE_Q} »\nTu peux y répondre ici : ${l}`);
+  for (const [ecole, lignes, nom] of [['ensa-fes', [FES], ar ? 'ENSA فاس' : 'ENSA Fès'], ['ensam-casa', [CASA], 'ENSAM'], [null, [FES], ar ? 'ENSAM مكناس' : 'ENSAM Meknès']]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ...(ecole ? { ecole } : {}), consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = lignes;
+    site.tables.questions = [{ id: QUESTION, author_id: AUTEUR, titre: TITRE_Q, body: null, categorie: 'Stage', created_at: '2026-10-20T10:00:00Z', ...(ecole ? { ecole } : {}) }];
+    const m = await membreDe({ langue, hash: '#offre/' + OFFRE, avant: offresDe(ecole) });
+    assert.equal(await messageDe(m.page, '#od-partage'), offre(nom, lienDe(ecole, 'offre/' + OFFRE)), `offre : ${ecole || 'ensam-meknes'}`);
+    await m.page.evaluate(h => { location.hash = h; }, '#reseau/entraide/' + QUESTION);
+    assert.equal(await messageDe(m.page, '#q-partage'), question(nom, lienDe(ecole, 'reseau/entraide/' + QUESTION)), `question : ${ecole || 'ensam-meknes'}`);
+    assert.deepEqual(m.erreurs, [], ecole || 'ensam-meknes');
+    await m.ctx.close();
+  }
+  // La page neutre telle que WhatsApp la lit : aucun nom d'école, l'image neutre
+  const brut = await (await fetch(lienDe('ensa-fes', 'offre/' + OFFRE).split('#')[0])).text();
+  assert.ok(brut.includes(`<meta property="og:image" content="https://reseau-ensam-meknes.github.io/img/apercu-promo-neutre.jpg">`), brut);
+  assert.match(brut, /<meta property="og:title" content="Réseau ENSAM">/);
+  assert.doesNotMatch(brut, /Meknès|مكناس|Fès|فاس|ecole=/);
+  // Le lien de l'offre de l'ENSA Fès, ouvert par un visiteur qui n'a jamais choisi de langue : la page d'entrée de son école,
+  // l'offre attendue (l'adresse propre, le # gardé), la demande de code et le profil y vont
+  site.vider(); site.tables.ecoles = [FES];
+  const u = new URL(lienDe('ensa-fes', 'offre/' + OFFRE));
+  assert.equal(u.pathname, '/e.html');
+  let s = await visiteur({ sw: true, largeur: 390, hauteur: 844, langue: null, query: 'e.html' + u.search, hash: u.hash });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search + location.hash), (ar ? '/?lang=ar' : '/') + '#offre/' + OFFRE);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-ecole')), 'ensa-fes');
+  // Le site gardé sur l'appareil : le service worker répond lui-même au lien, par la même entrée ; aucune page ne s'ouvre
+  // à l'adresse de l'aperçu
+  await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+  const ouvertes = [];
+  s.page.on('framenavigated', f => { if (f === s.page.mainFrame()) ouvertes.push(new URL(f.url()).pathname); });
+  await s.page.goto(lienDe('ensa-fes', 'reseau/entraide/' + QUESTION)); await s.page.waitForSelector('#entree .entree-form');
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.deepEqual(ouvertes.filter(p => p !== '/'), [], 'le service worker a répondu au lien de l’aperçu');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search + location.hash), (ar ? '/?lang=ar' : '/') + '#reseau/entraide/' + QUESTION);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  site.vider(); site.tables.ecoles = [FES];
+  s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: 'e.html' + u.search, hash: u.hash });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === 'karim@gmail.com').pop().corps.data.ecole, 'ensa-fes');
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Un membre d'une autre école qui se déconnecte, ou dont la session se perd (au réveil, renouvellement refusé) : la page
+// d'entrée sans lien est celle de l'ENSAM Meknès, et l'onglet le dit aussi, sans garder le nom de son école de l'écran du membre
+for (const langue of ['fr', 'ar']) test(`déconnexion et session perdue d’un membre d’une autre école (${langue}) : l’onglet suit la page d’entrée`, async () => {
+  for (const fin of ['déconnexion', 'session perdue']) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ecole: 'ensa-fes', consent_at: '2025-10-01T10:00:00Z' }); site.tables.ecoles = [FES];
+    const m = await membreDe({ langue });
+    await m.page.waitForFunction(() => document.title === 'Réseau ENSA Fès', null, { timeout: 8000 });
+    if (fin === 'déconnexion') { await m.page.click('.me-btn'); await m.page.click('.modal.moi .moi-sortir'); } else {
+      await m.page.evaluate(() => {
+        const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k));
+        s.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(s));
+        dispatchEvent(new Event('focus'));
+      });
+    }
+    await m.page.waitForSelector(fin === 'déconnexion' ? '#entree .entree-form' : '#entree #au-session', { timeout: 15000 });
+    await quandMarque(m.page, langue === 'fr' ? 'Réseau ENSAM Meknès' : 'شبكة ENSAM مكناس');
+    assert.equal(await m.page.title(), 'Réseau ENSAM Meknès', fin);
+    assert.deepEqual(m.erreurs, [], fin);
+    await m.ctx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Lien de promo d'une autre école que l'ENSAM Meknès : sa page d'aperçu neutre (promo/AAAA/e/, promo/AAAA/ar/e/ : WhatsApp
+// la montre sans nom d'école) envoie vers la page d'entrée de l'école du lien, avec la promo et le code de qui invite ; le
+// service worker, une fois installé, fait suivre la même chose sans passer par elle
+// ---------------------------------------------------------------------------
+for (const langue of ['fr', 'ar']) test(`lien de promo d’une autre école (${langue}) : sa page neutre mène à l’entrée de l’école du lien, avec la promo et le code ; le service worker aussi`, async () => {
+  const ar = langue === 'ar', chemin = `promo/2019/${ar ? 'ar/' : ''}e/?ecole=ensa-fes&de=omar2019`;
+  const regler = () => { site.rpc.invitation_de = OMAR_FES; site.tables.ecoles = [FES]; };
+  // La page telle que WhatsApp la lit : aucun nom d'école, l'image neutre ; l'école n'est que dans son script
+  const brut = await (await fetch(site.adresse + chemin)).text();
+  assert.ok(brut.includes(`<meta property="og:image" content="https://reseau-ensam-meknes.github.io/img/apercu-promo-neutre.jpg">`), brut);
+  assert.doesNotMatch(brut.replace(/<script>[\s\S]*?<\/script>/, ''), /Meknès|مكناس|Fès|فاس|ecole=/);
+  // Une personne qui l'ouvre : l'entrée de l'ENSA Fès, dans la langue du lien, l'invitation dite ; l'adresse propre
+  regler();
+  let s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: chemin });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.match(await s.page.locator('#au-invite-de').innerText(), /Omar.*2019/);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await gardes(s.page), ['2019', 'ensa-fes', 'omar2019', null]);
+  assert.ok(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').every(a => a.corps?.p_ecole === 'ensa-fes'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le site gardé sur l'appareil : le service worker répond lui-même au lien, par la même entrée ; aucune page ne s'ouvre à
+  // l'adresse de l'aperçu (une adresse qu'il ne reconnaît pas, il y ouvrirait l'application gardée, qui devrait se reprendre)
+  site.vider(); regler();
+  s = await visiteur({ sw: true, largeur: 390, hauteur: 844, langue: null });
+  await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+  const ouvertes = [];
+  s.page.on('framenavigated', f => { if (f === s.page.mainFrame()) ouvertes.push(new URL(f.url()).pathname); });
+  await s.page.goto(site.adresse + chemin); await s.page.waitForSelector('#entree .entree-form');
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.deepEqual(ouvertes.filter(p => p !== '/'), [], 'le service worker a répondu au lien de l’aperçu');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await gardes(s.page), ['2019', 'ensa-fes', 'omar2019', null]);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });

@@ -4,7 +4,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, MentionLogos
 import { useBrouillon, EnTetePage, Compteur, Rangee, vibrer, Coche, mouvementReduit } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
-import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau, ecoleDuContenu } from './logic.js';
+import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau, ecoleDuContenu, ecoleDe, nomsAPartager } from './logic.js';
 import { RelanceBanner, PasteOffer, sujetPris } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -20,12 +20,17 @@ import { ouvrirEnDouceur, SqCartes, lieuOffre } from './vitrine.js';
 import { ajouterIcones } from './entree.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
 // Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
+// Son école : celle de l'offre, sinon celle du membre ; le lien la dit, le texte la nomme (nomsAPartager : une école pas
+// encore ouverte, « ENSAM » sans ville). ctx : data (ou store.data, juste après la publication) et me.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
 const sansAccent = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const titreDit = o => sansAccent(o.titre).startsWith(sansAccent(TYPES[o.type]?.label.split(' ')[0] || '-'));
-const texteOffre = o => getLang() === 'ar'
-  ? `${titreDit(o) ? '' : `${TYPES_AR[o.type] || 'عرض'}: `}${o.titre} · ${o.entreprise}\nعرض منشور على شبكة ENSAM مكناس. افتحه هنا: ${lienDirect('offre/' + o.id)}`
-  : `${titreDit(o) ? '' : `${TYPES[o.type]?.label || 'Offre'} : `}${o.titre} · ${o.entreprise}\nOffre partagée sur le Réseau ENSAM Meknès. Ouvre-la ici : ${lienDirect('offre/' + o.id)}`;
+export function texteOffre(o, { data, store, me } = {}) {
+  const ecole = o.ecole || ecoleDe(me), n = nomsAPartager((data || store?.data)?.ecoles, ecole), lien = lienDirect('offre/' + o.id, ecole);
+  return getLang() === 'ar'
+    ? `${titreDit(o) ? '' : `${TYPES_AR[o.type] || 'عرض'}: `}${o.titre} · ${o.entreprise}\nعرض منشور على شبكة ${n.nomAr}. افتحه هنا: ${lien}`
+    : `${titreDit(o) ? '' : `${TYPES[o.type]?.label || 'Offre'} : `}${o.titre} · ${o.entreprise}\nOffre partagée sur le Réseau ${n.nom}. Ouvre-la ici : ${lien}`;
+}
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenue', refuse: 'Pas retenue' };
@@ -54,6 +59,12 @@ injectCSS('fil-pick', `
 .fil-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; }
 .fil-groupe .chips { display: contents; }
 .chip.fil-parc { font-weight: 650; }
+/* Le formulaire d'une offre sur un téléphone : une puce au nom long (« Conception et Industrialisation des Systèmes
+   Mécaniques ») revient à la ligne dans sa puce, alignée comme les autres, au lieu de pousser le formulaire hors de
+   l'écran ; sur ordinateur, comme avant */
+@media (max-width: 600px) {
+  #of-form .chip { white-space: normal; max-width: 100%; text-align: start; }
+}
 `);
 
 // En-tête compact (EnTetePage du Socle) : un seul chiffre en sur-titre, le titre et son bouton sur une ligne, le segment
@@ -531,7 +542,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         <div class="detail-head">
           <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${64}/>
           <span class="od-outils">
-            ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
+            ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o, ctx)}/>` : null}
             ${!mine && !isAdmin ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
             ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
               ${menu ? html`<div class="menu-pop">
@@ -835,7 +846,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',
           texte: entre ? 'Les lauréats la voient déjà dans « Entre lauréats ». Merci !' : 'Les étudiants concernés la voient déjà dans leurs offres. Merci pour eux !',
           // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
-          action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
+          action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve, ctx)), '_blank', 'noopener') } : null,
         });
         if (partage) toast('Offre partagée. Elle apparaît dans « Offres partagées », avec son lien.', 'envoi');
         else {

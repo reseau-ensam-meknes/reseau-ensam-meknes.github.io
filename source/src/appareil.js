@@ -1,7 +1,7 @@
 // L'appareil où le Réseau s'ouvre : le navigateur intégré d'une application, un iPad, et le lien qui fait passer dans Chrome.
 // Règles pures, sans autre dépendance que les règles de la page d'entrée : la page d'entrée charge ce module à part, après
 // son premier affichage (elle garde ses six fichiers), et logic.js le réexporte pour le reste de l'application et les tests.
-import { promoValide } from './regles-entree.js';
+import { contexteEntree } from './regles-entree.js';
 
 // Le navigateur intégré d'une application (lien ouvert dans Instagram, Facebook, Messenger, LinkedIn, TikTok, Snapchat,
 // Telegram, ou une vue web Android « ; wv) ») : on n'y reste pas connecté, et ni notification ni installation n'y sont
@@ -32,20 +32,9 @@ export function navigateurIntegre(ua = '', toucher = 0) {
   return null;
 }
 
-// Ce que la page d'entrée emporte dans Chrome (contexte de lienChrome) : la promo d'un lien d'invitation, le code de qui
-// invite (de, 8 caractères : « Invitation de Nadia » et le compte de ses invités), l'école du lien (ecole), le rôle choisi
-// et l'étape (créer un compte, ou se connecter). La page d'entrée les relit en arrivant (lireInvitation, contexteArrivee).
-// Jamais l'email tapé ni l'accord : une adresse ne voyage pas dans un lien (historique, journaux du serveur), et l'accord
-// se donne là où le compte se crée.
-export function contexteEntree(x) {
-  const { promo, de, ecole, role, mode } = x || {}, out = {};
-  if (promoValide(Number(promo))) out.promo = String(Number(promo));
-  if (typeof de === 'string' && /^[a-z0-9]{8}$/.test(de)) out.de = de;
-  if (typeof ecole === 'string' && /^[a-z0-9-]{2,40}$/.test(ecole)) out.ecole = ecole;
-  if (role === 'etudiant' || role === 'laureat') out.role = role;
-  if (mode === 'inscription' || mode === 'connexion') out.mode = mode;
-  return out;
-}
+// Ce que la page d'entrée emporte dans Chrome (contexte de lienChrome) : contexteEntree, dans les règles de la page d'entrée
+// (regles-entree.js), qui s'en sert aussi pour l'adresse du navigateur d'une application sur iPhone ou iPad
+export { contexteEntree };
 
 // « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
 // ouvre (sinon la même adresse, ici même : browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1

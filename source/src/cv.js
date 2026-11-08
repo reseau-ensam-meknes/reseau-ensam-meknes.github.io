@@ -302,12 +302,14 @@ function RelectureCard({ ctx, r, side, calme = false }) {
   const { store, act, openProfile, me } = ctx;
   const student = store.byId('profiles', r.student_id); const reviewer = r.reviewer_id ? store.byId('profiles', r.reviewer_id) : null;
   const other = side === 'student' ? reviewer : student;
+  // Rendue par un lauréat qui a supprimé son compte (la base a vidé le lien) : elle garde sa synthèse, sans nom
+  const parti = side === 'student' && r.status === 'rendue' && !r.reviewer_id;
   const [cls, label] = PILL[r.status === 'demandee' && !r.reviewer_id ? 'ouverte' : r.status] || PILL.demandee;
   const prendre = () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: me.id }); toast(`Merci ! Le CV de ${firstName(student)} est dans « CV que je relis ».`); });
   const sub = student?.role === 'etudiant' ? `${NIVEAUX[niveauOf(student, ctx.saison)]?.short || ''} · ${student.filiere}` : student ? `Promo ${student.promo} · ${student.filiere}` : '';
   return html`<article class=${'mreq rel-card st-' + (r.status === 'rendue' ? 'terminee' : r.status === 'en_cours' ? 'rdv' : r.status === 'annulee' ? 'annulee' : 'demande')}>
     <div class="mrow-head">
-      ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36} sub=${side === 'student' ? undefined : sub}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible relit ton CV</span></span></span>`}
+      ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36} sub=${side === 'student' ? undefined : sub}/>` : parti ? html`<span class="open-to"><span class="open-ico"><${Icon} name="user" size=${18}/></span><span><strong>Un ancien membre</strong><span class="small muted">Ce compte a été supprimé.</span></span></span>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible relit ton CV</span></span></span>`}
       <span class="spacer"></span><span class=${'state-pill ' + cls}>${label}</span>${other && side !== 'queue' ? html`<${MessageBtn} ctx=${ctx} p=${other} cls="btn tiny ghost"/>` : null}</div>
     ${r.message ? html`<p class="quote" dir="auto" translate="no">${r.message}</p>` : null}
     <p class="small muted">${r.status === 'rendue' && r.rendue_at ? `Demandée ${timeAgo(r.created_at)} · rendue ${timeAgo(r.rendue_at)}` : `Demandée ${timeAgo(r.created_at)}`}</p>
@@ -374,6 +376,8 @@ function Retour({ ctx, r, side, calme = false }) {
   const { data, store, act, me } = ctx;
   const coms = data.relecture_commentaires.filter(c => c.relecture_id === r.id);
   const reviewer = store.byId('profiles', r.reviewer_id); const student = store.byId('profiles', r.student_id);
+  // Le relecteur a supprimé son compte : sa synthèse reste ; on peut encore noter la relecture, plus lui écrire
+  const parti = side === 'student' && !r.reviewer_id;
   const [note, setNote] = useState(5); const [merci, setMerci] = useState(''); const [q, setQ] = useState('');
   return html`<div class="rel-retour">
     ${r.synthese ? html`<div class="rel-syn"><p class="eyebrow"><${Icon} name="spark" size=${13}/> ${side === 'student' && reviewer ? `Synthèse de ${firstName(reviewer)}` : 'Synthèse'}</p><p dir="auto" translate="no">${r.synthese}</p></div>` : null}
@@ -381,13 +385,13 @@ function Retour({ ctx, r, side, calme = false }) {
     ${side === 'student' && !r.merci && !r.note ? html`<form class="merci-box" onSubmit=${e => { e.preventDefault(); act(async () => { await store.update('relectures_cv', r.id, { note, merci: merci.trim() || null }); toast(merci.trim() ? `Merci envoyé à ${firstName(reviewer)} !` : 'C’est noté, merci !', 'win'); }); }}>
       <p><${Icon} name="heart" size=${16}/> <strong>Cette relecture t’a été utile ?</strong></p>
       <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
-      <textarea id=${'rv-merci-' + r.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
+      ${parti ? null : html`<textarea id=${'rv-merci-' + r.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>`}
       <div class="row-end"><button class=${'btn small ' + (calme ? 'tonal' : 'primary')}>${merci.trim() ? 'Envoyer mon merci' : 'Envoyer ma note'}</button></div>
     </form>` : null}
     ${r.merci || r.note ? html`<p class="small merci-inline">${r.note ? html`<span class="stars-ro" aria-label=${r.note + ' sur 5'}>${'★'.repeat(r.note)}</span>` : null}${r.merci ? html`<${Icon} name="heart" size=${14}/> <span dir="auto" translate="no">${r.merci}</span>` : null}</p>` : null}
-    <form class="rel-add-row" onSubmit=${e => { e.preventDefault(); if (!q.trim()) return; act(async () => { await store.insert('relecture_commentaires', { relecture_id: r.id, author_id: me.id, section: 'general', body: q.trim() }); setQ(''); }); }}>
+    ${parti ? null : html`<form class="rel-add-row" onSubmit=${e => { e.preventDefault(); if (!q.trim()) return; act(async () => { await store.insert('relecture_commentaires', { relecture_id: r.id, author_id: me.id, section: 'general', body: q.trim() }); setQ(''); }); }}>
       <input id=${'rv-q-' + r.id} maxlength="1500" value=${q} onInput=${e => setQ(e.target.value)} placeholder=${side === 'student' ? `Une question pour ${firstName(reviewer) || 'le lauréat'} ?` : `Un dernier mot pour ${firstName(student)} ?`}/>
-      <button class="btn small" disabled=${!q.trim()}>Envoyer</button></form>
+      <button class="btn small" disabled=${!q.trim()}>Envoyer</button></form>`}
   </div>`;
 }
 
@@ -479,6 +483,8 @@ addAR({
   'Ajoute ton CV en PDF dans ton profil : le lauréat le verra avec ta candidature.': 'أضف سيرتك الذاتية بصيغة PDF في ملفك: سيراها الخريج مع ترشيحك.',
   'Le lien vers ton CV sera joint.': 'سيُرفق رابط سيرتك الذاتية.', 'Ton CV sera joint.': 'ستُرفق سيرتك الذاتية.',
   'Le lauréat verra ton profil et ton CV.': 'سيطّلع الخريج على ملفك وسيرتك الذاتية.', 'Le lauréat verra ton profil.': 'سيطّلع الخريج على ملفك.',
+  // Une relecture rendue par un lauréat qui a supprimé son compte
+  'Un ancien membre': 'عضو سابق', 'Ce compte a été supprimé.': 'حُذف هذا الحساب.',
 }, [
   [/^Mis à jour (il y a \d+ (?:min|h|j)|à l’instant|\d{1,2} \S+ \d{4})$/, (x) => `محيَّنة ${tr(x)}`],
   [/^(\d+) CV attendent une relecture$/, (n) => `${n} سير ذاتية تنتظر المراجعة`],

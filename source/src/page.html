@@ -22,7 +22,10 @@ var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];wi
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';
-else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)delete d.dataset.entree},4000)}})()</script>
+else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)delete d.dataset.entree},4000);
+/* Le lien d'une autre école (?ecole=, ou gardé d'un lien d'avant : la règle de lireInvitation, entree.js) : l'onglet ne dit pas
+   l'ENSAM Meknès, même avant que la page d'entrée ait sa ligne */
+try{var q=location.search,v=/^[a-z0-9-]{2,40}$/,m=/[?&]ecole(?:=([^&]*))?(?:&|$)/.exec(q),e=m&&v.test(m[1]||'')?m[1]:!m&&/[?&](promo|de)(=|&|$)/.test(q)?'':L.getItem('ensam-invite-ecole')||'';if(v.test(e)&&e!=='ensam-meknes')document.title='Réseau ENSAM'}catch(x){}}})()</script>
 <!--PRECHARGE-->
 <script>/* Membre connecté ou page publique : le magasin et l'application se préchargent, APRÈS les modules de l'entrée (préchargés
    juste au-dessus) : demandés avant, ils les retardaient (0,6 à 1,5 s de plus en 3G). Le CSS complet aussi, sauf pour un membre dont

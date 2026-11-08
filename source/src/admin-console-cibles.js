@@ -2,9 +2,9 @@
 // de la base). Partagé par la Modération et « À traiter ». Les textes sont traduits avec la Modération (admin.js).
 import { toast } from './ui.js';
 import { addAR } from './i18n.js';
-import { GUIDE_SECTIONS } from './logic.js';
+import { GUIDE_SECTIONS, adminDuReseau, RIEN_GUIDE, NOMS_MEKNES } from './logic.js';
 
-addAR({ 'Contenu': 'محتوى' });
+addAR({ 'Contenu': 'محتوى', [RIEN_GUIDE]: 'لم يُحذف شيء: هذا القسم لم يعد موجودًا، أو لا يمكن لحسابك حذفه.' });
 
 export const MOTIFS = { spam: 'Spam', arnaque: 'Arnaque', inapproprie: 'Inapproprié', faux: 'Faux ou trompeur', harcelement: 'Harcèlement', donnees: 'Données personnelles', autre: 'Autre' };
 export const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'], reponse_demande: ['Réponse à une demande', 'comment'] };
@@ -12,7 +12,7 @@ export const court = (t, n = 220) => { const s = String(t || '').replace(/\s+/g,
 const nomGroupe = g => String(g || '').split(':').slice(1).join(':');
 
 export function cible(ctx, type, id) {
-  const { store, openOffer, openProfile, go } = ctx;
+  const { store, openOffer, openProfile, go, me } = ctx;
   const by = t => store.byId(t, id);
   const rm = t => () => store.remove(t, id);
   switch (type) {
@@ -25,7 +25,9 @@ export function cible(ctx, type, id) {
       actions: [...(r.photo_path ? [['Retirer la photo', () => store.retirerPhoto(r), true]] : []), ...(r.role === 'laureat' && r.verified ? [['Retirer le badge vérifié', () => store.update('profiles', id, { verified: false }), true]] : [])] }; }
     case 'entretien': { const r = by('entretiens'); return r && { r, titre: [r.entreprise, r.poste].filter(Boolean).join(' · '), texte: [...(r.questions || []), r.deroulement, r.conseils].filter(Boolean).join(' · '), auteur: r.author_id, actions: [['Supprimer l’entretien', rm('entretiens'), true]] }; }
     case 'avis': { const r = by('avis_stage'); return r && { r, titre: [r.entreprise, r.ville].filter(Boolean).join(' · '), texte: r.conseils, auteur: r.author_id, actions: [['Supprimer l’avis', rm('avis_stage'), true]] }; }
-    case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: [['Supprimer la rubrique', rm('guide_pays'), true]] }; }
+    // Le guide, commun à toutes les écoles : seule l'administration du réseau en supprime une rubrique (celle d'une école le
+    // lit, la base ne la laisserait rien supprimer) ; une rubrique que la base ne supprime pas n'est pas dite supprimée
+    case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: adminDuReseau(me) ? [['Supprimer la rubrique', () => store.remove('guide_pays', id, { exiger: RIEN_GUIDE }), true]] : [] }; }
     case 'cafe': { const r = by('cafes'); return r && { r, titre: `${r.ville} · ${r.lieu}`, texte: r.message, auteur: r.organisateur_id, actions: r.annule ? [] : [['Annuler le café', () => store.update('cafes', id, { annule: true }), true]] }; }
     case 'startup': { const r = by('startups'); return r && { r, titre: r.nom, texte: r.pitch, auteur: r.fondateur_id, actions: [['Retirer la startup', rm('startups'), true]] }; }
     case 'demande': { const r = by('demandes'); return r && { r, titre: r.titre, texte: r.details, auteur: r.auteur_id, voir: ['Voir la demande', () => go('offres/demandes/' + id)], actions: ['ouverte', 'match'].includes(r.status) ? [['Retirer la demande', () => store.update('demandes', id, { status: 'fermee' }), true]] : [] }; }
@@ -41,10 +43,11 @@ export function cible(ctx, type, id) {
   }
 }
 
-// Message prêt à envoyer au lauréat sans CV, dans sa langue ; l'administration le relit avant d'envoyer
-export const demandeCV = p => {
+// Message prêt à envoyer au lauréat sans CV, dans sa langue ; l'administration le relit avant d'envoyer. noms : l'école du
+// réseau qu'il rejoint (nomsEcole, logic.js ; celle de l'administration d'une école), l'ENSAM Meknès sinon
+export const demandeCV = (p, noms = NOMS_MEKNES) => {
   const prenom = (p.full_name || '').split(' ')[0];
   return p.langue === 'ar'
-    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
-    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
+    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ${noms.nomAr}! للتحقق من ملفك، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
+    : `Bonjour ${prenom}, bienvenue sur le Réseau ${noms.nom} ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
 };

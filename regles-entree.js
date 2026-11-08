@@ -71,3 +71,24 @@ export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape,
 
 export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
 export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);
+export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
+const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
+export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
+const pageNeutre = a => (/\/promo\/\d{4}\/(?:ar\/)?$/.test(a) ? a + 'e/' : /\/promo\//.test(a) ? a : a.replace(/\/(?:index\.html)?$/, '/e.html'));
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${pageNeutre(a)}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+
+export function contexteEntree(x) {
+  const { promo, de, ecole, role, mode } = x || {}, out = {};
+  if (promoValide(Number(promo))) out.promo = String(Number(promo));
+  if (typeof de === 'string' && /^[a-z0-9]{8}$/.test(de)) out.de = de;
+  if (ecoleValide(ecole)) out.ecole = ecole;
+  if (role === 'etudiant' || role === 'laureat') out.role = role;
+  if (mode === 'inscription' || mode === 'connexion') out.mode = mode;
+  return out;
+}
+export function adresseAvecContexte(adresse, contexte, lang) {
+  const u = new URL(adresse), p = u.searchParams;
+  for (const k of ['promo', 'de', 'ecole', 'role', 'mode', 'lang']) p.delete(k);
+  if (contexte) for (const [k, v] of Object.entries({ ...contexteEntree(contexte), ...(lang === 'ar' ? { lang } : {}) })) p.set(k, v);
+  return u.pathname + u.search + u.hash;
+}

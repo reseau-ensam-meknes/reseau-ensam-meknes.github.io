@@ -3,20 +3,26 @@
 // En ligne, une table que la base n'a pas encore (mise à jour pas encore passée) donne une liste vide et absente = true.
 import { useState, useEffect } from './vendor/preact-htm.js';
 // L'école d'une ligne (ENSAM Meknès par défaut, comme dans la base) : définie une seule fois, dans logic.js
-import { ECOLE_DEFAUT, ecoleDe } from './logic.js';
+import { ECOLE_DEFAUT, ecoleDe, adminDuReseau } from './logic.js';
 export { ECOLE_DEFAUT, ecoleDe };
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const absente = e => /does not exist|relation .* does not exist|schema cache|PGRST20[05]|42P01/i.test(`${e?.code || ''} ${e?.message || ''}`);
+// Le suivi des écoles et des partenaires (admin_suivi) n'est qu'à l'administration du réseau (super_admin() dans la base) :
+// pour celle d'une école, il n'est pas lu (la base ne rendrait rien) et la démo fait comme la base (rien à lire, une ligne
+// ajoutée refusée, une ligne modifiée introuvable, une suppression qui ne touche rien)
+export const reserveeAuReseau = (table, me) => table === 'admin_suivi' && !adminDuReseau(me);
+const AUCUNE_LIGNE = [];
 
 // cle : la colonne qui identifie une ligne (« id », ou « slug » pour les écoles) ; ordre : la colonne de tri, la plus récente d'abord
 export function useTableAdmin(ctx, table, { cle = 'id', ordre = 'created_at', croissant = false } = {}) {
   const { store, data } = ctx;
   const demo = store.mode !== 'live';
-  const [etat, setEtat] = useState({ lignes: [], pret: demo, absente: false });
+  const reservee = reserveeAuReseau(table, ctx.me);
+  const [etat, setEtat] = useState({ lignes: [], pret: demo || reservee, absente: false });
   const [version, setVersion] = useState(0);
   useEffect(() => {
-    if (demo) return;
+    if (demo || reservee) return;
     let on = true;
     Promise.resolve(store.sb?.from(table).select('*').order(ordre, { ascending: croissant }).limit(2000)).then(r => {
       if (!on) return;
@@ -24,27 +30,30 @@ export function useTableAdmin(ctx, table, { cle = 'id', ordre = 'created_at', cr
       else setEtat({ lignes: r?.data || [], pret: true, absente: false });
     }, e => on && setEtat({ lignes: [], pret: true, absente: absente(e), erreur: absente(e) ? null : String(e?.message || e) }));
     return () => { on = false; };
-  }, [table, version, demo]);
+  }, [table, version, demo, reservee]);
   const trier = l => [...l].sort((a, b) => (croissant ? 1 : -1) * String(a[ordre] ?? '').localeCompare(String(b[ordre] ?? '')));
-  const lignes = demo ? trier(data[table] || []) : etat.lignes;
+  const lignes = reservee ? AUCUNE_LIGNE : demo ? trier(data[table] || []) : etat.lignes;
   const majDemo = f => { store.data[table] = f(store.data[table] || []); store.persist?.(); store.emit?.(); };
   const majLive = f => setEtat(x => ({ ...x, lignes: f(x.lignes) }));
   return {
     lignes, pret: demo || etat.pret, absente: !demo && etat.absente, erreur: !demo ? etat.erreur : null,
     recharger: () => setVersion(v => v + 1),
     async inserer(row) {
+      if (reservee && demo) throw new Error('Action non autorisée pour ton compte.');
       if (demo) { const r = { ...(cle === 'id' ? { id: uuid() } : {}), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), created_by: store.me?.id || null, ...row }; majDemo(l => [r, ...l]); return r; }
       const { data: r, error } = await store.sb.from(table).insert(row).select().single();
       if (error) throw new Error(error.message);
       majLive(l => [r, ...l.filter(x => x[cle] !== r[cle])]); return r;
     },
     async modifier(id, patch) {
+      if (reservee && demo) throw new Error('Cette ligne n’existe plus. Recharge la page.');
       if (demo) { let r = null; majDemo(l => l.map(x => (x[cle] === id ? (r = { ...x, ...patch, updated_at: new Date().toISOString() }) : x))); return r; }
       const { data: r, error } = await store.sb.from(table).update(patch).eq(cle, id).select().single();
       if (error) throw new Error(error.code === 'PGRST116' ? 'Cette ligne n’existe plus. Recharge la page.' : error.message);
       majLive(l => l.map(x => (x[cle] === id ? r : x))); return r;
     },
     async supprimer(id) {
+      if (reservee && demo) return;
       if (demo) { majDemo(l => l.filter(x => x[cle] !== id)); return; }
       const { error } = await store.sb.from(table).delete().eq(cle, id);
       if (error) throw new Error(error.message);
@@ -65,17 +74,36 @@ export function useEcoles(ctx) {
 // Seulement quand le réseau compte au moins deux écoles ; sinon '' (la console montre alors tout, le suivi l'école du compte).
 // nomDe(slug) : le nom d'une école (son identifiant si elle n'est pas dans la liste).
 export const CLE_ECOLE_ADMIN = id => 'ensam-admin-ecole:' + (id || '');
+// L'administration d'une école (pas celle du réseau) ne regarde que la sienne : la base ne lui donne qu'elle. Rien à
+// choisir ni à garder (ni la console ni le suivi ne lui montrent de choix) ; un choix tenté revient à son école.
 export function useEcoleRegardee(ctx) {
   const t = useEcoles(ctx);
   const cle = CLE_ECOLE_ADMIN(ctx.me?.id);
+  const sienne = adminDuReseau(ctx.me) ? null : ecoleDe(ctx.me);
   const lire = () => { try { const v = JSON.parse(localStorage.getItem(cle) || '""'); return typeof v === 'string' ? v : ''; } catch { return ''; } };
   const [choix, setChoix] = useState(lire);
+  const [, redessiner] = useState(0);
   // Une autre page (la console, le suivi) a pu changer le choix depuis : relu à chaque arrivée sur la page
   useEffect(() => { const v = lire(); if (v !== choix) setChoix(v); }, [cle]);
-  const changer = v => { setChoix(v); try { localStorage.setItem(cle, JSON.stringify(v)); } catch { /* pas de stockage */ } };
-  const ecole = t.ecoles.length > 1 && t.ecoles.some(e => e.slug === choix) ? choix : '';
+  const changer = v => { if (sienne) { redessiner(n => n + 1); return; } setChoix(v); try { localStorage.setItem(cle, JSON.stringify(v)); } catch { /* pas de stockage */ } };
+  const ecole = sienne || (t.ecoles.length > 1 && t.ecoles.some(e => e.slug === choix) ? choix : '');
   const nomDe = slug => t.ecoles.find(e => e.slug === slug)?.nom || slug || '';
   return { ...t, ecole, changer, nomDe };
+}
+
+// Le dossier CNDP de son école, pour l'administration d'une école (pas celle du réseau) dont le réseau n'est pas encore
+// ouvert : elle ne lit pas le suivi des écoles (admin_suivi, au réseau) ; la base le dit (dossier_cndp_de_mon_ecole,
+// store.dossierCndpDeMonEcole). Une base pas encore à jour (fonction absente) ou une erreur : pas au dossier.
+// demander faux : rien n'est demandé (pret reste faux).
+export function useDossierCndp(store, demander) {
+  const [etat, setEtat] = useState({ pret: false, ok: false });
+  useEffect(() => {
+    if (!demander) return undefined;
+    let on = true;
+    Promise.resolve(store.dossierCndpDeMonEcole?.()).then(ok => on && setEtat({ pret: true, ok: ok === true }), () => on && setEtat({ pret: true, ok: false }));
+    return () => { on = false; };
+  }, [demander]);
+  return etat;
 }
 
 // Les lignes d'une table qui sont de cette école (null : toutes les écoles)

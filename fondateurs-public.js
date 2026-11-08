@@ -1,6 +1,6 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { addAR, arCount } from './i18n.js';
-import { Icon, ajouterIcones } from './entree.js';
+import { Icon, ajouterIcones, argsEcole } from './entree.js';
 
 ajouterIcones({ shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>' });
 
@@ -54,14 +54,15 @@ export function TeteFondateurs({ id }) {
     <div class="fd-tete-txt"><div class="fd-l1"><h2 class="fd-titre" id=${id}>${TITRE_FONDATEURS}</h2><span class="fd-pastille">${DU_MOIS}</span></div><p class="fd-sous">${SOUS_FONDATEURS}</p></div></div>`;
 }
 
-let promesse = null;
-async function appeler(cfg) {
+const promesses = new Map();
+async function appeler(cfg, args) {
   const h = { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' };
   const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
   try {
-    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/fondateurs_publics`, { method: 'POST', headers: h, body: '{}', signal: c.signal });
+    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/fondateurs_publics`, { method: 'POST', headers: h, body: JSON.stringify(args), signal: c.signal });
     if (!r.ok) return null;
     const x = await r.json();
+    if (!x || typeof x !== 'object') return null;
     const total = Math.max(0, +x?.total || 0), max = +x?.max || 25;
     const liste = (Array.isArray(x?.fondateurs) ? x.fondateurs : []).filter(f => f && f.nom).slice(0, max);
     const chemins = liste.map(f => f.photo).filter(Boolean);
@@ -78,7 +79,9 @@ async function appeler(cfg) {
 }
 export function fondateursPublics(cfg = window.ENSAM_CONFIG || {}) {
   if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) return Promise.resolve(null);
-  return promesse ||= appeler(cfg).then(v => { if (!v) promesse = null; return v; });
+  const args = argsEcole(), cle = args.p_ecole || '';
+  if (!promesses.has(cle)) promesses.set(cle, appeler(cfg, args).then(v => { if (!v) promesses.delete(cle); return v; }));
+  return promesses.get(cle);
 }
 
 export function FondateursPublics() {
