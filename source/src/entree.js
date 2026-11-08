@@ -11,7 +11,7 @@ import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, 
 // (mêmes traductions que dans i18n-ar.js, vérifié par un test).
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
 addAR({
-  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس', 'Réseau ENSAM': 'شبكة ENSAM', 'Twiza': 'تويزة',
+  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس', 'Réseau ENSAM': 'شبكة ENSAM', 'AlloLauréat': 'ألو خريج',
   'Les lauréats ouvrent la porte aux étudiants.': 'الخريجون يفتحون الباب أمام الطلبة.',
   'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
   'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي',
@@ -763,7 +763,7 @@ export function AuthScreen({ store }) {
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
     <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms ? noms.bande : noms === undefined ? 'ENSAM' : undefined}/></div>
-    <footer class="auth-pied small"><strong class="auth-pied-marque">Twiza</strong><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
+    <footer class="auth-pied small"><strong class="auth-pied-marque">AlloLauréat</strong><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }
 

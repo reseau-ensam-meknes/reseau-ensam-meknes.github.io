@@ -1,4 +1,4 @@
-// Service worker de Twiza (Réseau ENSAM Meknès et les autres écoles) : l'application s'ouvre depuis le téléphone, même sans réseau
+// Service worker d’AlloLauréat (Réseau ENSAM Meknès et les autres écoles) : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
 const VERSION = /*VERSION*/'dev';
@@ -109,7 +109,7 @@ self.addEventListener('push', e => {
   e.waitUntil((async () => {
     const vues = (await fenetres().catch(() => [])).filter(w => w.visibilityState === 'visible');
     const calme = !!d.calme || vues.some(w => w.focused);
-    await Promise.all([self.registration.showNotification(d.title || 'Twiza', {
+    await Promise.all([self.registration.showNotification(d.title || 'AlloLauréat', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !calme, silent: calme,
       vibrate: calme ? undefined : [120, 60, 120], timestamp: Date.parse(d.at) || Date.now(),
       icon: 'pwa/icon-192.png', badge: 'pwa/badge-96.png', data: { url: d.url || './' },

@@ -1,6 +1,6 @@
 // =====================================================================
 //  Fonction Supabase « notifier » : notifications sur le téléphone (Web Push)
-//  et résumé hebdomadaire par email (Gmail, sinon Brevo), pour Twiza : le Réseau ENSAM Meknès et les réseaux des autres écoles.
+//  et résumé hebdomadaire par email (Gmail, sinon Brevo), pour AlloLauréat : le Réseau ENSAM Meknès et les réseaux des autres écoles.
 //  À coller tel quel : Supabase > Edge Functions > Deploy a new function >
 //  Via editor, nom « notifier ». Aucun import : fetch, WebCrypto et Deno (TLS).
 //

@@ -14,7 +14,7 @@ const fr = s => (getLang() === 'ar' ? s : s.replace(/« /g, '« ').replace(/ ([
 
 const POURQUOI = {
   ios: 'Sur iPhone, les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil. Trois gestes :',
-  android: 'Une icône sur ton écran d’accueil : Twiza s’ouvre en un toucher, comme une application.',
+  android: 'Une icône sur ton écran d’accueil : AlloLauréat s’ouvre en un toucher, comme une application.',
 };
 // Partager est en bas de Safari, ou dans son menu ••• ; dans Chrome ou Firefox sur iPhone, dans la barre d'adresse
 // Sur iPad (portes #59), Partager est en haut de l'écran de Safari
@@ -32,8 +32,8 @@ const ANDROID = [
 ];
 // Installer ne suffit pas : les notifications s'activent ensuite, dans l'application
 const APRES = {
-  ios: 'Ouvre Twiza depuis sa nouvelle icône, connecte-toi une fois, puis touche « Activer ».',
-  android: 'Ouvre Twiza depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.',
+  ios: 'Ouvre AlloLauréat depuis sa nouvelle icône, connecte-toi une fois, puis touche « Activer ».',
+  android: 'Ouvre AlloLauréat depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.',
 };
 const autreNavigateurIos = () => typeof navigator !== 'undefined' && /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
 // iPad (iPadOS compris : il se présente comme un Mac, avec un écran tactile), comme pwa.js : la phrase dit « iPad »
@@ -178,7 +178,7 @@ injectCSS('installer', `
 
 addAR({
   [POURQUOI.ios]: 'على iPhone، لا تصل الإشعارات إلا داخل التطبيق المضاف إلى الشاشة الرئيسية. ثلاث خطوات:',
-  [POURQUOI.android]: 'أيقونة على شاشتك الرئيسية: تُفتح تويزة بلمسة واحدة، مثل تطبيق.',
+  [POURQUOI.android]: 'أيقونة على شاشتك الرئيسية: يُفتح ألو خريج بلمسة واحدة، مثل تطبيق.',
   [PARTAGER.safari]: 'في Safari، المس «مشاركة»: أسفل الشاشة، أو في قائمة •••.',
   [PARTAGER.ipad]: 'في Safari، المس «مشاركة» في أعلى الشاشة.',
   [PARTAGER.autre]: 'المس «مشاركة»، في شريط العنوان أو في قائمة المتصفح.',
@@ -188,6 +188,6 @@ addAR({
   [ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح.',
   [ANDROID[1][1]]: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
   [ANDROID[2][1]]: 'أكّد بلمس «تثبيت».',
-  [APRES.ios]: 'افتح تويزة من أيقونتها الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
-  [APRES.android]: 'افتح تويزة من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
+  [APRES.ios]: 'افتح ألو خريج من أيقونتها الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
+  [APRES.android]: 'افتح ألو خريج من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
 });
