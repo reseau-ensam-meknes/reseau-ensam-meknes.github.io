@@ -3033,9 +3033,10 @@ test('compte de l’ENSAM Meknès (son lien, celui d’une promo, ou aucun), ou 
 
 // ---------------------------------------------------------------------------
 // Une offre ou une question partagée sur WhatsApp (#od-partage, #q-partage) : le lien l'ouvre dans son école (celle de
-// l'offre ou de la question : &ecole=, après ?lang=ar), le texte la nomme (une école pas encore ouverte : « ENSAM », sans
-// ville). Ouvert par un visiteur : la page d'entrée de son école, et l'inscription y va (la demande de code, le profil).
-// L'ENSAM Meknès : le message d'avant, à l'octet, en français et en arabe.
+// l'offre ou de la question : &ecole=, après ?lang=ar), par la page neutre du site (e.html : son aperçu ne nomme aucune école),
+// le texte la nomme (une école pas encore ouverte : « ENSAM », sans ville). Ouvert par un visiteur : la page d'entrée de son
+// école, l'offre attendue, et l'inscription y va (la demande de code, le profil) ; le service worker, une fois installé, fait
+// suivre la même chose sans passer par la page neutre. L'ENSAM Meknès : le message d'avant, à l'octet, en français et en arabe.
 // ---------------------------------------------------------------------------
 const QUESTION = '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', TITRE_Q = 'Comment préparer un entretien chez OCP ?';
 const messageDe = async (page, sel) => { await page.waitForSelector(sel, { timeout: 15000 }); return decodeURIComponent((await page.getAttribute(sel, 'href')).split('https://wa.me/?text=')[1]); };
@@ -3045,7 +3046,7 @@ const offresDe = ecole => ctx => ctx.route(/\/sb\/rest\/v1\/offers(\?|$)/, r => 
 
 for (const langue of ['fr', 'ar']) test(`offre et question partagées par un membre d’une autre école (${langue}) : le lien dit son école, le texte la nomme (« ENSAM » pour une école pas encore ouverte) ; ouvert par un visiteur, son école, jusqu’au profil ; l’ENSAM Meknès, le message d’avant à l’octet`, async () => {
   const ar = langue === 'ar';
-  const lienDe = (ecole, h) => site.adresse + (ar ? '?lang=ar' : '') + (ecole ? (ar ? '&' : '?') + 'ecole=' + ecole : '') + '#' + h;
+  const lienDe = (ecole, h) => site.adresse + (ecole ? 'e.html' : '') + (ar ? '?lang=ar' : '') + (ecole ? (ar ? '&' : '?') + 'ecole=' + ecole : '') + '#' + h;
   const offre = (n, l) => (ar ? `PFE Lean manufacturing · OCP\nعرض منشور على شبكة ${n}. افتحه هنا: ${l}` : `PFE Lean manufacturing · OCP\nOffre partagée sur le Réseau ${n}. Ouvre-la ici : ${l}`);
   const question = (n, l) => (ar ? `سؤال على شبكة ${n}: « ${TITRE_Q} »\nيمكنك الجواب هنا: ${l}` : `Question sur le Réseau ${n} : « ${TITRE_Q} »\nTu peux y répondre ici : ${l}`);
   for (const [ecole, lignes, nom] of [['ensa-fes', [FES], ar ? 'ENSA فاس' : 'ENSA Fès'], ['ensam-casa', [CASA], 'ENSAM'], [null, [FES], ar ? 'ENSAM مكناس' : 'ENSAM Meknès']]) {
@@ -3059,11 +3060,35 @@ for (const langue of ['fr', 'ar']) test(`offre et question partagées par un mem
     assert.deepEqual(m.erreurs, [], ecole || 'ensam-meknes');
     await m.ctx.close();
   }
+  // La page neutre telle que WhatsApp la lit : aucun nom d'école, l'image neutre
+  const brut = await (await fetch(lienDe('ensa-fes', 'offre/' + OFFRE).split('#')[0])).text();
+  assert.ok(brut.includes(`<meta property="og:image" content="https://reseau-ensam-meknes.github.io/img/apercu-promo-neutre.jpg">`), brut);
+  assert.match(brut, /<meta property="og:title" content="Réseau ENSAM">/);
+  assert.doesNotMatch(brut, /Meknès|مكناس|Fès|فاس|ecole=/);
   // Le lien de l'offre de l'ENSA Fès, ouvert par un visiteur qui n'a jamais choisi de langue : la page d'entrée de son école,
-  // la demande de code et le profil y vont
+  // l'offre attendue (l'adresse propre, le # gardé), la demande de code et le profil y vont
   site.vider(); site.tables.ecoles = [FES];
   const u = new URL(lienDe('ensa-fes', 'offre/' + OFFRE));
-  const s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: u.search, hash: u.hash });
+  assert.equal(u.pathname, '/e.html');
+  let s = await visiteur({ sw: true, largeur: 390, hauteur: 844, langue: null, query: 'e.html' + u.search, hash: u.hash });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search + location.hash), (ar ? '/?lang=ar' : '/') + '#offre/' + OFFRE);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-ecole')), 'ensa-fes');
+  // Le site gardé sur l'appareil : le service worker répond lui-même au lien, par la même entrée ; aucune page ne s'ouvre
+  // à l'adresse de l'aperçu
+  await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+  const ouvertes = [];
+  s.page.on('framenavigated', f => { if (f === s.page.mainFrame()) ouvertes.push(new URL(f.url()).pathname); });
+  await s.page.goto(lienDe('ensa-fes', 'reseau/entraide/' + QUESTION)); await s.page.waitForSelector('#entree .entree-form');
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.deepEqual(ouvertes.filter(p => p !== '/'), [], 'le service worker a répondu au lien de l’aperçu');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search + location.hash), (ar ? '/?lang=ar' : '/') + '#reseau/entraide/' + QUESTION);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  site.vider(); site.tables.ecoles = [FES];
+  s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: 'e.html' + u.search, hash: u.hash });
   await quandMarque(s.page, NOMS_FES[langue].marque);
   assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
   await sInscrire(s.page, { role: 'laureat', email: 'karim@gmail.com' });
@@ -3073,6 +3098,28 @@ for (const langue of ['fr', 'ar']) test(`offre et question partagées par un mem
   assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// Un membre d'une autre école qui se déconnecte, ou dont la session se perd (au réveil, renouvellement refusé) : la page
+// d'entrée sans lien est celle de l'ENSAM Meknès, et l'onglet le dit aussi, sans garder le nom de son école de l'écran du membre
+for (const langue of ['fr', 'ar']) test(`déconnexion et session perdue d’un membre d’une autre école (${langue}) : l’onglet suit la page d’entrée`, async () => {
+  for (const fin of ['déconnexion', 'session perdue']) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ecole: 'ensa-fes', consent_at: '2025-10-01T10:00:00Z' }); site.tables.ecoles = [FES];
+    const m = await membreDe({ langue });
+    await m.page.waitForFunction(() => document.title === 'Réseau ENSA Fès', null, { timeout: 8000 });
+    if (fin === 'déconnexion') { await m.page.click('.me-btn'); await m.page.click('.modal.moi .moi-sortir'); } else {
+      await m.page.evaluate(() => {
+        const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k));
+        s.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(s));
+        dispatchEvent(new Event('focus'));
+      });
+    }
+    await m.page.waitForSelector(fin === 'déconnexion' ? '#entree .entree-form' : '#entree #au-session', { timeout: 15000 });
+    await quandMarque(m.page, langue === 'fr' ? 'Réseau ENSAM Meknès' : 'شبكة ENSAM مكناس');
+    assert.equal(await m.page.title(), 'Réseau ENSAM Meknès', fin);
+    assert.deepEqual(m.erreurs, [], fin);
+    await m.ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------

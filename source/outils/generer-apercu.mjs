@@ -4,7 +4,7 @@
 //  - src/img/apercu-promo.jpg : celui des liens de promo (outils/pages-promo.mjs), l'entrée dessinée, sans texte (le titre de
 //    l'aperçu nomme la promo) ;
 //  - src/img/apercu-promo-neutre.jpg : celui des pages neutres des liens d'une autre école que l'ENSAM Meknès (promo/AAAA/e/,
-//    outils/pages-promo.mjs) : la même entrée, dont la porte dit « ENSAM », sans ville.
+//    et e.html pour ses autres liens : outils/pages-promo.mjs) : la même entrée, dont la porte dit « ENSAM », sans ville.
 // Lancer depuis le dossier source : node outils/generer-apercu.mjs. Un nom en argument ne refait que ces images
 // (ex. node outils/generer-apercu.mjs apercu-promo-neutre) : les autres restent telles quelles.
 // Les titres en Bricolage Grotesque (Google Fonts) ; s'il est injoignable, le script le dit (la porte de l'entrée dessinée prend

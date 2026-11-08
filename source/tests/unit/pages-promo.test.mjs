@@ -22,8 +22,10 @@ function construire() {
 
 test('pages de promo : 1990 à 2040, en français et en arabe, identiques à chaque construction', () => {
   const pages = construire();
-  // Celles de l'ENSAM Meknès (promo/AAAA/, promo/AAAA/ar/) et leurs pages neutres (promo/AAAA/e/, promo/AAAA/ar/e/)
-  assert.equal(Object.keys(pages).length, 204);
+  // Celles de l'ENSAM Meknès (promo/AAAA/, promo/AAAA/ar/), leurs pages neutres (promo/AAAA/e/, promo/AAAA/ar/e/) et la page
+  // neutre du site (e.html)
+  assert.equal(Object.keys(pages).length, 205);
+  assert.ok(pages['e.html']);
   assert.equal(Object.keys(pages).filter(f => /^promo\/\d{4}\/(ar\/)?index\.html$/.test(f)).length, 102);
   assert.equal(Object.keys(pages).filter(f => /^promo\/\d{4}\/(ar\/)?e\/index\.html$/.test(f)).length, 102);
   assert.ok(!pages['promo/1989/index.html'] && !pages['promo/2041/index.html']);
@@ -190,4 +192,86 @@ test('pages neutres, service worker actif : la même adresse que la page ; celle
   assert.deepEqual(sw('promo/2019/ar/e/?ecole=ENSA&de=nadia219'), { url: './?promo=2019&lang=ar&de=nadia219', status: 302 });
   assert.deepEqual(sw('promo/2019/'), { url: './?promo=2019', status: 302 });
   assert.deepEqual(sw('promo/2019/ar/?de=nadia219'), { url: './?promo=2019&lang=ar&de=nadia219', status: 302 });
+});
+
+// La page neutre du site (e.html, à côté d'index.html) : celle des autres liens d'une autre école que l'ENSAM Meknès (une offre,
+// une question, le site : avecEcole). L'aperçu ne nomme aucune école, comme les pages neutres des promos ; la personne est
+// envoyée vers le site avec toute son adresse (l'école, la langue, la route en #)
+test('page neutre du site (e.html) : aperçu sans nom d’école ; le site avec toute l’adresse', () => {
+  const p = construire()['e.html'];
+  const meta = k => (p.match(new RegExp(`<meta (?:property|name)="${k}" content="([^"]*)">`)) || [])[1];
+  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'description', 'og:image', 'og:image:alt', 'og:url', 'og:locale', 'robots'].map(meta), [
+    'Réseau ENSAM', 'Réseau ENSAM',
+    'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois, conseils et entraide entre lauréats et étudiants de ton école.',
+    'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois, conseils et entraide entre lauréats et étudiants de ton école.',
+    `${SITE}img/apercu-promo-neutre.jpg`, 'Dessin d’une entrée d’école', `${SITE}e.html`, 'fr_FR', 'noindex']);
+  assert.ok(p.includes(`<link rel="canonical" href="${SITE}e.html">`));
+  assert.ok(p.includes('<title>Réseau ENSAM</title>'));
+  assert.ok(p.includes('<body><p><a href="./">Ouvrir le Réseau ENSAM</a></p></body>'));
+  assert.doesNotMatch(p, /Meknès|مكناس|Casablanca|Fès|Settat|apercu\.jpg|apercu-promo\.jpg|ecole=|http-equiv/);
+  assert.ok(Buffer.byteLength(p) < 2500, `${Buffer.byteLength(p)} octets`);
+  // Le script : le site, avec l'école, la langue et la route en # telles quelles
+  assert.equal(suivre(p, '?ecole=ensa-fes', '#offre/o1'), './?ecole=ensa-fes#offre/o1');
+  assert.equal(suivre(p, '?lang=ar&ecole=ensa-fes', '#reseau/entraide/q1'), './?lang=ar&ecole=ensa-fes#reseau/entraide/q1');
+  assert.equal(suivre(p, '?promo=2027&ecole=ensa-fes&de=nadia219'), './?promo=2027&ecole=ensa-fes&de=nadia219');
+  assert.equal(suivre(p, ''), './');
+});
+
+// Ce que fait le service worker d'une adresse ouverte (une redirection, sinon rien : il répond avec l'application gardée)
+function navigationSW(source) {
+  const ecoutes = {};
+  const ctx = {
+    self: { addEventListener: (t, f) => { (ecoutes[t] ||= []).push(f); }, registration: { scope: 'https://site.ma/' } },
+    location: new URL('https://site.ma/'), URL, caches: { open: () => new Promise(() => {}) }, fetch: () => new Promise(() => {}),
+    Response: { redirect: (url, status) => ({ url, status }) },
+  };
+  vm.runInNewContext(source, ctx);
+  return chemin => {
+    let rep = null;
+    ecoutes.fetch[1]({ request: { method: 'GET', mode: 'navigate', url: 'https://site.ma/' + chemin }, respondWith: r => { rep = r; } });
+    return rep && typeof rep.status === 'number' ? { url: rep.url.replace('https://site.ma/', './'), status: rep.status } : 'application gardée';
+  };
+}
+
+test('page neutre du site, service worker actif : le site avec toute l’adresse ; une autre page, l’application gardée', () => {
+  const sw = navigationSW(fs.readFileSync(new URL('../../src/sw.js', import.meta.url), 'utf8'));
+  assert.deepEqual(sw('e.html?ecole=ensa-fes'), { url: './?ecole=ensa-fes', status: 302 });
+  assert.deepEqual(sw('e.html?lang=ar&ecole=ensa-fes'), { url: './?lang=ar&ecole=ensa-fes', status: 302 });
+  assert.deepEqual(sw('e.html?promo=2027&ecole=ensa-fes&de=nadia219'), { url: './?promo=2027&ecole=ensa-fes&de=nadia219', status: 302 });
+  assert.deepEqual(sw('e.html'), { url: './', status: 302 });
+  for (const c of ['', '?ecole=ensa-fes', 'index.html', 'promo/e.html', 'e.htm', 'e.html/x', 've.html']) assert.equal(sw(c), 'application gardée', c);
+});
+
+// Le service worker d'avant ce lot, sur les appareils qui ne sont pas revenus depuis (en ligne depuis 1590345, le 23 octobre 2026,
+// jusqu'à ce lot) : il refait l'adresse d'un chemin qui finit par promo/AAAA/ avec la promo, la langue et le code de qui invite,
+// jamais l'école ; pour une autre adresse, il ouvre l'application gardée à cette adresse. Une page neutre ne doit donc jamais
+// finir par promo/AAAA/ (la personne arriverait à l'ENSAM Meknès), et la page neutre du site est à côté d'index.html : ouverte
+// là, l'application gardée trouve tous ses fichiers. Une page neutre de promo, plus bas, y passe par la reprise (ensamReprise,
+// page.html) avant de s'ouvrir dans la bonne école.
+const SW_AVANT = `(${() => {
+  self.addEventListener('fetch', () => {});
+  self.addEventListener('fetch', e => {
+    const req = e.request;
+    const promo = req.mode === 'navigate' && new URL(req.url).pathname.match(/\/promo\/(\d{4})\/(ar\/)?(?:index\.html)?$/);
+    const de = promo && new URL(req.url).searchParams.get('de');
+    if (promo) return e.respondWith(Response.redirect(new URL(`./?promo=${promo[1]}${promo[2] ? '&lang=ar' : ''}${/^[a-z0-9]{8}$/.test(de || '') ? '&de=' + de : ''}`, self.registration.scope).href, 302));
+    e.respondWith(Promise.resolve());
+  });
+}})()`;
+test('pages neutres et service worker d’avant ce lot : jamais refaites sans l’école ; la page neutre du site à côté d’index.html', () => {
+  const avant = navigationSW(SW_AVANT), maintenant = navigationSW(fs.readFileSync(new URL('../../src/sw.js', import.meta.url), 'utf8'));
+  // Le service worker d'avant, tel qu'il refait les liens de l'ENSAM Meknès (le nouveau, de même)
+  assert.deepEqual(avant('promo/2019/ar/?de=nadia219'), { url: './?promo=2019&lang=ar&de=nadia219', status: 302 });
+  assert.deepEqual(avant('promo/2019/?ecole=ensa-fes&de=nadia219'), { url: './?promo=2019&de=nadia219', status: 302 }, 'l’école ne suit pas');
+  const neutres = Object.keys(construire()).filter(f => /(^|\/)e\/index\.html$|^e\.html$/.test(f)).map(f => f.replace(/index\.html$/, ''));
+  assert.equal(neutres.length, 103);
+  for (const f of neutres) {
+    assert.equal(avant(f + '?ecole=ensa-fes&de=nadia219'), 'application gardée', f);
+    assert.notEqual(maintenant(f + '?ecole=ensa-fes&de=nadia219'), 'application gardée', f);
+  }
+  assert.ok(neutres.includes('e.html') && !neutres.filter(f => f !== 'e.html').some(f => !f.startsWith('promo/')));
+  // Et chaque page de l'ENSAM Meknès, comme le service worker d'avant
+  for (const f of Object.keys(construire()).filter(f => /^promo\/\d{4}\/(ar\/)?index\.html$/.test(f)).map(f => f.replace(/index\.html$/, ''))) {
+    assert.deepEqual(maintenant(f + '?de=nadia219'), avant(f + '?de=nadia219'), f);
+  }
 });

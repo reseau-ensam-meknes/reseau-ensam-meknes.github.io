@@ -1,6 +1,7 @@
 // Le message WhatsApp d'une offre (#od-partage, et « Partager sur WhatsApp » juste après la publication) et d'une question
 // (#q-partage) : le lien l'ouvre dans son école (celle de l'offre ou de la question, sinon celle du membre : &ecole=, après
-// ?lang=ar), le texte la nomme (nomsAPartager : une école pas encore ouverte n'est jamais nommée, « ENSAM », sans ville).
+// ?lang=ar, par la page neutre du site, e.html, dont l'aperçu ne nomme pas l'ENSAM Meknès), le texte la nomme (nomsAPartager :
+// une école pas encore ouverte n'est jamais nommée, « ENSAM », sans ville).
 // L'ENSAM Meknès : les messages d'avant, à l'octet, en français et en arabe.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,10 +54,10 @@ test('ENSAM Meknès (un membre, l’administration du réseau ; l’offre ou la 
 });
 
 test('une autre école : le lien la dit (&ecole=, après ?lang=ar), le texte la nomme ; pas encore ouverte, « ENSAM » sans ville ; l’école de l’offre ou de la question d’abord, sinon celle du membre', async () => {
-  const CASA_FR = ['Emploi : Ingénieur méthodes · Renault\nOffre partagée sur le Réseau ENSAM Casablanca. Ouvre-la ici : https://r.io/?ecole=ensam-casa#offre/o1',
-    'Question sur le Réseau ENSAM Casablanca : « Comment préparer un entretien chez OCP ? »\nTu peux y répondre ici : https://r.io/?ecole=ensam-casa#reseau/entraide/q1'];
-  const CASA_AR = ['وظيفة: Ingénieur méthodes · Renault\nعرض منشور على شبكة ENSAM الدار البيضاء. افتحه هنا: https://r.io/?lang=ar&ecole=ensam-casa#offre/o1',
-    'سؤال على شبكة ENSAM الدار البيضاء: « Comment préparer un entretien chez OCP ? »\nيمكنك الجواب هنا: https://r.io/?lang=ar&ecole=ensam-casa#reseau/entraide/q1'];
+  const CASA_FR = ['Emploi : Ingénieur méthodes · Renault\nOffre partagée sur le Réseau ENSAM Casablanca. Ouvre-la ici : https://r.io/e.html?ecole=ensam-casa#offre/o1',
+    'Question sur le Réseau ENSAM Casablanca : « Comment préparer un entretien chez OCP ? »\nTu peux y répondre ici : https://r.io/e.html?ecole=ensam-casa#reseau/entraide/q1'];
+  const CASA_AR = ['وظيفة: Ingénieur méthodes · Renault\nعرض منشور على شبكة ENSAM الدار البيضاء. افتحه هنا: https://r.io/e.html?lang=ar&ecole=ensam-casa#offre/o1',
+    'سؤال على شبكة ENSAM الدار البيضاء: « Comment préparer un entretien chez OCP ? »\nيمكنك الجواب هنا: https://r.io/e.html?lang=ar&ecole=ensam-casa#reseau/entraide/q1'];
   const DE_CASA_O = { ...OFFRE, ecole: 'ensam-casa' }, DE_CASA_Q = { ...QUESTION, ecole: 'ensam-casa' };
   // Un membre de l'ENSAM Casablanca (ouverte) ; l'administration du réseau sous l'offre de l'ENSAM Casablanca ; l'offre
   // d'avant, sans école, partagée par un membre de l'ENSAM Casablanca (la sienne) ; après la publication (store.data)
@@ -68,10 +69,10 @@ test('une autre école : le lien la dit (&ecole=, après ?lang=ar), le texte la 
   // Pas encore ouverte (ou sa ligne pas là) : « ENSAM », sans ville, ni en français ni en arabe ; le lien dit quand même son école
   for (const ecoles of [[FERMEE], []]) {
     const [fr, ar] = await textes({ data: { ecoles }, me: DE_CASA }, DE_CASA_O, DE_CASA_Q);
-    assert.deepEqual(fr, ['Emploi : Ingénieur méthodes · Renault\nOffre partagée sur le Réseau ENSAM. Ouvre-la ici : https://r.io/?ecole=ensam-casa#offre/o1',
-      'Question sur le Réseau ENSAM : « Comment préparer un entretien chez OCP ? »\nTu peux y répondre ici : https://r.io/?ecole=ensam-casa#reseau/entraide/q1']);
-    assert.deepEqual(ar, ['وظيفة: Ingénieur méthodes · Renault\nعرض منشور على شبكة ENSAM. افتحه هنا: https://r.io/?lang=ar&ecole=ensam-casa#offre/o1',
-      'سؤال على شبكة ENSAM: « Comment préparer un entretien chez OCP ? »\nيمكنك الجواب هنا: https://r.io/?lang=ar&ecole=ensam-casa#reseau/entraide/q1']);
+    assert.deepEqual(fr, ['Emploi : Ingénieur méthodes · Renault\nOffre partagée sur le Réseau ENSAM. Ouvre-la ici : https://r.io/e.html?ecole=ensam-casa#offre/o1',
+      'Question sur le Réseau ENSAM : « Comment préparer un entretien chez OCP ? »\nTu peux y répondre ici : https://r.io/e.html?ecole=ensam-casa#reseau/entraide/q1']);
+    assert.deepEqual(ar, ['وظيفة: Ingénieur méthodes · Renault\nعرض منشور على شبكة ENSAM. افتحه هنا: https://r.io/e.html?lang=ar&ecole=ensam-casa#offre/o1',
+      'سؤال على شبكة ENSAM: « Comment préparer un entretien chez OCP ? »\nيمكنك الجواب هنا: https://r.io/e.html?lang=ar&ecole=ensam-casa#reseau/entraide/q1']);
     for (const x of [...fr, ...ar]) assert.doesNotMatch(x, /Casablanca|البيضاء|Meknès|مكناس/, x);
   }
   // Une école de la base, mal formée : rien dans le lien (jamais une adresse cassée), et jamais l'ENSAM Meknès nommée

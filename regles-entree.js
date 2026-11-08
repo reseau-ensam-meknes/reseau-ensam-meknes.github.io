@@ -74,7 +74,8 @@ export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replac
 export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
 const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
 export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
-export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a.replace(/\/promo\/\d{4}\/(?:ar\/)?$/, '$&e/')}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+const pageNeutre = a => (/\/promo\/\d{4}\/(?:ar\/)?$/.test(a) ? a + 'e/' : /\/promo\//.test(a) ? a : a.replace(/\/(?:index\.html)?$/, '/e.html'));
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${pageNeutre(a)}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
 
 export function contexteEntree(x) {
   const { promo, de, ecole, role, mode } = x || {}, out = {};

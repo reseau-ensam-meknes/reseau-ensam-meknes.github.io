@@ -464,7 +464,7 @@ export function AuthScreen({ store }) {
     return () => { vivant = false; removeEventListener('online', relire); };
   }, [noms === undefined, !store]);
   const marqueFr = noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès';
-  useLayoutEffect(() => { if (autre) document.title = marqueFr; }, [marqueFr]);
+  useLayoutEffect(() => { if (autre) document.title = marqueFr; else if (!document.title.endsWith('Réseau ENSAM Meknès')) document.title = 'Réseau ENSAM Meknès'; }, [marqueFr]);
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
     const c = codeInvite(); if (!c) return;

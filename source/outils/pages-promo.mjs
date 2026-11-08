@@ -6,6 +6,10 @@
 // nomment l'ENSAM Meknès. Les liens d'une autre école (avecEcole, regles-entree.js) mènent à leurs pages neutres,
 // dist/promo/AAAA/e/ et dist/promo/AAAA/ar/e/ : les mêmes, sans nom d'école (« Réseau ENSAM », « de ton école »,
 // img/apercu-promo-neutre.jpg : une entrée dont la porte dit « ENSAM »), qui envoient vers l'application de la même façon.
+// Jamais sous un chemin qui finit par promo/AAAA/ : le service worker d'avant ces pages (sur les appareils qui ne sont pas
+// revenus depuis) refait cette adresse sans &ecole=, et la personne arriverait à l'ENSAM Meknès.
+// Les autres liens d'une autre école (une offre, une question, le site : avecEcole) mènent à dist/e.html, la page neutre du
+// site, à côté d'index.html : le même aperçu, sans promo, qui envoie vers le site avec toute l'adresse (?…, #…).
 // Les promos sont celles qu'accepte le lien d'invitation (regles-entree.js) : la sortie ne dépend pas de la date,
 // la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
@@ -73,3 +77,36 @@ for (let a = PREMIERE; a <= DERNIERE; a++) for (const l of ['fr', 'ar']) for (co
   fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'index.html'), html(a, l, neutre)); n++;
 }
 console.log(`pages de promo : ${n} (${PREMIERE}-${DERNIERE}, fr et ar, celles de l'ENSAM Meknès et leurs pages neutres)`);
+
+// La page neutre du site (e.html) : ce que montre l'aperçu d'un lien d'une autre école qui n'est pas celui d'une promo. Comme
+// index.html, en français ; son script envoie vers le site avec toute l'adresse (l'école, la langue, la route en #).
+const desc = 'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois, conseils et entraide entre lauréats et étudiants de ton école.';
+fs.writeFileSync(path.join(dist, 'e.html'), `<!doctype html>
+<html lang="fr" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>location.replace("./"+location.search+location.hash)</script>
+<title>Réseau ENSAM</title>
+<meta name="description" content="${esc(desc)}">
+<meta name="robots" content="noindex">
+<link rel="canonical" href="${site}e.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Réseau ENSAM">
+<meta property="og:url" content="${site}e.html">
+<meta property="og:title" content="Réseau ENSAM">
+<meta property="og:description" content="${esc(desc)}">
+<meta property="og:image" content="${site}img/apercu-promo-neutre.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="${esc(NEUTRE.fr.alt)}">
+<meta property="og:locale" content="fr_FR">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#1670A8">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F3F6FA;color:#13213A;font:16px/1.5 system-ui,sans-serif}a{color:#135F8F;font-weight:600}@media (prefers-color-scheme:dark){body{background:#0B1320;color:#E6ECF5}a{color:#7DBBEA}}</style>
+</head>
+<body><p><a href="./">${esc(NEUTRE.fr.ouvrir)}</a></p></body>
+</html>
+`);
+console.log('page neutre du site : e.html');

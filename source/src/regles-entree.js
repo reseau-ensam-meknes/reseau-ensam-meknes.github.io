@@ -99,10 +99,12 @@ export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
 const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
 export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
 // Adresse d'un lien à partager pour une autre école que l'ENSAM Meknès : elle dit l'école (&ecole=…), que la page d'entrée
-// garde jusqu'à l'inscription. La page d'aperçu d'une promo (promo/AAAA/, promo/AAAA/ar/) devient alors sa page neutre
-// (promo/AAAA/e/, outils/pages-promo.mjs), dont l'aperçu ne nomme pas l'ENSAM Meknès. Pour l'ENSAM Meknès (ou sans école),
-// l'adresse ne change pas.
-export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a.replace(/\/promo\/\d{4}\/(?:ar\/)?$/, '$&e/')}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+// garde jusqu'à l'inscription, et mène à une page d'aperçu neutre (outils/pages-promo.mjs), qui ne nomme pas l'ENSAM Meknès :
+// la page d'une promo (promo/AAAA/, promo/AAAA/ar/) devient promo/AAAA/e/ ; le site lui-même (sa racine, index.html : une offre,
+// une question, le résumé de la semaine) devient e.html, à côté d'index.html (un service worker d'avant, qui y ouvre l'application
+// gardée, la trouve ainsi dans son dossier). Une autre adresse garde son chemin. Pour l'ENSAM Meknès (ou sans école), rien ne change.
+const pageNeutre = a => (/\/promo\/\d{4}\/(?:ar\/)?$/.test(a) ? a + 'e/' : /\/promo\//.test(a) ? a : a.replace(/\/(?:index\.html)?$/, '/e.html'));
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${pageNeutre(a)}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
 
 // Ce que la page d'entrée emporte dans un autre navigateur (lienChrome, appareil.js, qui le réexporte ; l'adresse gardée dans
 // le navigateur d'une application sur iPhone ou iPad, adresseAvecContexte) : la promo d'un lien d'invitation, le code de qui

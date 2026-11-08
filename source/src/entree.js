@@ -639,7 +639,8 @@ export function AuthScreen({ store }) {
     return () => { vivant = false; removeEventListener('online', relire); };
   }, [noms === undefined, !store]);
   const marqueFr = noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès';
-  useLayoutEffect(() => { if (autre) document.title = marqueFr; }, [marqueFr]);
+  // L'onglet suit la page : sans lien d'une autre école, l'ENSAM Meknès (même après la déconnexion d'un membre d'une autre école)
+  useLayoutEffect(() => { if (autre) document.title = marqueFr; else if (!document.title.endsWith('Réseau ENSAM Meknès')) document.title = 'Réseau ENSAM Meknès'; }, [marqueFr]);
   // Le lien venait d'un membre : qui invite (un code inconnu de cette école est oublié)
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
