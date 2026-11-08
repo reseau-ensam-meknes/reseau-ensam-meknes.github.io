@@ -63,6 +63,41 @@ end $$;
 revoke all on function public.super_admin() from public, anon;
 grant execute on function public.super_admin() to authenticated, service_role;
 
+-- La suite d'une suppression : une mise à jour qui ne fait que vider des liens vers des lignes qui n'existent plus. Quand
+-- un compte, une offre, une demande… s'en va, la base vide elle-même les liens « on delete set null » qui le visaient. Les
+-- gardes des tables (garde_ecole, protect_*) laissent passer cette mise à jour telle quelle : elles ne la refusent pas (le
+-- compte qui se supprime n'a plus d'école, « pas dans ton réseau ») et ne la remettent pas comme avant (un lien vers une
+-- ligne disparue, refusé ensuite au geste suivant de l'autre membre). Vrai seulement si chaque colonne changée devient vide,
+-- est une clé étrangère « on delete set null » de la table et visait une ligne qui n'existe plus : tant qu'une ligne existe,
+-- un lien vers elle ne peut que la viser, et vider un lien n'ouvre rien à personne. Ni un drapeau ni un réglage : rien
+-- qu'un membre puisse poser. Pour les déclencheurs seulement (aucun droit pour les membres ni les visiteurs).
+create or replace function public.liens_disparus(p_table regclass, p_avant jsonb, p_apres jsonb) returns boolean
+language plpgsql stable set search_path = public as $$
+declare r record; v_existe boolean; n int := 0;
+begin
+  for r in
+    select a.key, a.value as apres, p_avant -> a.key as avant, f.ref, f.col, f.typ
+    from jsonb_each(p_apres) a
+    left join lateral (
+      select k.confrelid::regclass as ref, b.attname as col, format_type(b.atttypid, b.atttypmod) as typ
+      from pg_constraint k
+      join pg_attribute c on c.attrelid = k.conrelid and c.attnum = k.conkey[1]
+      join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
+      where k.conrelid = p_table and k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and c.attname = a.key
+      limit 1) f on true
+    -- Une colonne calculée (generated) n'est pas encore calculée dans NEW avant l'écriture : elle ne compte pas
+    where a.value is distinct from p_avant -> a.key
+      and not exists (select 1 from pg_attribute g where g.attrelid = p_table and g.attname = a.key and g.attgenerated <> '')
+  loop
+    if r.apres <> 'null'::jsonb or r.avant is null or r.avant = 'null'::jsonb or r.ref is null then return false; end if;
+    execute format('select exists (select 1 from %s where %I = $1::%s)', r.ref, r.col, r.typ) into v_existe using r.avant #>> '{}';
+    if v_existe then return false; end if;
+    n := n + 1;
+  end loop;
+  return n > 0;
+end $$;
+revoke all on function public.liens_disparus(regclass, jsonb, jsonb) from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------
 -- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
 -- appellations des promos précédentes, rattachées à leur parcours. Mêmes règles que logic.js.
@@ -262,6 +297,8 @@ begin
     end if;
     return new;
   end if;
+  -- L'offre a été supprimée (par son auteur, l'administration, avec un compte) : la candidature reste, détachée d'elle
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then new.updated_at := now(); return new; end if;
   select author_id into v_author from public.offers where id = old.offer_id;
   v_status := new.status; v_note := new.note; v_message := new.message;
@@ -399,6 +436,8 @@ begin
     if new.status = 'confirme' and old.status <> 'confirme' then new.confirmed_at := now(); end if;
     return new;
   end if;
+  -- Le lauréat, l'offre ou la demande n'existent plus (un compte supprimé…) : le recrutement reste à l'étudiant, sans eux
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   v_status := new.status; v_merci := new.merci; v_note := new.note; v_partage := new.partage_ok;
   v_ent := new.entreprise; v_ville := new.ville; v_pays := new.pays; v_type := new.type;
   new := old;
@@ -2257,6 +2296,12 @@ create or replace function public.protect_relecture() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.relectures_cv%rowtype; v_role text;
 begin
+  -- Le relecteur n'existe plus (son compte supprimé) : une relecture pas encore rendue redevient ouverte à tous, sans son
+  -- brouillon, comme quand il passe la main ; une relecture rendue garde sa synthèse
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then
+    if old.status = 'en_cours' then new.status := 'demandee'; new.pris_at := null; new.synthese := null; end if;
+    return new;
+  end if;
   if auth.uid() is null or public.is_admin() then return new; end if;
   select role into v_role from public.profiles where id = auth.uid();
   if tg_op = 'INSERT' then
@@ -2395,6 +2440,8 @@ create or replace function public.protect_entretien() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.entretiens%rowtype;
 begin
+  -- L'offre a été supprimée : l'entretien reste, détaché d'elle
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   new.questions := array(select left(trim(x), 300) from unnest(coalesce(new.questions, '{}')) x where trim(x) <> '' limit 20);
   if auth.uid() is null or public.is_admin() then return new; end if;
   if tg_op = 'INSERT' then
@@ -2504,6 +2551,8 @@ create index if not exists guide_pays_historique_guide on public.guide_pays_hist
 create or replace function public.protect_guide() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- Son auteur a supprimé son compte : le guide et son historique restent, sans auteur
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if tg_op = 'UPDATE' then
     new.pays := old.pays; new.section := old.section; new.created_at := old.created_at;
     if new.contenu is distinct from old.contenu then
@@ -4049,6 +4098,8 @@ declare v_p record; v public.demandes;
 begin
   -- Suites automatiques (match, pourvue) : faites par la base elle-même
   if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  -- Le lauréat du match n'existe plus (son compte supprimé) : la demande reste à son auteur, qui la rouvre ou la ferme
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then
     if tg_op = 'UPDATE' then new.updated_at := now(); end if;
     return new;
@@ -5803,6 +5854,8 @@ language plpgsql security definer set search_path = public as $$
 declare v public.matchs;
 begin
   if auth.uid() is null then return new; end if;
+  -- L'offre du match a été supprimée : le match reste, sans elle
+  if public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   v := old;
   if auth.uid() = old.etudiant_id then v.vu_etudiant_at := coalesce(old.vu_etudiant_at, case when new.vu_etudiant_at is not null then now() end); end if;
   if auth.uid() = old.laureat_id then v.vu_laureat_at := coalesce(old.vu_laureat_at, case when new.vu_laureat_at is not null then now() end); end if;
@@ -5913,6 +5966,8 @@ create index if not exists sponsorises_en_cours on public.sponsorises (debut, fi
 create or replace function public.protect_sponsorise() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- L'admin qui l'a écrite a supprimé son compte (ou a été supprimé) : la carte reste, sans auteur
+  if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is not null and not public.is_admin() then
     raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
   end if;
@@ -6416,7 +6471,12 @@ begin
     v := to_jsonb(new) ->> split_part(tg_argv[i], ':', 1);
     continue when v is null;
     execute format('select ecole from public.%I where id = $1', split_part(tg_argv[i], ':', 2)) into e using v::uuid;
-    if e is distinct from m then raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501'; end if;
+    if e is distinct from m then
+      -- La suite d'une suppression (le compte qui se supprime n'a plus d'école, l'offre visée n'existe plus) : la ligne ne
+      -- fait que perdre un lien, elle ne vise personne de nouveau
+      if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
+      raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501';
+    end if;
   end loop;
   return new;
 end $$;
@@ -7627,6 +7687,28 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.reussites_publiques(text) from public;
 grant execute on function public.reussites_publiques(text) to anon, authenticated;
+
+-- =====================================================================
+--  Liens vers des lignes disparues : les gardes d'avant liens_disparus (en haut du fichier) remettaient le lien qu'une
+--  suppression venait de vider. Une offre supprimée par son auteur restait visée par ses candidatures, ses entretiens, ses
+--  recrutements et ses matchs (puis « pas dans ton réseau » quand l'étudiant confirmait ou gardait ses notes) ; la carte
+--  sponsorisée d'un admin supprimé gardait son auteur disparu. Ces liens sont vidés ici, comme la clé étrangère le prévoit
+--  (« on delete set null ») : la ligne reste, rien d'autre n'y change. Une base saine n'a rien à vider ; relançable.
+-- =====================================================================
+do $$
+declare r record;
+begin
+  for r in select k.conrelid::regclass as t, a.attname as col, k.confrelid::regclass as ref, b.attname as rcol
+    from pg_constraint k
+    join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
+    join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
+    where k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and k.connamespace = 'public'::regnamespace
+    order by 1, 2
+  loop
+    execute format('update %s x set %I = null where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I)',
+      r.t, r.col, r.col, r.ref, r.rcol, r.col);
+  end loop;
+end $$;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
