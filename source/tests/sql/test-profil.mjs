@@ -5,19 +5,23 @@ import { nouvelleBase, creerCompte, en, uid } from './banc-sql.mjs';
 
 const SCHEMA = process.env.SCHEMA_SQL || new URL('../../supabase/schema.sql', import.meta.url).pathname;
 let db;
-const S = (() => { const d = new Date(); return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; })();
+// Pas encore diplômée pour la base (protect_profile) : une promo d'après l'année en cours, lue dans la base elle-même.
+// La promo des 5A de la saison (S + 1) ne convient pas : de janvier à août, c'est l'année en cours, et ceux qui finissent
+// leur PFE peuvent déjà se dire lauréats (l'accueil ne leur demande rien non plus).
+let PROMO;
 const ADMIN = uid(41), HAJEB = uid(42);
 const q = (u, sql, p) => en(db, u, tx => tx.query(sql, p)).then(r => r.rows);
 
 before(async () => {
   db = await nouvelleBase(SCHEMA);
+  PROMO = (await db.query(`select extract(year from now())::int + 1 as promo`)).rows[0].promo;
   await creerCompte(db, { id: ADMIN, full_name: 'Admin École', role: 'etudiant', filiere: 'Génie Civil', promo: 2010 });
   await db.query(`update public.profiles set role = 'admin' where id = $1`, [ADMIN]);
-  await q(ADMIN, 'select public.importer_liste($1::jsonb)', [JSON.stringify([{ nom: 'Hajeb Abderrahman', promo: S + 1 }])]);
+  await q(ADMIN, 'select public.importer_liste($1::jsonb)', [JSON.stringify([{ nom: 'Hajeb Abderrahman', promo: PROMO }])]);
 });
 
 test('promo pas encore diplômée : pas de badge lauréat, le rôle étudiant est vérifié', async () => {
-  await creerCompte(db, { id: HAJEB, full_name: 'Hajeb Abderrahman', role: 'laureat', filiere: 'Génie Mécanique', promo: S + 1 });
+  await creerCompte(db, { id: HAJEB, full_name: 'Hajeb Abderrahman', role: 'laureat', filiere: 'Génie Mécanique', promo: PROMO });
   const verifie = async () => (await q(HAJEB, 'select verified from public.profiles where id = $1', [HAJEB]))[0].verified;
   assert.equal(await verifie(), false);
   // Il corrige son profil (champs facultatifs vides, comme le formulaire les envoie)
