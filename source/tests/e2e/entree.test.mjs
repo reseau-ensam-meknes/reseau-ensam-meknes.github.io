@@ -2176,7 +2176,7 @@ for (const langue of ['fr', 'ar']) test(`membre en ligne d’une autre école ($
   let m = await membre({ hash: '#parcours', langue, largeur: 1280 });
   await m.page.waitForFunction(() => /ecole%3Densa-fes%26de%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 15000 });
   let texte = new URL(await m.page.getAttribute('#promo-wa', 'href')).searchParams.get('text');
-  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}?ecole=ensa-fes&de=salma234`), texte);
+  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}e/?ecole=ensa-fes&de=salma234`), texte);
   assert.match(texte, ar ? /أنا على «شبكة ENSA فاس»:/ : /Je suis sur le Réseau ENSA Fès :/);
   assert.doesNotMatch(texte, /Meknès|مكناس/);
   assert.match(await m.page.title(), /^(\(\d+\) )?Réseau ENSA Fès$/);
@@ -3031,6 +3031,48 @@ for (const langue of ['fr', 'ar']) test(`offre et question partagées par un mem
   await finirLaureat(s.page);
   await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
   assert.equal(site.inscrits.find(x => x.id === UID)?.ecole, 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Lien de promo d'une autre école que l'ENSAM Meknès : sa page d'aperçu neutre (promo/AAAA/e/, promo/AAAA/ar/e/ : WhatsApp
+// la montre sans nom d'école) envoie vers la page d'entrée de l'école du lien, avec la promo et le code de qui invite ; le
+// service worker, une fois installé, fait suivre la même chose sans passer par elle
+// ---------------------------------------------------------------------------
+for (const langue of ['fr', 'ar']) test(`lien de promo d’une autre école (${langue}) : sa page neutre mène à l’entrée de l’école du lien, avec la promo et le code ; le service worker aussi`, async () => {
+  const ar = langue === 'ar', chemin = `promo/2019/${ar ? 'ar/' : ''}e/?ecole=ensa-fes&de=omar2019`;
+  const regler = () => { site.rpc.invitation_de = OMAR_FES; site.tables.ecoles = [FES]; };
+  // La page telle que WhatsApp la lit : aucun nom d'école, l'image neutre ; l'école n'est que dans son script
+  const brut = await (await fetch(site.adresse + chemin)).text();
+  assert.ok(brut.includes(`<meta property="og:image" content="https://reseau-ensam-meknes.github.io/img/apercu-promo-neutre.jpg">`), brut);
+  assert.doesNotMatch(brut.replace(/<script>[\s\S]*?<\/script>/, ''), /Meknès|مكناس|Fès|فاس|ecole=/);
+  // Une personne qui l'ouvre : l'entrée de l'ENSA Fès, dans la langue du lien, l'invitation dite ; l'adresse propre
+  regler();
+  let s = await visiteur({ largeur: 390, hauteur: 844, langue: null, query: chemin });
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.match(await s.page.locator('#au-invite-de').innerText(), /Omar.*2019/);
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await gardes(s.page), ['2019', 'ensa-fes', 'omar2019', null]);
+  assert.ok(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').every(a => a.corps?.p_ecole === 'ensa-fes'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le site gardé sur l'appareil : le service worker répond lui-même au lien, par la même entrée ; aucune page ne s'ouvre à
+  // l'adresse de l'aperçu (une adresse qu'il ne reconnaît pas, il y ouvrirait l'application gardée, qui devrait se reprendre)
+  site.vider(); regler();
+  s = await visiteur({ sw: true, largeur: 390, hauteur: 844, langue: null });
+  await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+  const ouvertes = [];
+  s.page.on('framenavigated', f => { if (f === s.page.mainFrame()) ouvertes.push(new URL(f.url()).pathname); });
+  await s.page.goto(site.adresse + chemin); await s.page.waitForSelector('#entree .entree-form');
+  await quandMarque(s.page, NOMS_FES[langue].marque);
+  assert.deepEqual(ouvertes.filter(p => p !== '/'), [], 'le service worker a répondu au lien de l’aperçu');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.getAttribute('html', 'dir'), ar ? 'rtl' : 'ltr');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await gardes(s.page), ['2019', 'ensa-fes', 'omar2019', null]);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
