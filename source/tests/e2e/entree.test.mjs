@@ -1008,11 +1008,15 @@ test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la répons
   assert.ok(c, 'une copie de l’accueil est gardée');
   assert.equal(c.uid, UID);
   assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
-  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il vient de l'appareil, puisque la base est tenue.
+  // La mise à jour part juste après lui (rafraichir, store.js), parfois quand il est déjà affiché : on attend qu'elle soit
+  // demandée, et l'accueil est toujours là.
   tenir = true;
   await m.page.reload();
   await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
-  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length > 0, 'la mise à jour est demandée à la base');
+  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste là tant que la base ne répond pas');
   assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForTimeout(1200);
