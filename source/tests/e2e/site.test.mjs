@@ -5639,6 +5639,26 @@ test('le décor ne tourne plus sans fin : l’entrée dessinée s’anime à l�
   await s.ctx.close();
 });
 
+test('accueil : changer de langue garde le dessin de l’école tel qu’il est ; seul son cadrage suit la langue', async () => {
+  // Le dessin n'est posé qu'une fois. Remplacé à chaque langue (l'arabe le cale à gauche), il relançait ses animations : la
+  // porte se refermait puis se rouvrait, ou, l'accueil une fois posé (10 s, tout en pause), restait fermée, les massifs vides.
+  const s = await ouvrir({ largeur: 1280 });
+  await s.page.waitForSelector('.hello .scene svg');
+  const dessin = await s.page.$('.hello .scene svg');
+  const etat = () => dessin.evaluate(e => [e.isConnected, e.getAttribute('preserveAspectRatio')]);
+  // Le dessin de l'accueil, quel qu'il soit, une fois calé : l'essai regarde ensuite si c'est encore le premier
+  const cale = v => s.page.waitForFunction(v => document.querySelector('.hello .scene svg')?.getAttribute('preserveAspectRatio') === v, v);
+  assert.deepEqual(await etat(), [true, 'xMaxYMax meet']);
+  await s.page.click('.top .lang-btn'); await s.page.waitForFunction(() => document.documentElement.dir === 'rtl');
+  await cale('xMinYMax meet');
+  assert.deepEqual(await etat(), [true, 'xMinYMax meet'], 'le même dessin, calé à gauche en arabe');
+  await s.page.click('.top .lang-btn'); await s.page.waitForFunction(() => document.documentElement.dir === 'ltr');
+  await cale('xMaxYMax meet');
+  assert.deepEqual(await etat(), [true, 'xMaxYMax meet'], 'le même dessin, de retour à droite en français');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('arabe : les fêtes du match et du merci, et la carte « Fait », sont traduites ; les visages suivent le sens de lecture', async () => {
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Youssef'); await s.page.waitForTimeout(300);
@@ -5867,6 +5887,38 @@ test('écran chargé à la demande sans réseau : la forme de la page, puis un m
   assert.ok(await s.page.isVisible('#adm-parcours'));
   assert.equal(await s.page.evaluate(() => location.hash), '#admin');
   assert.deepEqual(s.erreurs.filter(e => !/admin\.js|dynamically imported module/i.test(e)), []);
+  await s.ctx.close();
+});
+
+test('écran chargé à la demande, rouvert pendant que son code arrive : il se pose quand même', async () => {
+  // Le Suivi ouvert puis quitté avant l'arrivée de son code (dashboard.js), puis rouvert dans un onglet en arrière-plan
+  // (requestAnimationFrame arrêté : l'effet de la page passe 100 ms après elle). Le code arrive entre les deux, juste après
+  // l'affichage : la page le croyait déjà posé et gardait sa forme d'attente (« Chargement… ») jusqu'au geste suivant.
+  const s = await ouvrir({ largeur: 390 });
+  // D'abord la proposition d'ambassadeur (1,2 s après l'ouverture, une fois par visite) : elle redessine toute l'application,
+  // ce qui cacherait l'oubli
+  await s.page.waitForTimeout(2000);
+  // Le code du Suivi s'arrête au début de son évaluation, tant que la page ne le lâche pas
+  await s.ctx.route(/\/dashboard\.js$/, async r => {
+    const rep = await r.fetch();
+    await r.fulfill({ response: rep, body: 'window.__suiviArrete = true; await window.__suiviLache;\n' + await rep.text() });
+  });
+  await s.page.evaluate(() => { window.__suiviLache = new Promise(ok => { window.__lacherSuivi = ok; }); location.hash = 'suivi'; });
+  await s.page.waitForSelector('.page-attente');
+  await s.page.waitForFunction(() => window.__suiviArrete);
+  await s.page.evaluate(() => { location.hash = 'accueil'; }); await s.page.waitForSelector('.hello');
+  await s.page.waitForTimeout(300);
+  // Rouvert en arrière-plan : le code est lâché dès l'affichage de la deuxième page, dans le rappel même de l'observateur.
+  // Sa fin d'évaluation et l'import ne prennent que des microtâches : il est posé avant toute minuterie, donc avant l'effet,
+  // même sur une machine lente (une minuterie de 40 ms pouvait passer après l'effet : l'essai passait alors sans la correction)
+  await s.page.evaluate(() => {
+    window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {};
+    new MutationObserver((_, mo) => { if (document.querySelector('.page-attente')) { mo.disconnect(); window.__lacherSuivi(); } }).observe(document.body, { childList: true, subtree: true });
+    location.hash = 'suivi';
+  });
+  // Le Suivi lui-même (l'accueil aussi est une .page : il ne doit pas passer pour lui)
+  await s.page.waitForSelector('#suivi-vue', { timeout: 10000 });
+  assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
 

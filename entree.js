@@ -124,8 +124,10 @@ export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (sce
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
-  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
+  const [cadre] = useState([align, fit]);
+  useLayoutEffect(() => { ref.current?.querySelector('svg')?.setAttribute('preserveAspectRatio', `${align} ${fit}`); }, [align, fit, pret]);
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
@@ -134,7 +136,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(...cadre) : '' }}></div>`;
 }
 
 let signaler = () => {};
