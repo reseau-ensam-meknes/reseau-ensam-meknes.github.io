@@ -1,7 +1,7 @@
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
-import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
+import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour, ecoleValide } from './regles-entree.js';
 
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
 addAR({
@@ -152,7 +152,6 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 }
 
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
-const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -241,10 +240,12 @@ async function appelPublic(nom, corps, cfg) {
   } catch { return { ok: false }; } finally { clearTimeout(t); }
 }
 const enLigneCfg = cfg => !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
-let chiffresP = null;
+const chiffresP = new Map();
 export function chiffresPublics(cfg = window.ENSAM_CONFIG || {}) {
   if (!enLigneCfg(cfg)) return Promise.resolve(null);
-  return chiffresP ||= appelPublic('chiffres_publics', {}, cfg).then(r => { if (!r.ok) chiffresP = null; return r.ok ? r.x : null; });
+  const args = argsEcole(), cle = args.p_ecole || '';
+  if (!chiffresP.has(cle)) chiffresP.set(cle, appelPublic('chiffres_publics', args, cfg).then(r => { if (!r.ok) chiffresP.delete(cle); return r.ok ? r.x : null; }));
+  return chiffresP.get(cle);
 }
 export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
   if (!estUuid(id) || !enLigneCfg(cfg)) return undefined;

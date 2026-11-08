@@ -19,7 +19,11 @@ const MATCH = ['match_choix', 'matchs'];
 // Cartes sponsorisées de Match : un membre lit seulement celles en cours (règle de la base) ; les comptes de vues et de
 // clics ne sont jamais lus par le site (compter_sponsorise les écrit, bilan_sponsorises en donne les totaux à l'administration)
 const SPONSO = ['sponsorises'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO];
+// La ligne de l'école du membre (slug, nom, nom_court, ville, nom_ar, couleur) : son nom dans l'onglet, la marque, la carte
+// des lauréats et les messages d'invitation (logic.js, nomsEcole). La base ne laisse lire que les écoles ouvertes et la
+// sienne : quelques lignes, lues avec l'accueil, en même temps que le reste. Pas de temps réel pour elle (subscribe).
+const ECOLES = ['ecoles'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO, ...ECOLES];
 // Chargement en deux temps (en ligne, première ouverture sur un appareil ou après la connexion) : d'abord tout ce que
 // l'accueil et la navigation lisent (PREMIERES : l'accueil compte presque tout, pour ses pastilles et « À faire »), l'écran
 // s'affiche, puis le reste (ENSUITE) juste après, en arrière-plan : les messages des groupes, les réactions aux messages
@@ -45,7 +49,7 @@ export function tablesLien(hash) {
   return tablesEcran(page, sub);
 }
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO, ...ECOLES]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -215,8 +219,9 @@ const cvExemple = (p, data) => import('./seed-cv.js').then(m => m.pdfCvDemo(p, {
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
 const DEMO_KEY = 'ensam-demo-v14';
-// Tables lues par certaines pages seulement (pas au démarrage) : la démo les garde avec le reste ; écoles et suivi = console d'administration
-const TABLES_ADMIN_DEMO = ['guide_pays_historique', 'liste_officielle', 'ecoles', 'admin_suivi'];
+// Tables lues par certaines pages seulement (pas au démarrage) : la démo les garde avec le reste ; suivi = console
+// d'administration (les écoles sont dans TABLES)
+const TABLES_ADMIN_DEMO = ['guide_pays_historique', 'liste_officielle', 'admin_suivi'];
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -1352,7 +1357,10 @@ const SUITES = { demandes: ['propositions', 'placements'], propositions: ['deman
 // message de chacune et ceux pas encore lus), pas les coordonnées des autres, pas le détail des signalements.
 // ---------------------------------------------------------------------------
 export const CACHE_V = 1;
-const CACHE_FORME = CACHE_V + ':' + TABLES.join(',');
+// Sans les écoles, arrivées après (ECOLES) : la copie d'avant reste bonne ; elle s'ouvre sans elles (un membre de l'ENSAM
+// Meknès a ses textes d'avant ; un membre d'une autre école lit « ENSAM », sans ville, jamais Meknès), puis la mise à jour qui
+// suit tout de suite les apporte (rafraichir)
+const CACHE_FORME = CACHE_V + ':' + TABLES.filter(t => !ECOLES.includes(t)).join(',');
 const CACHE_MAX = 30 * 864e5;
 const SANS_CACHE = new Set(['groupe_messages', 'reactions_messages', 'relecture_commentaires', 'retours_cv']);
 export function pourCache(data, uid) {
@@ -1781,7 +1789,9 @@ export class SupabaseStore extends Base {
         this.emit();
       }, 400);
     };
-    for (const t of TABLES) if (t !== 'messages') this.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => recharger(t));
+    // La base ne publie pas les écoles en temps réel (supabase_realtime) : pas d'abonnement pour elles ; elles sont relues avec
+    // le reste (mise à jour de la copie de l'appareil, retour après une longue absence)
+    for (const t of TABLES) if (t !== 'messages' && !ECOLES.includes(t)) this.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => recharger(t));
     // Un message arrive tel quel, sans relire toute la table : la conversation suit en direct
     this.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, e => {
       if (e.eventType === 'DELETE') this.data.messages = this.data.messages.filter(x => x.id !== e.old?.id);

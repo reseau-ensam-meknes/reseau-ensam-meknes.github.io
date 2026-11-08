@@ -6,7 +6,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -14,7 +14,7 @@ import { AnnuairePro } from './pro.js';
 import { CoupePromos } from './saison.js';
 import { EntreprisesPage } from './entreprises.js';
 import { EtrangerPage, CarteGuide, Drapeau } from './etranger.js';
-import { AgendaPage } from './agenda.js';
+import { AgendaPage, eventsFor } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
@@ -180,10 +180,12 @@ const VUES_ANNUAIRE = [['annuaire', 'Personnes'], ['entreprises', 'Entreprises']
 export function ReseauPage(ctx) {
   const { data, me, sub, go } = ctx;
   // Une rubrique encore vide reste cachée jusqu'à son premier contenu (l'administration voit tout) ; le classement et
-  // les talents ne sont pas pour les étudiants
+  // les talents ne sont pas pour les étudiants. Le même filtre que la rubrique elle-même : l'Agenda, les événements de son
+  // école ouverts à son rôle (eventsFor) ; l'Étranger, le guide (commun à toutes les écoles) et les lauréats de son école
+  // à l'étranger (etranger.js)
   const vide = {
-    agenda: !(data.evenements || []).length,
-    etranger: !(data.guide_pays || []).length && !data.profiles.some(p => p.role === 'laureat' && p.pays && norm(p.pays) !== 'maroc'),
+    agenda: !eventsFor(data, me).length,
+    etranger: !(data.guide_pays || []).length && !deMonEcole(data.profiles, me).some(p => p.role === 'laureat' && p.pays && norm(p.pays) !== 'maroc'),
     classement: ![...(ctx.scores?.values() || [])].some(x => x?.points > 0),
   };
   const ouverte = k => (me.role !== 'etudiant' || !['classement', 'talents'].includes(k)) && (me.role === 'admin' || !vide[k]);

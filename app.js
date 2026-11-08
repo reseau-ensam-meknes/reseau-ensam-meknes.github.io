@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur, ENSUITE } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
-import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole } from './logic.js';
+import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole, nomsDuMembre, sousMarque } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
@@ -294,8 +294,8 @@ function App({ store }) {
     }
     seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
-    const ec = (data.ecoles || []).find(e => e.slug === me.ecole && e.slug !== 'ensam-meknes');
-    try { document.title = (n ? `(${n}) ` : '') + (ec ? `Réseau ${ec.nom}` : 'Réseau ENSAM Meknès'); } catch { /* */ }
+    // Le nom de l'école du membre (sa ligne de data.ecoles) ; jamais l'ENSAM Meknès pour une autre école
+    try { document.title = (n ? `(${n}) ` : '') + `Réseau ${nomsDuMembre(data, me).nom}`; } catch { /* */ }
     poserBadge(store, n);
   });
 
@@ -410,7 +410,7 @@ function App({ store }) {
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
     <aside class="side">
       <div class="side-in">
-        <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
+        <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>${sousMarque(nomsDuMembre(data, me))}</span></span></a>
         ${publier ? html`<button type="button" class="btn primary side-pub" onClick=${() => { setPop(null); setCloche(false); publier.faire(); }}><${Icon} name=${publier.icon} size=${20}/><span class="side-lib">${publier.label}</span><span class="side-court" aria-hidden="true">Publier</span></button>` : null}
         <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i} size=${20}/></span><span class="side-lib">${l}</span><span class="side-court" aria-hidden="true">${court(l)}</span>${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${neuf(msgs)}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
         <div class="side-foot"><span class="small muted">Année ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>

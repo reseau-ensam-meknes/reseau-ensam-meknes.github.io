@@ -93,3 +93,11 @@ export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape,
 export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
 // Adresse d'un lien à partager : la langue suit l'interface de celui qui partage
 export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);
+// L'école d'un lien partagé (?ecole=) : son identifiant tel que la base l'écrit (2 à 40 lettres minuscules, chiffres, tirets).
+// ECOLE_MOTIF sert aussi au script des pages d'aperçu des promos (outils/pages-promo.mjs).
+export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
+const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
+export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
+// Adresse d'un lien à partager pour une autre école que l'ENSAM Meknès : elle dit l'école (&ecole=…), que la page d'entrée
+// garde jusqu'à l'inscription. Pour l'ENSAM Meknès (ou sans école), l'adresse ne change pas.
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);

@@ -71,3 +71,7 @@ export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape,
 
 export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
 export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);
+export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
+const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
+export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);

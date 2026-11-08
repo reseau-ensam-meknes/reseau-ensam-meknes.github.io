@@ -1,5 +1,6 @@
 // Règles métier : saisons, niveaux, objectifs, points d'impact, badges, statistiques.
 import { pointsOffre, POINTS_OFFRE, estPortee, estPartagee, offreVisible } from './origine.js';
+import { avecEcole } from './regles-entree.js';
 
 // Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
 // En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
@@ -116,7 +117,7 @@ export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretie
 
 // Une saison = une année universitaire, de septembre à août. 2026 = « 2026-2027 ».
 // Règles de la page d'entrée (elles vivent à part pour qu'elle s'affiche sans attendre ce fichier)
-export { roleDePromo, promoValide, PROMO_MIN, PROMO_MAX, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien } from './regles-entree.js';
+export { roleDePromo, promoValide, PROMO_MIN, PROMO_MAX, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien, ecoleValide, avecEcole } from './regles-entree.js';
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
 
@@ -131,21 +132,25 @@ export function niveauOf(p, saison) {
 
 // « Fais venir ta promo » : le lien d'une promo mène à sa petite page d'aperçu (page = true, outils/pages-promo.mjs),
 // qui nomme la promo dans WhatsApp puis ouvre le site avec ?promo= ; sinon le lien simple ?promo=
-export const lienPromo = (promo, langue, page, base) => new URL(page ? `promo/${promo}/${langue === 'ar' ? 'ar/' : ''}` : `./?promo=${promo}${langue === 'ar' ? '&lang=ar' : ''}`, base).href;
+// ecole : l'école du membre qui partage, ou celle que regarde la console. Une autre école que l'ENSAM Meknès est dite dans
+// le lien (&ecole=…) : la page d'aperçu et le service worker la font suivre, la page d'entrée la garde jusqu'à l'inscription.
+// Les liens de l'ENSAM Meknès ne changent pas.
+export const lienPromo = (promo, langue, page, base, ecole) => avecEcole(new URL(page ? `promo/${promo}/${langue === 'ar' ? 'ar/' : ''}` : `./?promo=${promo}${langue === 'ar' ? '&lang=ar' : ''}`, base).href, ecole);
 // Membres inscrits avec cette promo, étudiants et lauréats, moi compris
 export const inscritsDeLaPromo = (profiles, promo) => profiles.filter(p => p.promo != null && Number(p.promo) === Number(promo)).length;
 // Message d'un membre à sa propre promo : court, à la première personne, avec le lien. n : déjà inscrits, cité à partir de 3.
-export function messageCamarade(me, langue, lien, n = 0, saison = seasonOf()) {
+// noms : ceux de son école (nomsEcole) ; l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function messageCamarade(me, langue, lien, n = 0, saison = seasonOf(), noms = NOMS_MEKNES) {
   const { promo } = me; const etu = me.role === 'etudiant'; const demande = etu && niveauOf(me, saison) >= 3; const deja = n >= 3;
   if (langue === 'ar') return [`مرحبا دفعة ${promo} 👋`,
-    !etu ? 'أنا على «شبكة ENSAM مكناس»: نساعد فيها كخريجين الطلبة على إيجاد تدريب أو مشروع نهاية الدراسة أو أول وظيفة، ونلتقي فيها كزملاء.'
-      : demande ? 'أنا على «شبكة ENSAM مكناس»: نقول فيها للخريجين ما نبحث عنه من تدريب أو مشروع نهاية الدراسة، مع السيرة الذاتية، ومن يستطيع المساعدة منهم يجيب.'
-      : 'أنا على «شبكة ENSAM مكناس»: نطرح فيها أسئلتنا على الخريجين (الشعبة، التداريب، الحياة بعد المدرسة) ويقدّمون لنا النصائح.',
+    !etu ? `أنا على «شبكة ${noms.nomAr}»: نساعد فيها كخريجين الطلبة على إيجاد تدريب أو مشروع نهاية الدراسة أو أول وظيفة، ونلتقي فيها كزملاء.`
+      : demande ? `أنا على «شبكة ${noms.nomAr}»: نقول فيها للخريجين ما نبحث عنه من تدريب أو مشروع نهاية الدراسة، مع السيرة الذاتية، ومن يستطيع المساعدة منهم يجيب.`
+      : `أنا على «شبكة ${noms.nomAr}»: نطرح فيها أسئلتنا على الخريجين (الشعبة، التداريب، الحياة بعد المدرسة) ويقدّمون لنا النصائح.`,
     `${deja ? `نحن بالفعل ${n} من دفعة ${promo}. ` : ''}${etu ? 'سجّل مجانًا' : 'انضمّ إلينا مجانًا'}، دفعتك محدَّدة مسبقًا في الرابط:`, lien].join('\n');
   return [`Salut la promo ${promo} 👋`,
-    !etu ? 'Je suis sur le Réseau ENSAM Meknès : entre lauréats, on y aide les étudiants à trouver un stage, un PFE ou un premier emploi, et on s’y retrouve entre camarades.'
-      : demande ? 'Je suis sur le Réseau ENSAM Meknès : on y dit aux lauréats le stage ou le PFE qu’on cherche, CV joint, et ceux qui peuvent aider répondent.'
-      : 'Je suis sur le Réseau ENSAM Meknès : on y pose nos questions aux lauréats (filière, stages, vie après l’école) et ils nous conseillent.',
+    !etu ? `Je suis sur le Réseau ${noms.nom} : entre lauréats, on y aide les étudiants à trouver un stage, un PFE ou un premier emploi, et on s’y retrouve entre camarades.`
+      : demande ? `Je suis sur le Réseau ${noms.nom} : on y dit aux lauréats le stage ou le PFE qu’on cherche, CV joint, et ceux qui peuvent aider répondent.`
+      : `Je suis sur le Réseau ${noms.nom} : on y pose nos questions aux lauréats (filière, stages, vie après l’école) et ils nous conseillent.`,
     `${deja ? `On est déjà ${n} de la promo ${promo}. ` : ''}${etu ? 'Inscris-toi' : 'Rejoins-nous'}, c’est gratuit et ta promo est déjà indiquée :`, lien].join('\n');
 }
 
@@ -928,6 +933,47 @@ export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== e
 // Ce que l'administration écrit sous le contenu d'une autre école (bravo, réponse, vote, offre enregistrée) est de cette
 // école : sans cela, la base lui donnerait celle de l'administration, et les membres de l'école ne le verraient pas
 export const ecoleDuContenu = (me, contenu) => (me?.role === 'admin' && contenu?.ecole && contenu.ecole !== ecoleDe(me) ? { ecole: contenu.ecole } : {});
+// Les noms d'une école pour les textes qui la nomment (titre de l'onglet, marque, carte des lauréats, liens et messages
+// d'invitation) : ceux de sa ligne de la table des écoles (data.ecoles : slug, nom, nom_court, ville, nom_ar). L'ENSAM
+// Meknès garde toujours ses textes d'avant. Une autre école dont la ligne n'est pas (encore) là n'est jamais nommée
+// ENSAM Meknès : « ENSAM », sans ville. nomAr : son nom en arabe, sinon son nom tel qu'il s'écrit.
+export const NOMS_MEKNES = Object.freeze({ slug: ECOLE_DEFAUT, nom: 'ENSAM Meknès', nomAr: 'ENSAM مكناس', ville: 'Meknès', meknes: true });
+const motsDe = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+export function nomsEcole(ecoles, slug) {
+  const s = slug || ECOLE_DEFAUT;
+  if (s === ECOLE_DEFAUT) return NOMS_MEKNES;
+  const e = (ecoles || []).find(x => x?.slug === s) || {};
+  const ville = motsDe(e.ville, 60);
+  const nom = motsDe(e.nom, 120) || [motsDe(e.nom_court, 40) || 'ENSAM', ville].filter(Boolean).join(' ');
+  return Object.freeze({ slug: s, nom, nomAr: motsDe(e.nom_ar, 120) || nom, ville, meknes: false });
+}
+// Les noms de l'école d'un membre (dans l'application : l'onglet, la marque, la carte)
+export const nomsDuMembre = (data, me) => nomsEcole(data?.ecoles, ecoleDe(me));
+// Pour un texte qui sort de l'application (message d'invitation, réussite partagée, affiche) : les noms d'une école ouverte
+// seulement ; une école pas encore ouverte n'y est jamais nommée (son nom attend son accord) : « ENSAM », sans ville
+const ecoleOuverte = (ecoles, slug) => !slug || slug === ECOLE_DEFAUT || (ecoles || []).some(e => e?.slug === slug && e.ouverte === true);
+export const nomsAPartager = (ecoles, slug) => nomsEcole(ecoleOuverte(ecoles, slug) ? ecoles : [], slug);
+// L'école dont la console écrit les messages, les liens et les affiches (Animer, Inviter, Affiches) : celle qu'elle regarde
+// quand elle est ouverte, sinon celle de l'administration (« Toutes les écoles » ; une école pas encore ouverte, dont ni le
+// nom ni les liens ne servent avant son ouverture). ecoles : les lignes de la table des écoles (ctx.ecoles dans la console).
+// autre : ce n'est pas l'école de l'administration ; fermee : la console regarde une école pas encore ouverte.
+export function ecoleDesTextes(ctx) {
+  const ecoles = ctx?.ecoles?.length ? ctx.ecoles : ctx?.data?.ecoles || [];
+  const vue = pourLEcoleVue(ctx).ecole, sienne = ecoleDe(ctx?.me);
+  const slug = vue && ecoleOuverte(ecoles, vue) ? vue : sienne;
+  return { slug, noms: nomsAPartager(ecoles, slug), autre: slug !== sienne, fermee: !!vue && slug !== vue };
+}
+// « de l’ENSAM Meknès » : l'élision devant une voyelle ; sinon « de l’école FST Fès » (jamais « de FST Fès »).
+// apo : l'apostrophe du texte qui l'emploie (’ ou ').
+export function deLEcoleNommee(nom, apo = '’') {
+  const n = nom || 'ENSAM';
+  return `de l${apo}${/^[aeiouyàâäéèêëîïôöûüÿæœ]/i.test(n) ? '' : 'école '}${n}`;
+}
+// Sous la marque de la barre latérale : la ville de l'école du membre (« Meknès · Lauréats & étudiants ») ; sans ville connue,
+// « Lauréats & étudiants » seulement
+export const sousMarque = noms => (noms?.ville ? `${noms.ville} · Lauréats & étudiants` : 'Lauréats & étudiants');
+// Au-dessus de la carte des lauréats (Réseau > Annuaire > Personnes, #reseau/annuaire/carte)
+export const legendeCarte = (noms = NOMS_MEKNES) => `Où travaillent les lauréats ${deLEcoleNommee(noms.nom)}. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.`;
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
 // selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
 export function surListeOfficielle(liste, p, email) {
@@ -1541,15 +1587,16 @@ export function reussitesDuGroupe(data, promo, filiere, now = Date.now(), jours 
 const TROUVE = { fr: { stage: 'un stage', pfe: 'un PFE', etranger: 'un stage à l’étranger', emploi: 'un premier emploi' }, ar: { stage: 'تدريبًا', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريبًا بالخارج', emploi: 'أول وظيفة' } };
 // Le texte d'une réussite, prêt pour WhatsApp. Le prénom seulement si l'étudiant a accepté d'être cité (partage_ok) ;
 // sinon « Quelqu'un de la promo ». Jamais le nom du lauréat (il n'a rien accepté de tel).
-export function texteReussite(pl, etudiant, langue, lien) {
+// noms : ceux de l'école du membre qui partage (nomsEcole) ; l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function texteReussite(pl, etudiant, langue, lien, noms = NOMS_MEKNES) {
   const prenom = pl.partage_ok && etudiant?.full_name ? etudiant.full_name.split(' ')[0] : '';
   const promo = etudiant?.promo, code = filiereCourte(etudiant?.filiere);
   if (langue === 'ar') {
     const qui = prenom || `أحد أفراد دفعة ${promo} (${code})`;
-    return `خبر سار للدفعة ${promo} 🎉\n${qui} حصل على ${TROUVE.ar[pl.type] || TROUVE.ar.stage} لدى ${pl.entreprise}${pl.laureat_id ? '، بفضل خريج من الشبكة' : ''}.\nتبحث أنت أيضًا؟ الخريجون على «شبكة ENSAM مكناس» يساعدون الطلبة:\n${lien}`;
+    return `خبر سار للدفعة ${promo} 🎉\n${qui} حصل على ${TROUVE.ar[pl.type] || TROUVE.ar.stage} لدى ${pl.entreprise}${pl.laureat_id ? '، بفضل خريج من الشبكة' : ''}.\nتبحث أنت أيضًا؟ الخريجون على «شبكة ${noms.nomAr}» يساعدون الطلبة:\n${lien}`;
   }
   const qui = prenom || `Quelqu’un de la promo ${promo} (${code})`;
-  return `Bonne nouvelle pour la promo ${promo} 🎉\n${qui} a décroché ${TROUVE.fr[pl.type] || TROUVE.fr.stage} chez ${pl.entreprise}${pl.laureat_id ? ', grâce à un lauréat du réseau' : ''}.\nTu cherches aussi ? Les lauréats du Réseau ENSAM Meknès aident les étudiants :\n${lien}`;
+  return `Bonne nouvelle pour la promo ${promo} 🎉\n${qui} a décroché ${TROUVE.fr[pl.type] || TROUVE.fr.stage} chez ${pl.entreprise}${pl.laureat_id ? ', grâce à un lauréat du réseau' : ''}.\nTu cherches aussi ? Les lauréats du Réseau ${noms.nom} aident les étudiants :\n${lien}`;
 }
 
 // ---------------------------------------------------------------------------

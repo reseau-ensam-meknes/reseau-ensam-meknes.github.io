@@ -6,7 +6,7 @@
 // jour : la table manque, rien ne s'affiche.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Bouclier, Embleme, Modal, toast, celebrate, injectCSS, lienWhatsApp } from './ui.js';
-import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo, ecoleDe } from './logic.js';
+import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo, ecoleDe, nomsAPartager } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { MessageBtn } from './messages.js';
 import { lienDeMembre, messageInvitation, useCodeInvitation } from './invitation.js';
@@ -171,9 +171,11 @@ function useChiffres(ctx, a) {
 function CarteAmbassadeur({ ctx, a }) {
   const { data, me, store, act } = ctx;
   const langue = getLang() === 'ar' ? 'ar' : 'fr';
-  // Le lien porte le code de l'ambassadeur (invitation nommée)
+  // Le lien porte le code de l'ambassadeur (invitation nommée) et son école ; les messages la nomment (l'ENSAM Meknès : ceux
+  // d'avant ; une école pas encore ouverte n'est pas nommée)
   const code = useCodeInvitation(ctx);
-  const lien = lienDeMembre(a.promo, langue, code);
+  const ecole = ecoleDe(me), noms = nomsAPartager(data.ecoles, ecole);
+  const lien = lienDeMembre(a.promo, langue, code, true, ecole);
   const chiffres = useChiffres(ctx, a);
   const reussites = reussitesDuGroupe(data, a.promo, a.filiere).slice(0, 3);
   const mois = new Date();
@@ -198,7 +200,7 @@ function CarteAmbassadeur({ ctx, a }) {
     <div class="amb-bloc">
       <p class="amb-sous">Le lien de ta promo</p>
       <div class="amb-actions">
-        <a class="btn small tonal" id="amb-wa" href=${lienWhatsApp(messageInvitation(a.promo, langue, lien))} target="_blank" rel="noopener"><${Icon} name="send" size=${16}/> Envoyer sur WhatsApp</a>
+        <a class="btn small tonal" id="amb-wa" href=${lienWhatsApp(messageInvitation(a.promo, langue, lien, undefined, noms))} target="_blank" rel="noopener"><${Icon} name="send" size=${16}/> Envoyer sur WhatsApp</a>
         <button type="button" class="btn small ghost" id="amb-copier" onClick=${copier}><${Icon} name="link" size=${16}/> Copier le lien</button>
       </div>
     </div>
@@ -207,7 +209,7 @@ function CarteAmbassadeur({ ctx, a }) {
       ${reussites.length ? html`<ul class="amb-reussites" role="list">${reussites.map(pl => {
         const e = store.byId('profiles', pl.student_id);
         return html`<li key=${pl.id}><span class="grow"><span translate="no" dir="auto">${pl.entreprise}</span><small>${TYPE[pl.type] || TYPE.stage}${' · '}${timeAgo(pl.confirmed_at || pl.created_at)}${pl.partage_ok ? null : ' · sans nom'}</small></span>
-          <a class="btn tiny ghost amb-partager" href=${lienWhatsApp(texteReussite(pl, e, langue, lienDeMembre(e?.promo || a.promo, langue, code)))} target="_blank" rel="noopener"><${Icon} name="share" size=${14}/> Partager</a></li>`;
+          <a class="btn tiny ghost amb-partager" href=${lienWhatsApp(texteReussite(pl, e, langue, lienDeMembre(e?.promo || a.promo, langue, code, true, ecole), noms))} target="_blank" rel="noopener"><${Icon} name="share" size=${14}/> Partager</a></li>`;
       })}</ul>` : html`<p class="small muted">Quand quelqu’un de ta promo trouve un stage grâce au réseau, sa réussite arrive ici, prête à partager.</p>`}
       <p class="small muted">Seulement les réussites vérifiées des deux côtés. Le prénom n’apparaît que si la personne a accepté d’être citée.</p>
     </div>

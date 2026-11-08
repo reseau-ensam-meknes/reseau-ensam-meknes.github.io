@@ -1,14 +1,16 @@
 // Après build.sh : une petite page par promo, dist/promo/AAAA/ (français) et dist/promo/AAAA/ar/ (arabe).
 // WhatsApp, LinkedIn et Facebook lisent ses balises og sans exécuter de JavaScript : l'aperçu nomme la promo et
 // montre l'entrée dessinée (img/apercu-promo.jpg, outils/generer-apercu.mjs). Une personne, elle, est envoyée
-// tout de suite vers l'application avec ?promo=AAAA (et &lang=ar, et &de=… : le code de qui invite, invitation nommée).
+// tout de suite vers l'application avec ?promo=AAAA (et &lang=ar, et &de=… : le code de qui invite, invitation nommée,
+// et &ecole=… : l'école du lien quand ce n'est pas l'ENSAM Meknès, écrite comme l'accepte ecoleValide). Les textes des
+// pages, eux, ne nomment que l'ENSAM Meknès : aucune page n'est faite pour une autre école.
 // Les promos sont celles qu'accepte le lien d'invitation (regles-entree.js) : la sortie ne dépend pas de la date,
 // la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
 // L'image montre l'entrée de l'école : la description commence donc par dire que le Réseau est indépendant de l'école
 // (WhatsApp n'en montre que le début).
 import fs from 'node:fs'; import path from 'node:path';
-import { PROMO_MIN as PREMIERE, PROMO_MAX as DERNIERE } from '../src/regles-entree.js';
+import { PROMO_MIN as PREMIERE, PROMO_MAX as DERNIERE, ECOLE_MOTIF } from '../src/regles-entree.js';
 const dist = path.resolve(process.argv[2] || 'dist');
 // Adresse publique du site : celle de l'image d'aperçu de page.html (une seule source)
 const page = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
@@ -30,7 +32,7 @@ function html(a, l) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script>var d=/[?&]de=([a-z0-9]{8})(?:&|$)/.exec(location.search);location.replace(${JSON.stringify(vers)}+(d?"&de="+d[1]:"")+location.hash)</script>
+<script>var q=location.search,d=/[?&]de=([a-z0-9]{8})(?:&|$)/.exec(q),e=/[?&]ecole=(${ECOLE_MOTIF})(?:&|$)/.exec(q);location.replace(${JSON.stringify(vers)}+(e?"&ecole="+e[1]:"")+(d?"&de="+d[1]:"")+location.hash)</script>
 <title>${esc(t.titre(a))}</title>
 <meta name="description" content="${esc(t.desc)}">
 <meta name="robots" content="noindex">

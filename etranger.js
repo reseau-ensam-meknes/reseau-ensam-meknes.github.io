@@ -2,7 +2,7 @@
 // Seuls les lauréats dont le profil indique ce pays (et l'administration) écrivent, comme protect_guide() dans la base.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS, Anneau } from './ui.js';
-import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey } from './logic.js';
+import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey, deMonEcole } from './logic.js';
 import { canonPays, codePays, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { getLang, addAR } from './i18n.js';
 import { arCount } from './i18n.js';
@@ -27,7 +27,8 @@ const AIDE = {
 // Une offre ouverte que je peux voir (un étudiant ne voit que les offres de son année)
 const offreVisible = (o, me, saison) => o.status === 'ouverte' && (me.role !== 'etudiant' || matchesMe(o, me, saison));
 
-// Tous les pays connus du réseau : rubriques écrites, lauréats sur place, offres ouvertes
+// Tous les pays connus du réseau : rubriques écrites (le guide est commun à toutes les écoles), lauréats de son école sur
+// place, offres ouvertes
 function indexPays(data, me, saison) {
   const m = new Map();
   const get = raw => {
@@ -36,7 +37,7 @@ function indexPays(data, me, saison) {
     return m.get(k);
   };
   for (const g of data.guide_pays || []) get(g.pays)?.rows.push(g);
-  for (const p of data.profiles) if (p.role === 'laureat' && p.pays) get(p.pays)?.laureats.push(p);
+  for (const p of deMonEcole(data.profiles, me)) if (p.role === 'laureat' && p.pays) get(p.pays)?.laureats.push(p);
   for (const o of data.offers) if (o.pays && offreVisible(o, me, saison)) get(o.pays)?.offres.push(o);
   return m;
 }

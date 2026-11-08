@@ -545,9 +545,10 @@ test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', 
 
 // Un membre déjà connecté sur cet appareil (session gardée), ouvert sur « hash ». push : un navigateur qui peut recevoir
 // des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android. permission : la réponse du membre
-// à la demande du navigateur, qui arrive après « delai » millisecondes ; les demandes sont comptées (window.__demandes)
-async function membre({ hash = '', push = false, permission = 'default', delai = 0 } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+// à la demande du navigateur, qui arrive après « delai » millisecondes ; les demandes sont comptées (window.__demandes) ;
+// langue : celle choisie sur cet appareil ; largeur : celle de l'écran (390 px : un téléphone)
+async function membre({ hash = '', push = false, permission = 'default', delai = 0, langue = 'fr', largeur = 390 } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (push) await ctx.addInitScript(([permission, delai]) => {
     const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
@@ -566,12 +567,12 @@ async function membre({ hash = '', push = false, permission = 'default', delai =
     };
     if (!('PushManager' in window)) window.PushManager = function PushManager() {};
   }, [permission, delai]);
-  await ctx.addInitScript(uid => {
+  await ctx.addInitScript(([uid, langue]) => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
-    localStorage.setItem('ensam-lang', 'fr');
+    localStorage.setItem('ensam-lang', langue);
     const now = Math.floor(Date.now() / 1000);
     localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
-  }, UID);
+  }, [UID, langue]);
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   await page.goto(site.adresse + hash);
@@ -2018,6 +2019,116 @@ test('membre en ligne : le lien de « Fais venir ta promo » porte son code ; «
   await m.page.waitForSelector('#promo-wa', { timeout: 15000 }); await m.page.waitForTimeout(400);
   assert.doesNotMatch(await m.page.getAttribute('#promo-wa', 'href'), /de%3D/);
   assert.equal(await m.page.locator('#promo-invites').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Écoles : la page d'entrée d'un lien d'école (?ecole=) demande les chiffres et les fondateurs de cette école-là ; un membre
+// d'une autre école que l'ENSAM Meknès voit son école dans l'onglet, la marque, la carte et le lien de sa promo
+// ---------------------------------------------------------------------------
+const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', couleur: '#225588', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+const OMAR = { rang: 1, type: 'offre', at: '2026-10-23T09:12:00Z', nom: 'Omar Alami', filiere: 'Génie Industriel', promo: 2019, photo: null, verifie: true, id: null };
+const lignesEntree = page => page.$$eval('.auth-chiffres span', x => x.map(e => e.textContent));
+
+test('entrée par le lien d’une école (?ecole=) : ses chiffres et ses fondateurs à elle ; rien, jamais ceux de l’ENSAM Meknès, si la base ne rend rien', async () => {
+  const corps = nom => site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + nom).map(a => a.corps);
+  // La base de demain : {} pour l'ENSAM Meknès (comme avant) ; l'école demandée sinon (null : pas ouverte, ou inconnue)
+  const PAR_ECOLE = {
+    'ensa-fes': [{ laureats: 4, entreprises: 2, promos: 1 }, { max: 25, total: 1, places: 24, mon_choix: null, fondateurs: [OMAR] }],
+    'fst-settat': [{ laureats: 0, entreprises: 0, promos: 0 }, { max: 25, total: 0, places: 25, mon_choix: null, fondateurs: [] }],
+  };
+  const regler = (ancienne = false) => {
+    site.rpc.chiffres_publics = c => (!c?.p_ecole ? { laureats: 39, entreprises: 19, promos: 14 } : ancienne ? undefined : PAR_ECOLE[c.p_ecole]?.[0] ?? null);
+    site.rpc.fondateurs_publics = c => (!c?.p_ecole ? reponse()(false) : ancienne ? undefined : PAR_ECOLE[c.p_ecole]?.[1] ?? null);
+  };
+  regler();
+  // Le lien d'une école ouverte : ses chiffres, son fondateur ; chaque demande porte l'école du lien
+  let s = await visiteur({ query: '?ecole=ensa-fes&promo=2019', largeur: 390, hauteur: 844 });
+  await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+  assert.deepEqual(await lignesEntree(s.page), ['4 lauréats', '2 entreprises', '1 promo']);
+  await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+  assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Omar Alami']);
+  assert.equal(await s.page.locator('.fd-public .fd-totaux').innerText(), '1 membre fondateur · 24 places restantes');
+  await s.app(); await s.page.waitForTimeout(400);
+  assert.deepEqual(await lignesEntree(s.page), ['4 lauréats', '2 entreprises', '1 promo'], 'l’application reprend les chiffres de l’école');
+  for (const nom of ['chiffres_publics', 'fondateurs_publics']) {
+    const l = corps(nom);
+    assert.ok(l.length && l.every(c => JSON.stringify(c) === '{"p_ecole":"ensa-fes"}'), `${nom} : l’école du lien, jamais {} (${JSON.stringify(l)})`);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Pas encore ouverte (la base rend null), inconnue (null), ouverte sans personne (zéro), ou une base d'avant qui ne
+  // connaît pas p_ecole (404) : ni chiffres ni fondateurs ; jamais ceux de l'ENSAM Meknès à la place
+  for (const [ecole, ancienne] of [['ecole-exemple', false], ['ensa-oujda', false], ['fst-settat', false], ['ensa-fes', true]]) {
+    site.vider(); regler(ancienne);
+    s = await visiteur({ query: `?ecole=${ecole}`, largeur: 390, hauteur: 844 });
+    await s.app(); await s.page.waitForTimeout(600);
+    const quoi = `${ecole}${ancienne ? ' (base d’avant)' : ''}`;
+    assert.equal(await s.page.locator('.auth-chiffres span').count(), 0, quoi);
+    assert.equal(await s.page.locator('.fd-public').count(), 0, quoi);
+    assert.doesNotMatch(await s.page.locator('#entree').innerText(), /39 lauréats|Hajeb|Sedki|membres? fondateurs?/, quoi);
+    for (const nom of ['chiffres_publics', 'fondateurs_publics']) {
+      const l = corps(nom);
+      assert.ok(l.length && l.every(c => c?.p_ecole === ecole), `${nom} ${quoi} : ${JSON.stringify(l)}`);
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Sans lien d'école, ou le lien de l'ENSAM Meknès : la demande d'avant ({}), ses chiffres et ses fondateurs
+  for (const query of ['', '?ecole=ensam-meknes']) {
+    site.vider(); regler();
+    s = await visiteur({ query, largeur: 390, hauteur: 844 });
+    await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+    assert.deepEqual(await lignesEntree(s.page), ['39 lauréats', '19 entreprises', '14 promos']);
+    await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+    assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Abderrahman Hajeb', 'Hamza Sedki']);
+    for (const nom of ['chiffres_publics', 'fondateurs_publics']) assert.ok(corps(nom).length && corps(nom).every(c => JSON.stringify(c) === '{}'), `${nom} ${query}`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+for (const langue of ['fr', 'ar']) test(`membre en ligne d’une autre école (${langue}) : l’onglet, la marque, la carte et le lien de sa promo disent son école ; l’ENSAM Meknès comme avant`, async () => {
+  const ar = langue === 'ar';
+  site.inscrits.push({ ...ETUDIANT, ecole: 'ensa-fes', consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.ecoles = [FES];
+  site.rpc.mon_code_invitation = (_c, m) => (m ? 'salma234' : undefined);
+  let m = await membre({ hash: '#parcours', langue, largeur: 1280 });
+  await m.page.waitForFunction(() => /ecole%3Densa-fes%26de%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 15000 });
+  let texte = new URL(await m.page.getAttribute('#promo-wa', 'href')).searchParams.get('text');
+  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}?ecole=ensa-fes&de=salma234`), texte);
+  assert.match(texte, ar ? /أنا على «شبكة ENSA فاس»:/ : /Je suis sur le Réseau ENSA Fès :/);
+  assert.doesNotMatch(texte, /Meknès|مكناس/);
+  assert.match(await m.page.title(), /^(\(\d+\) )?Réseau ENSA Fès$/);
+  assert.equal(await m.page.locator('.side .brand-txt span').innerText(), ar ? 'فاس · الخريجون والطلبة' : 'Fès · Lauréats & étudiants');
+  const brand = await m.page.locator('.side .brand-txt span').boundingBox(), side = await m.page.locator('.side .brand').boundingBox();
+  assert.ok(brand.x >= side.x - 1 && brand.x + brand.width <= side.x + side.width + 1, 'la marque tient dans la barre latérale');
+  await m.page.evaluate(() => { location.hash = '#reseau/annuaire/carte'; });
+  await m.page.waitForSelector('.sub-page .map', { timeout: 15000 });
+  assert.equal(await m.page.locator('.sub-page > p.muted.small').first().innerText(), ar
+    ? 'أين يعمل خريجو ENSA فاس. انقر على نقطة لترى من هناك. بالأزرق المغرب، وبالبرتقالي الخارج.'
+    : 'Où travaillent les lauréats de l’ENSA Fès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.');
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET'), 'la ligne de son école est lue');
+  if (ar) assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Fès|Lauréats|Où travaillent|Réseau/.test(x))), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Un membre de l'ENSAM Meknès : tout comme avant (son école n'est pas dans le lien, les textes d'avant)
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.ecoles = [{ slug: 'ensam-meknes', nom: 'ENSAM Meknès', ouverte: true, created_at: '2026-10-21T00:00:00Z' }, FES];
+  site.rpc.mon_code_invitation = (_c, mm) => (mm ? 'salma234' : undefined);
+  m = await membre({ hash: '#parcours', langue, largeur: 1280 });
+  await m.page.waitForFunction(() => /de%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 15000 });
+  texte = new URL(await m.page.getAttribute('#promo-wa', 'href')).searchParams.get('text');
+  assert.ok(texte.endsWith(`/promo/${S + 1}/${ar ? 'ar/' : ''}?de=salma234`), texte);
+  assert.match(texte, ar ? /أنا على «شبكة ENSAM مكناس»:/ : /Je suis sur le Réseau ENSAM Meknès :/);
+  assert.match(await m.page.title(), /^(\(\d+\) )?Réseau ENSAM Meknès$/);
+  assert.equal(await m.page.locator('.side .brand-txt span').innerText(), ar ? 'مكناس · الخريجون والطلبة' : 'Meknès · Lauréats & étudiants');
+  await m.page.evaluate(() => { location.hash = '#reseau/annuaire/carte'; });
+  await m.page.waitForSelector('.sub-page .map', { timeout: 15000 });
+  assert.equal(await m.page.locator('.sub-page > p.muted.small').first().innerText(), ar
+    ? 'أين يعمل خريجو ENSAM مكناس. انقر على نقطة لترى من هناك. بالأزرق المغرب، وبالبرتقالي الخارج.'
+    : 'Où travaillent les lauréats de l’ENSAM Meknès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.');
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });

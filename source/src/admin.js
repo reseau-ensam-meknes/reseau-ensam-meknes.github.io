@@ -6,7 +6,7 @@
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue,
+import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue, ecoleDesTextes,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { SanteNotifsAdmin } from './admin-notifs.js';
 import { DefisAdmin } from './saison.js';
@@ -128,8 +128,10 @@ export function AdminPage(ctx) {
   useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
   const vue = donneesDeLEcole(data, ecole);
   // Les rubriques reçoivent l'école regardée (ecoleConsole, '' : toutes), la liste des écoles et leur nom : ce qu'elles écrivent
-  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer, Affiches et les liens d'invitation gardent tout le réseau :
-  // leurs textes, affiches et rapports sont ceux du Réseau ENSAM Meknès (ceux d'une autre école attendent son accord pour le nom).
+  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer, Affiches et les liens d'invitation gardent tout le réseau.
+  // Les messages et les liens d'Animer et d'Inviter, l'affiche et le mode événement sont ceux de l'école regardée quand elle est
+  // ouverte (ecoleDesTextes) ; avant son ouverture (son nom attend son accord), et pour les Partenaires, le rapport, les offres
+  // récentes et les visuels, ceux du Réseau ENSAM Meknès.
   const commun = { ecoleConsole: ecole, ecoles, nomEcole: nomDe };
   const c = { ...ctx, ...commun, data: vue };
   const tout = { ...ctx, ...commun };
@@ -155,17 +157,17 @@ export function AdminPage(ctx) {
       <div class="cs-main">
         ${rubrique === '' ? html`<${TableauDeBord} ctx=${c} comptes=${comptes} items=${items}/>` : null}
         ${rubrique === 'traiter' ? html`<${ATraiter} ctx=${c} items=${items} comptes=${comptes}/>` : null}
-        ${rubrique === 'animer' ? html`<${NoteTextesMeknes} ctx=${c}/><${AnimerAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'animer' ? html`<${NoteTextesMeknes} ctx=${c} rubrique="animer"/><${AnimerAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'agenda' ? html`<${AgendaAdmin} ctx=${c}/>` : null}
-        ${rubrique === 'inviter' ? html`<${NoteTextesMeknes} ctx=${c}/><${InvitationsAdmin} ctx=${tout}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'inviter' ? html`<${NoteTextesMeknes} ctx=${c} rubrique="inviter"/><${InvitationsAdmin} ctx=${tout}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
         ${rubrique === 'membres' ? html`<${Membres} ctx=${c} comptes=${comptes}/>` : null}
         ${rubrique === 'contenus' ? html`<${Contenus} ctx=${c}/>` : null}
         ${rubrique === 'moderation' ? html`<${Moderation} ctx=${c}/>` : null}
         ${rubrique === 'liste' ? html`<${ListeOfficielle} key=${'liste-' + ecole} ctx=${c}/>` : null}
         ${rubrique === 'ecoles' ? html`<${EcolesAdmin} ctx=${tout}/>` : null}
-        ${rubrique === 'partenaires' ? html`<${NoteTextesMeknes} ctx=${c}/><${PartenairesAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'partenaires' ? html`<${NoteTextesMeknes} ctx=${c} rubrique="partenaires"/><${PartenairesAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${c}/>` : null}
-        ${rubrique === 'outils' ? html`<${NoteTextesMeknes} ctx=${c}/><${OutilsAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'outils' ? html`<${NoteTextesMeknes} ctx=${c} rubrique="outils"/><${OutilsAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'reglages' ? html`<${Reglages} ctx=${c}/>` : null}
       </div>
     </div>
@@ -180,10 +182,16 @@ function EcoleTag({ ctx, slug }) {
 }
 // Animer, Partenaires, Affiches, liens d'invitation : quand la console regarde une autre école, une ligne dit que ces textes
 // sont ceux de l'ENSAM Meknès
-// (aussi sous « Toutes les écoles », où ces chiffres ne couvrent que l'ENSAM Meknès ; inutile quand la console la regarde)
-function NoteTextesMeknes({ ctx }) {
+// (aussi sous « Toutes les écoles », où ces chiffres ne couvrent que l'ENSAM Meknès ; inutile quand la console la regarde).
+// Une autre école ouverte a ses messages et ses liens dans Animer et Inviter (rien à dire), son affiche et son mode
+// événement dans Affiches (la ligne le dit).
+function NoteTextesMeknes({ ctx, rubrique }) {
   if (!plusieursEcoles(ctx) || ctx.ecoleConsole === ECOLE_DEFAUT) return null;
-  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.</span></p>`;
+  const autre = ecoleDesTextes(ctx).autre;
+  if (autre && (rubrique === 'animer' || rubrique === 'inviter')) return null;
+  const texte = autre && rubrique === 'outils' ? 'Ici, l’affiche et le mode événement sont ceux de l’école choisie ; le rapport, les offres récentes et les visuels restent ceux du Réseau ENSAM Meknès.'
+    : 'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.';
+  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>${texte}</span></p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +872,7 @@ addAR({
   'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).': 'قبل استيراد لائحة هذه المدرسة، أضفها إلى ملف CNDP: ضع علامة على الخانة في تتبّعها (قسم المدارس).',
   'Ouvrir Écoles': 'فتح المدارس',
   'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.': 'هنا، النصوص والملصقات والأرقام هي دائمًا تلك الخاصة بشبكة ENSAM مكناس، مهما كانت المدرسة المختارة.',
+  'Ici, l’affiche et le mode événement sont ceux de l’école choisie ; le rapport, les offres récentes et les visuels restent ceux du Réseau ENSAM Meknès.': 'هنا، الملصق ووضع الحدث خاصّان بالمدرسة المختارة؛ أما التقرير والعروض الأخيرة والصور فتبقى خاصة بشبكة ENSAM مكناس.',
 }, [
   [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
 ]);

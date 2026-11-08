@@ -4,7 +4,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, toast, injectCSS, lienWhatsApp } from './ui.js';
 import { addAR, getLang, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, ecoleDe, ECOLE_DEFAUT, lienAvecCode, codeInvitationValide, ligneInvites } from './logic.js';
+import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, ecoleDe, lienAvecCode, codeInvitationValide, ligneInvites, nomsAPartager, NOMS_MEKNES, deLEcoleNommee, ecoleDesTextes } from './logic.js';
 import { roleDePromo, promoValide as valide } from './regles-entree.js';
 
 // Lire le lien, garder la promo et le rôle choisi : la page d'entrée s'en charge (elle s'affiche avant le reste du site)
@@ -12,12 +12,13 @@ export { lireInvitation, promoInvitee, ecoleInvitee, oublierInvitation, retenirR
 export { roleDePromo };
 
 // Lien d'une promo : sa petite page d'aperçu (page = true) nomme la promo dans WhatsApp, puis ouvre le site avec ?promo=
-export const lienInvitation = (promo, langue = 'fr', page = true) => lienPromo(promo, langue, page, location.href);
+// ecole : celle du membre qui partage, ou celle que regarde la console ; une autre que l'ENSAM Meknès est dite dans le lien
+export const lienInvitation = (promo, langue = 'fr', page = true, ecole) => lienPromo(promo, langue, page, location.href, ecole);
 
 // Invitation nommée : le lien de promo d'un membre porte son code (&de=…, la page d'aperçu le transmet). La page d'entrée
 // dit « Invitation de Nadia · promo 2019 », et l'inscription retient qui a invité. Sans code (base pas encore à jour,
 // pas de réseau, administration), le lien part sans : il marche pareil.
-export const lienDeMembre = (promo, langue, code, page = true) => lienAvecCode(lienInvitation(promo, langue, page), code);
+export const lienDeMembre = (promo, langue, code, page = true, ecole) => lienAvecCode(lienInvitation(promo, langue, page, ecole), code);
 export function useCodeInvitation(ctx) {
   const { store, me } = ctx;
   const [code, setCode] = useState(() => (codeInvitationValide(me?.code_invitation) ? me.code_invitation : null));
@@ -45,19 +46,21 @@ function useInvites(ctx) {
 // Message prêt à coller dans le groupe WhatsApp de la promo. Une seule chose à faire en arrivant :
 // un étudiant de 3A à 5A dit aux lauréats ce qu'il cherche ; en 1re et 2e année, il demande un conseil ;
 // un lauréat publie une offre ou aide un étudiant.
-export function messageInvitation(promo, langue, lien, saison = seasonOf()) {
+// noms : ceux de l'école du lien (nomsEcole) ; l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function messageInvitation(promo, langue, lien, saison = seasonOf(), noms = NOMS_MEKNES) {
   const etu = roleDePromo(promo, saison) === 'etudiant';
   const demande = etu && niveauOf({ promo }, saison) >= 3;
+  const { nom, nomAr } = noms, deL = deLEcoleNommee(nom, "'");
   const fr = !etu
-    ? `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : la plateforme gratuite des lauréats et des étudiants de l'ENSAM Meknès.\nUn étudiant de ta filière cherche peut-être un stage ou un PFE chez toi : tu peux publier une offre en 30 secondes, ou lui donner 20 minutes de conseil, quand tu as le temps.\nInscris-toi avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nMerci de le faire passer aux lauréats de ta promo 🙏`
+    ? `Salut la promo ${promo} 👋\nLe Réseau ${nom} est ouvert : la plateforme gratuite des lauréats et des étudiants ${deL}.\nUn étudiant de ta filière cherche peut-être un stage ou un PFE chez toi : tu peux publier une offre en 30 secondes, ou lui donner 20 minutes de conseil, quand tu as le temps.\nInscris-toi avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nMerci de le faire passer aux lauréats de ta promo 🙏`
     : demande
-      ? `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : une plateforme gratuite entre étudiants et lauréats de l'ENSAM Meknès.\nTu cherches un stage ou un PFE ? Dis aux lauréats de ta filière ce que tu cherches, CV joint : ceux qui peuvent t'aider te répondent sur la plateforme. Tu peux aussi demander 20 minutes de conseil (CV, entretien, stage à l'étranger).\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`
-      : `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : une plateforme gratuite entre étudiants et lauréats de l'ENSAM Meknès.\nUne question sur la filière à choisir, les stages ou la vie après l'école ? Un lauréat te répond en 20 minutes de visio.\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`;
+      ? `Salut la promo ${promo} 👋\nLe Réseau ${nom} est ouvert : une plateforme gratuite entre étudiants et lauréats ${deL}.\nTu cherches un stage ou un PFE ? Dis aux lauréats de ta filière ce que tu cherches, CV joint : ceux qui peuvent t'aider te répondent sur la plateforme. Tu peux aussi demander 20 minutes de conseil (CV, entretien, stage à l'étranger).\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`
+      : `Salut la promo ${promo} 👋\nLe Réseau ${nom} est ouvert : une plateforme gratuite entre étudiants et lauréats ${deL}.\nUne question sur la filière à choisir, les stages ou la vie après l'école ? Un lauréat te répond en 20 minutes de visio.\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`;
   const ar = !etu
-    ? `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: المنصة المجانية لخريجي وطلبة ENSAM مكناس.\nربما يبحث طالب من شعبتك عن تدريب أو مشروع نهاية الدراسة عندك: يمكنك نشر عرض في 30 ثانية، أو منحه 20 دقيقة من النصح متى توفّر لك الوقت.\nسجّل عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشكرًا على مشاركته مع خريجي دفعتك 🙏`
+    ? `مرحبا دفعة ${promo} 👋\n«شبكة ${nomAr}» مفتوحة الآن: المنصة المجانية لخريجي وطلبة ${nomAr}.\nربما يبحث طالب من شعبتك عن تدريب أو مشروع نهاية الدراسة عندك: يمكنك نشر عرض في 30 ثانية، أو منحه 20 دقيقة من النصح متى توفّر لك الوقت.\nسجّل عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشكرًا على مشاركته مع خريجي دفعتك 🙏`
     : demande
-      ? `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ENSAM مكناس.\nتبحث عن تدريب أو مشروع نهاية الدراسة؟ قل لخريجي شعبتك ما تبحث عنه مع سيرتك الذاتية: من يستطيع مساعدتك يجيبك على المنصة. يمكنك أيضًا طلب 20 دقيقة من النصح (السيرة الذاتية، المقابلة، التدريب بالخارج).\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`
-      : `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ENSAM مكناس.\nسؤال عن الشعبة التي ستختارها أو التداريب أو الحياة بعد المدرسة؟ يجيبك خريج في 20 دقيقة عبر الفيديو.\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`;
+      ? `مرحبا دفعة ${promo} 👋\n«شبكة ${nomAr}» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ${nomAr}.\nتبحث عن تدريب أو مشروع نهاية الدراسة؟ قل لخريجي شعبتك ما تبحث عنه مع سيرتك الذاتية: من يستطيع مساعدتك يجيبك على المنصة. يمكنك أيضًا طلب 20 دقيقة من النصح (السيرة الذاتية، المقابلة، التدريب بالخارج).\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`
+      : `مرحبا دفعة ${promo} 👋\n«شبكة ${nomAr}» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ${nomAr}.\nسؤال عن الشعبة التي ستختارها أو التداريب أو الحياة بعد المدرسة؟ يجيبك خريج في 20 دقيقة عبر الفيديو.\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`;
   return langue === 'ar' ? ar : langue === 'fr' ? fr : `${fr}\n\n${ar}`;
 }
 
@@ -90,7 +93,8 @@ export function FaisVenirPromo({ ctx, geste = false }) {
   const invites = useInvites(ctx);
   if (!['laureat', 'etudiant'].includes(me?.role) || !valide(Number(me.promo))) return null;
   const langue = getLang() === 'ar' ? 'ar' : 'fr';
-  const href = lienWhatsApp(messageCamarade(me, langue, lienDeMembre(me.promo, langue, code), inscritsDeLaPromo(data.profiles, me.promo), saison));
+  // Le lien et le message disent l'école du membre (l'ENSAM Meknès : ceux d'avant ; une école pas encore ouverte n'est pas nommée)
+  const href = lienWhatsApp(messageCamarade(me, langue, lienDeMembre(me.promo, langue, code, true, ecoleDe(me)), inscritsDeLaPromo(data.profiles, me.promo), saison, nomsAPartager(data.ecoles, ecoleDe(me))));
   if (geste) return html`<a class="pa-geste" id="pa-promo" href=${href} target="_blank" rel="noopener">
       <span class="pa-geste-ico"><${Icon} name="people" size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>Fais venir ta promo</strong><span class="pa-duree">30 s</span></span><span class="small muted">Le message et le lien de ta promo sont prêts pour votre groupe WhatsApp.</span></span>
@@ -112,10 +116,12 @@ async function copier(txt, fait) {
 
 // Administration > Inviter : une ligne par promo, avec le lien, le message et le bouton WhatsApp
 // Une promo sans aucun inscrit garde le lien simple ?promo= : son aperçu ne dirait pas « tes camarades sont sur le Réseau ».
-// Les liens et les messages sont ceux du Réseau ENSAM Meknès : ses inscrits seuls comptent, quelle que soit l'école regardée.
+// Les liens et les messages sont ceux de l'école que regarde la console quand elle est ouverte, sinon ceux de l'école de
+// l'administration (ecoleDesTextes) : ses inscrits seuls comptent.
 export function InvitationsAdmin({ ctx }) {
   const { saison } = ctx;
-  const inscrites = new Set(ctx.data.profiles.filter(p => ecoleDe(p) === ECOLE_DEFAUT).map(p => Number(p.promo)));
+  const { slug: ecole, noms } = ecoleDesTextes(ctx);
+  const inscrites = new Set(ctx.data.profiles.filter(p => ecoleDe(p) === ecole).map(p => Number(p.promo)));
   const [langue, setLangue] = useState(getLang() === 'ar' ? 'ar' : 'fr');
   const [autres, setAutres] = useState([]);
   const [saisie, setSaisie] = useState('');
@@ -131,8 +137,8 @@ export function InvitationsAdmin({ ctx }) {
     setApercu(n); setSaisie('');
   };
   const ligne = promo => {
-    const lien = lienInvitation(promo, langue === 'ar' ? 'ar' : 'fr', inscrites.has(promo));
-    const msg = messageInvitation(promo, langue, lien, saison);
+    const lien = lienInvitation(promo, langue === 'ar' ? 'ar' : 'fr', inscrites.has(promo), ecole);
+    const msg = messageInvitation(promo, langue, lien, saison, noms);
     const n = niveauOf({ promo }, saison);
     const qui = n <= 5 ? NIVEAUX[n].short : n === 6 ? 'Jeunes diplômés' : 'Lauréats';
     return html`<li class=${'inv-row' + (apercu === promo ? ' on' : '')} key=${promo}>
@@ -158,7 +164,7 @@ export function InvitationsAdmin({ ctx }) {
     </div>
     <div class="panel">
       <div class="section-head"><h2 class="h-ico"><${Icon} name="eye"/> Message pour la promo <span class="mono">${apercu}</span></h2></div>
-      <pre class="inv-msg" dir="auto" translate="no">${messageInvitation(apercu, langue, lienInvitation(apercu, langue === 'ar' ? 'ar' : 'fr', inscrites.has(apercu)), saison)}</pre>
+      <pre class="inv-msg" dir="auto" translate="no">${messageInvitation(apercu, langue, lienInvitation(apercu, langue === 'ar' ? 'ar' : 'fr', inscrites.has(apercu), ecole), saison, noms)}</pre>
     </div>`;
 }
 

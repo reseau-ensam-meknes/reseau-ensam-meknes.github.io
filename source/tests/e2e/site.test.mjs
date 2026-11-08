@@ -10058,3 +10058,131 @@ test('premiers pas masqués : le petit mot renvoie à « Moi », où « Comment 
     await s.ctx.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Écoles : la console qui regarde une autre école ouverte écrit ses messages, ses liens et son affiche ; le Réseau cache
+// l'Agenda et le guide de l'étranger avec le même filtre que leur page ; un lien de promo d'une autre école la fait suivre
+// ---------------------------------------------------------------------------
+// L'Institut exemple (créé dans la démo), ouvert : la troisième condition du suivi cochée, puis « Ouvrir le réseau »
+async function ouvrirInstitut(s) {
+  const slug = await deuxiemeEcole(s);
+  const suivi = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  await suivi.locator('.sv-check').nth(2).click(); await s.page.waitForTimeout(200);
+  await s.page.click(`#ec-ouvrir-${slug}`); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator(`.ec-reseau[data-slug="${slug}"]`).innerText(), /Ouvert/);
+  return slug;
+}
+const message = (s, id) => s.page.inputValue(`#${id} textarea.adm-msg`);
+
+test('console · une autre école ouverte : Animer et Inviter écrivent ses messages et ses liens (&ecole=), Affiches son affiche ; Partenaires et l’ENSAM Meknès comme avant', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const slug = await ouvrirInstitut(s);
+  assert.equal(slug, 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', slug); await s.page.waitForTimeout(200);
+  // Animer : plus de note ; le résumé, le merci et les fondateurs nomment l'école et portent son lien, en français et en arabe
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  const resume = await message(s, 'adm-resume');
+  assert.match(resume, /^✅ Cette semaine dans le Réseau Institut exemple\n/);
+  assert.match(resume, /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-merci'), /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-fondateurs'), /^⭐ Membres fondateurs du Réseau Institut exemple\n[\s\S]*\?ecole=institut-exemple$/);
+  await s.page.locator('#adm-resume-langue button[lang="ar"]').click(); await s.page.waitForTimeout(150);
+  assert.match(await message(s, 'adm-resume'), /^✅ هذا الأسبوع في شبكة Institut exemple\n[\s\S]*\?lang=ar&ecole=institut-exemple$/);
+  for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+  // Inviter : les liens de chaque promo et le message
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  const liens = await s.page.locator('.inv-link').allInnerTexts();
+  assert.ok(liens.length > 5 && liens.every(l => /[?&]ecole=institut-exemple$/.test(l)), liens.join(' | '));
+  const msg = await s.page.locator('.inv-msg').innerText();
+  assert.match(msg, /Le Réseau Institut exemple est ouvert : une plateforme gratuite entre étudiants et lauréats de l'Institut exemple\.\n[\s\S]*\?promo=\d{4}&ecole=institut-exemple\n/);
+  assert.doesNotMatch(msg, /Meknès|مكناس/);
+  // Partenaires : leurs textes restent ceux de l'ENSAM Meknès, la note le dit toujours
+  await s.aller('admin/partenaires');
+  assert.match(await s.page.locator('.cs-note-ecole').innerText(), /toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie/);
+  // Affiches : l'affiche et le mode événement sont ceux de l'école ; la note dit ce qui reste à l'ENSAM Meknès
+  await s.aller('admin/outils'); await s.page.waitForSelector('.affiche');
+  assert.equal(await s.page.locator('.cs-note-ecole').innerText(), 'Ici, l’affiche et le mode événement sont ceux de l’école choisie ; le rapport, les offres récentes et les visuels restent ceux du Réseau ENSAM Meknès.');
+  assert.deepEqual(await s.page.locator('.affiche .af-marque span').allInnerTexts(), ['Réseau Institut exemple', 'شبكة Institut exemple']);
+  assert.match(await s.page.locator('.affiche').innerText(), /Rejoins le Réseau Institut exemple/);
+  assert.match(await s.page.locator('.affiche .af-url').innerText(), /ecole=institut-exemple$/);
+  assert.equal(await s.debordement(), 0);
+  // Retour à l'ENSAM Meknès : ses textes et ses liens d'avant, sans &ecole=
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.match(await message(s, 'adm-resume'), /^✅ Cette semaine dans le Réseau ENSAM Meknès\n/);
+  assert.doesNotMatch(await message(s, 'adm-resume'), /ecole=/);
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.ok((await s.page.locator('.inv-link').allInnerTexts()).every(l => !/ecole=/.test(l)));
+  assert.match(await s.page.locator('.inv-msg').innerText(), /Le Réseau ENSAM Meknès est ouvert/);
+  await s.aller('admin/outils'); await s.page.waitForSelector('.affiche');
+  assert.deepEqual(await s.page.locator('.affiche .af-marque span').allInnerTexts(), ['Réseau ENSAM Meknès', 'شبكة ENSAM مكناس']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Réseau : l’onglet Agenda et le guide de l’étranger se montrent avec le filtre de leur page (école du membre, son rôle)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const onglets = () => s.page.locator('.reseau-onglets [role="tab"]').allInnerTexts();
+  const guide = async () => { await s.aller('reseau/entraide'); return s.page.locator('#gp-entree').count(); };
+  const changer = f => s.page.evaluate(f).then(() => s.page.waitForTimeout(250));
+  await s.comme('Salma'); await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Agenda', 'Entraide', 'Annuaire'], 'comme avant');
+  assert.equal(await guide(), 1);
+  // Les événements d'une autre école seulement : l'Agenda de Salma serait vide, son onglet ne se montre pas
+  await changer(() => { const d = window.__demo; window.__evts = d.data.evenements; d.data.evenements = d.data.evenements.map(e => ({ ...e, ecole: 'institut-exemple' })); d.emit(); });
+  await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Entraide', 'Annuaire']);
+  // Un événement de son école, pour les lauréats seulement : pas d'Agenda pour l'étudiante, son Agenda pour Youssef
+  await changer(() => { const d = window.__demo; d.data.evenements = [{ ...window.__evts[0], ecole: 'ensam-meknes', public: 'laureats' }]; d.emit(); });
+  await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Entraide', 'Annuaire']);
+  await s.comme('Youssef'); await s.aller('reseau/groupes');
+  assert.deepEqual(await onglets(), ['Groupes', 'Agenda', 'Entraide', 'Annuaire']);
+  await s.aller('reseau/agenda');
+  assert.equal(await s.page.locator('.reseau-onglets [aria-selected="true"]').innerText(), 'Agenda');
+  // Le guide de l'étranger sans aucune rubrique écrite : il se montre s'il y a des lauréats de son école à l'étranger
+  await changer(() => { const d = window.__demo; window.__guide = d.data.guide_pays; d.data.guide_pays = []; d.emit(); });
+  await s.comme('Salma');
+  assert.equal(await guide(), 1, 'des lauréats de l’ENSAM Meknès à l’étranger');
+  // Une étudiante d'une autre école : aucun lauréat de son école à l'étranger, pas de guide ; le guide écrit, commun à toutes
+  // les écoles, se montre dès qu'il a une rubrique
+  await changer(() => window.__demo.update('profiles', window.__demo.me.id, { ecole: 'institut-exemple' }));
+  assert.equal(await guide(), 0);
+  await s.aller('reseau/etranger');
+  assert.equal(await s.page.locator('.gp-grid').count(), 0, 'l’adresse du guide ouvre l’Entraide');
+  await changer(() => { const d = window.__demo; d.data.guide_pays = window.__guide; d.emit(); });
+  assert.equal(await guide(), 1);
+  await s.aller('reseau/etranger'); await s.page.waitForSelector('.gp-grid');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien de promo d’une autre école : la page d’aperçu, puis le service worker, font suivre l’école et le code jusqu’à l’entrée', async () => {
+  const lus = page => page.evaluate(() => ['ensam-invite-promo', 'ensam-invite-ecole', 'ensam-invite-de'].map(k => localStorage.getItem(k)));
+  // Sans service worker : le script de la page d'aperçu
+  let s = await ouvrir();
+  await s.page.goto(adresse + 'promo/2019/?ecole=ensa-fes&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await lus(s.page), ['2019', 'ensa-fes', 'nadia219']);
+  // Une école mal écrite ne suit pas
+  await s.page.evaluate(() => localStorage.removeItem('ensam-invite-ecole'));
+  await s.page.goto(adresse + 'promo/2019/ar/?ecole=ENSA%3Cx%3E&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.deepEqual(await lus(s.page), ['2019', null, 'nadia219']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Service worker actif : la redirection qu'il fait garde aussi l'école
+  s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.goto(adresse + 'promo/2019/ar/?ecole=ensa-fes&de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.deepEqual(await lus(s.page), ['2019', 'ensa-fes', 'nadia219']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

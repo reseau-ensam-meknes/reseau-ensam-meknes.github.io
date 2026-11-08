@@ -8,6 +8,8 @@
 // tables : d'autres lignes rendues telles quelles (mentorats, propositions…).
 // rpc : d'autres fonctions de la base, par nom : (corps, membre) => réponse (undefined : la base n'a pas la fonction) ;
 // membre dit si l'appel porte le jeton d'un membre connecté plutôt que la clé publique. Vidé avant chaque test, comme tables.
+// rpc.chiffres_publics et rpc.fondateurs_publics, quand un test les donne, passent avant les réponses fixes (chiffres,
+// fondateurs) : par exemple selon l'école demandée (corps.p_ecole) ; null : la base répond « rien » (200, null).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,6 +71,11 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
           const jeton = (q.headers.authorization || '').replace(/^Bearer\s+/i, '');
           let p = null; try { p = JSON.parse(Buffer.from(jeton.split('.')[1] || '', 'base64url').toString()); } catch { /* clé publique */ }
           if (p && (p.exp < Date.now() / 1000 || (jetons.depuis && !(p.iat >= jetons.depuis)))) { appels[appels.length - 1].refuse = true; return json(r, 401, { code: 'PGRST301', details: null, hint: null, message: 'JWT expired' }); }
+        }
+        const propre = u === '/sb/rest/v1/rpc/chiffres_publics' || u === '/sb/rest/v1/rpc/fondateurs_publics' ? rpc[u.slice('/sb/rest/v1/rpc/'.length)] : null;
+        if (typeof propre === 'function') {
+          const x = propre(corps, (q.headers.authorization || '') !== 'Bearer cle');
+          return x === undefined ? json(r, 404, { code: 'PGRST202', message: 'Could not find the function' }) : json(r, 200, x);
         }
         if (u === '/sb/rest/v1/rpc/chiffres_publics') return chiffres ? json(r, 200, chiffres) : json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/rpc/offre_partagee') {
