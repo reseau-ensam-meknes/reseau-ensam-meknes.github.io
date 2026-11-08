@@ -2583,3 +2583,55 @@ test('Mon profil d’un membre d’une autre école : la règle de l’ENSAM Mek
     await m.ctx.close();
   }
 });
+
+// L'accueil d'un membre d'une autre école : la porte dessinée dit son école (sa ligne : « ENSA · FÈS », comme la page d'entrée
+// du lien d'une école ouverte), jamais l'ENSAM Meknès, pas même un instant, ni après le passage à l'arabe ; sans sa ligne,
+// « ENSAM ». Un membre de l'ENSAM Meknès : la porte d'avant, au caractère près. window.__bandes : les noms que la porte a
+// portés, notés à chaque changement de la page
+const PORTE = '.home-hero .scene .g-txt';
+const noterBandes = ctx => ctx.addInitScript(() => {
+  window.__bandes = [];
+  new MutationObserver(() => {
+    const t = document.querySelector('.home-hero .scene .g-txt')?.textContent;
+    if (t && window.__bandes[window.__bandes.length - 1] !== t) window.__bandes.push(t);
+  }).observe(document, { childList: true, subtree: true, characterData: true });
+});
+const quandPorte = (page, b) => page.waitForFunction(([sel, b]) => document.querySelector(sel)?.textContent === b, [PORTE, b], { timeout: 15000 });
+
+test('accueil d’un membre d’une autre école : la porte dessinée dit son école (sa ligne), jamais l’ENSAM Meknès, même en passant à l’arabe ; l’ENSAM Meknès comme avant', async () => {
+  for (const [ecole, bande] of [['ensa-fes', 'ENSA · FÈS'], ['ensam-casa', 'ENSAM · CASABLANCA'], ['ensa-oujda', 'ENSAM']]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, ecole, consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = [FES, CASA];
+    const m = await membreDe({ avant: noterBandes });
+    await m.page.waitForSelector(PORTE, { timeout: 15000 });
+    await quandPorte(m.page, bande).catch(() => {});
+    assert.equal(await m.page.locator(PORTE).textContent(), bande, ecole);
+    // L'arabe : le dessin est refait pour l'autre sens, le nom reste
+    await m.page.click('.top .lang-btn');
+    await m.page.waitForFunction(() => document.documentElement.dir === 'rtl' && document.querySelector('.home-hero .scene svg')?.getAttribute('preserveAspectRatio')?.startsWith('xMinYMax'), null, { timeout: 15000 });
+    assert.equal(await m.page.locator(PORTE).textContent(), bande, `${ecole} : en arabe`);
+    const vues = await m.page.evaluate(() => window.__bandes);
+    assert.ok(!vues.includes('ENSAM · MEKNÈS'), `${ecole} : la porte a porté ${JSON.stringify(vues)}`);
+    assert.deepEqual(m.erreurs, [], ecole);
+    await m.ctx.close();
+  }
+  // L'ENSAM Meknès : le dessin tel quel, sans rien de posé dessus, en français et en arabe (la ligne d'une autre école n'y
+  // change rien)
+  for (const langue of ['fr', 'ar']) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    site.tables.ecoles = [{ slug: 'ensam-meknes', nom: 'ENSAM Meknès', ouverte: true, created_at: '2026-10-21T00:00:00Z' }, FES];
+    const m = await membreDe({ langue, avant: noterBandes });
+    await m.page.waitForSelector(ACCUEIL, { timeout: 15000 }); await m.page.waitForSelector(PORTE, { timeout: 15000 });
+    assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET'), 'les écoles sont lues');
+    const tel = await m.page.evaluate(async align => {
+      const { sceneMarkup } = await import(new URL('scene.js', location.href).href);
+      const d = document.createElement('div'); d.innerHTML = sceneMarkup(align, 'meet');
+      return d.innerHTML === document.querySelector('.home-hero .scene').innerHTML;
+    }, langue === 'ar' ? 'xMinYMax' : 'xMaxYMax');
+    assert.ok(tel, `${langue} : le dessin d’avant`);
+    assert.equal(await m.page.locator(PORTE).textContent(), 'ENSAM · MEKNÈS');
+    assert.deepEqual(await m.page.evaluate(() => window.__bandes), ['ENSAM · MEKNÈS']);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  }
+});

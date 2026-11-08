@@ -125,7 +125,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande 
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
-  useEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande]);
+  useLayoutEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;

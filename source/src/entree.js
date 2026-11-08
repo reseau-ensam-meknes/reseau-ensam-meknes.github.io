@@ -144,13 +144,15 @@ export function BrandLogo({ size = 38, draw = false }) {
 // l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
 let gateOpened = false, scene = null, sceneP = null;
 export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
-// bande : le nom écrit sur la porte (la page d'entrée du lien d'une autre école ouverte) ; sans, celui de l'ENSAM Meknès.
-// Posé sur le texte même : le dessin n'est pas refait (son animation continue)
+// bande : le nom écrit sur la porte (la page d'entrée du lien d'une autre école ouverte, l'accueil d'un de ses membres) ;
+// sans, celui de l'ENSAM Meknès. Posé sur le texte même : le dessin n'est pas refait (son animation continue). Posé avant
+// que l'image ne se peigne, et de nouveau quand le dessin est refait (l'autre sens, en arabe) : jamais un autre nom, même
+// un instant
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
-  useEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande]);
+  useLayoutEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
