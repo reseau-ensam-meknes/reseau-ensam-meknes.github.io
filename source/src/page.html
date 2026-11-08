@@ -1616,11 +1616,12 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
   :is(.rdv-tip .linkish, .linkish.m-quiet)::before { inset-inline: min(-4px, calc(50% - 22px)); }
   /* La fiche d'une offre : en haut « Fermer » (40 px de dessin au doigt), « Partager », « Signaler » et « Gérer l'offre » ;
      « Voir » au bout du résumé de l'entreprise ; « Signaler » et « Supprimer » de chaque question publique. L'accueil : le
-     texte de l'annonce et « Masquer l'annonce », « Plus tard » de l'invitation à parrainer. La zone invisible les porte à
-     44 px de haut et de large, dans les marges de leur rangée (6 px au moins entre deux outils de la fiche, 8 px entre
-     l'annonce et sa croix) */
+     texte de l'annonce et « Masquer l'annonce », « Plus tard » de l'invitation à parrainer, « Masquer » du bandeau « Ton
+     année » (de juin à septembre). La zone invisible les porte à 44 px de haut et de large, dans les marges de leur rangée
+     (6 px au moins entre deux outils de la fiche, 8 px entre l'annonce et sa croix, comme entre « Voir mon année » et la
+     sienne) */
   .annonce-txt, .ent-resume .linkish { position: relative; }
-  :is(.modal-head .icon-btn, .od-outils > :is(.icon-btn, .cf-signal), .od-outils .menu-wrap > .icon-btn, .ent-resume .linkish, .comment > :is(.cf-signal.small, .icon-btn.small), .annonce-ligne > .icon-btn.small, .parrain-cta > .icon-btn.small)::before {
+  :is(.modal-head .icon-btn, .od-outils > :is(.icon-btn, .cf-signal), .od-outils .menu-wrap > .icon-btn, .ent-resume .linkish, .comment > :is(.cf-signal.small, .icon-btn.small), .annonce-ligne > .icon-btn.small, .parrain-cta > .icon-btn.small, .annee-strip > .icon-btn.small)::before {
     content: ""; position: absolute; inset: min(0px, calc(50% - 22px)); }
   .annonce-txt::before { content: ""; position: absolute; inset-block: min(0px, calc(50% - 22px)); inset-inline: 0; }
 }

@@ -5017,6 +5017,37 @@ test('accueil : au doigt, l’annonce (son texte et « Masquer l’annonce »), 
   }
 });
 
+test('accueil, de juin à septembre : « Masquer » du bandeau « Ton année » se touche lui aussi sur 44 px, sans empiéter sur « Voir mon année », pour chaque profil, à 390 px et en arabe à 360 px', async () => {
+  // Le bandeau ne paraît que l'été (bilanSaison) : l'essai d'au-dessus, à la date du jour, ne le mesure pas d'octobre à mai,
+  // et il échouait de juin à septembre (36 px de large). Ici l'appareil est à la mi-juin : le bandeau est là pour chaque
+  // membre, et toute la page se mesure comme au-dessus.
+  const d = new Date(), juin = new Date(Date.UTC(d.getUTCFullYear() + (d.getUTCMonth() >= 5 ? 1 : 0), 5, 15, 9));
+  for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
+    const s = await ouvrir({ largeur, langue, toucher: true, heure: juin });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [], sansBandeau = [];
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.aller('accueil'); await s.page.waitForTimeout(300);
+      // La zone invisible de « Masquer » (sa boîte prolongée par ::before) et le bouton voisin ne se chevauchent pas
+      const bandeau = await s.page.evaluate(() => {
+        const b = document.querySelector('#contenu .annee-strip'); if (!b) return window.__demo.me.role === 'admin' ? 'admin' : null;
+        const x = b.querySelector(':scope > .icon-btn.small'), v = b.querySelector(':scope > .btn').getBoundingClientRect();
+        const r = x.getBoundingClientRect(), z = getComputedStyle(x, '::before'), e = k => Math.min(0, parseFloat(z[k]) || 0);
+        const zone = { left: r.left + e('left'), right: r.right - e('right'), top: r.top + e('top'), bottom: r.bottom - e('bottom') };
+        return zone.right <= v.left || zone.left >= v.right || zone.bottom <= v.top || zone.top >= v.bottom ? 'ok' : 'empiete';
+      });
+      if (bandeau === null) sansBandeau.push(nom);
+      else if (bandeau === 'empiete') trop.push(`${largeur} ${langue} · ${nom} · la zone de « Masquer » empiète sur « Voir mon année »`);
+      for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${nom} · accueil : ${x}`);
+    }
+    assert.deepEqual(sansBandeau, [], 'le bandeau « Ton année » est là pour chaque membre');
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
 test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les offres se relisent dans Contenus, plus dans le tableau de bord', async () => {
   for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
     const s = await ouvrir({ largeur, langue });
@@ -9424,13 +9455,16 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   await s.aller('admin/liste');
   assert.equal(await s.page.locator('#lo-cndp').count(), 0);
   assert.equal(await s.page.locator('#lo-file').isDisabled(), false);
-  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from('nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,2031\n') });
+  // Une promo que la liste de l'ENSAM n'a jamais : la démo n'y met que celles à venir (S+1 à S+3). Une année écrite en dur
+  // (2031) y était de septembre 2028 à août 2031 : l'essai aurait échoué ces trois années-là
+  const P = await s.page.evaluate(async () => (await import('./logic.js')).seasonOf()) - 2;
+  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from(`nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,${P}\n`) });
   await s.page.click('#lo-go'); await s.page.waitForTimeout(300);
-  assert.match(await s.page.locator('.lo-couv').innerText(), /Promo 2031/);
-  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.promo === 2031)?.ecole), 'institut-exemple');
+  assert.match(await s.page.locator('.lo-couv').innerText(), new RegExp(`Promo ${P}\\b`));
+  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.email === 'ilyas@institut.example')?.ecole), 'institut-exemple');
   await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.liste h2').first().innerText(), /ENSAM Meknès/);
-  assert.doesNotMatch(await s.page.locator('.liste').innerText(), /Promo 2031/);
+  assert.doesNotMatch(await s.page.locator('.liste').innerText(), new RegExp(`Promo ${P}\\b`));
 
   // Une carte sponsorisée : l'école regardée d'abord, ou toutes les écoles ; la ligne dit pour quelle école
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/sponsorises');
