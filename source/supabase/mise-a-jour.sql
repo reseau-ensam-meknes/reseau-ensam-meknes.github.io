@@ -2187,8 +2187,10 @@ begin
   if p_owner = auth.uid() or a = 'tous' then return true; end if;
   if public.is_admin() then return true; end if;
   if a = 'laureats' and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
-  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
-  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
+  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande, ceux de l'école de la
+  -- demande (ceux qui la lisent) ; une demande d'une autre école n'ouvre pas le CV à un lauréat d'ici
+  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match')
+       and d.ecole = (select public.mon_ecole()))
      and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
   -- CV de l'étudiant : le lauréat qui a un match avec lui le lit (page Match, section « Match » en fin de fichier ;
   -- peut_voir_cv, pour le stockage « cv », passe aussi par ici)

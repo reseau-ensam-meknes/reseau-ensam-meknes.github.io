@@ -182,3 +182,23 @@ test('demande_large_le et domaines_ecole : rien qu’un membre ne lise déjà, r
   const anon = (await en(db, null, tx => tx.query(`select valeur from public.reglages where cle = 'domaines_ecole'`), { role: 'anon' })).rows[0].valeur;
   for (const u of [EM, EC, AC]) assert.deepEqual(await x(u, 'select public.domaines_ecole() x'), anon);
 });
+
+test('voit_champ : une demande d’une autre école n’ouvre pas le CV de son auteur', async () => {
+  // Le CV d'une étudiante qui a une demande ouverte, montré à ses contacts seulement : les lauréats de son école le voient
+  // le temps de la demande, comme avant ; l'administration aussi ; un étudiant non
+  const cv = (u, owner) => x(u, `select public.voit_champ($1, '{"cv": "contacts"}'::jsonb, 'cv') x`, [owner]);
+  assert.equal(await cv(LM3, EM), true);
+  assert.equal(await cv(LM2, EM), true);
+  assert.equal(await cv(RESEAU, EM), true);
+  assert.equal(await cv(EM2, EM), false);
+  // Un lauréat d'une autre école : cette demande n'est pas dans son réseau (il ne la lit pas), elle ne lui ouvre pas le CV
+  assert.equal(await cv(LC, EM), false);
+  assert.equal(await cv(LC3, EM), false);
+  // Ce que la vue profils et le stockage des CV montrent : comme avant (son école seulement)
+  assert.equal((await rows(LM3, 'select id from public.profils where id = $1', [EM])).length, 1);
+  assert.deepEqual(await rows(LC, 'select id from public.profils where id = $1', [EM]), []);
+  assert.equal(await x(LC, 'select public.peut_voir_cv($1) x', [`${EM}/cv.pdf`]), false);
+  // Les demandes que lisent les étudiants de la même année (« lecture promo ») : comme avant
+  assert.deepEqual((await rows(EM2, 'select id from public.demandes where id = any($1::uuid[])', [F.demandes])).map(r => r.id).sort(), [...F.demandes].sort());
+  assert.deepEqual(await rows(EC, 'select id from public.demandes where id = any($1::uuid[])', [F.demandes]), []);
+});
