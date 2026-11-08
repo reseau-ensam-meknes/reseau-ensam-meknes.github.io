@@ -51,12 +51,14 @@ before(async () => {
 after(async () => { await navigateur?.close(); serveur?.close(); });
 // Un essai tient dans un seul jour : sinon les jours de l'application changeraient en route (le tour du jour de Match,
 // « Vu · 14:05 », la semaine d'un merci, le « Demain » d'un entretien, la vue du jour d'une carte sponsorisée…). Celui qui
-// commence dans les deux dernières minutes de la journée (l'heure de cet appareil, celle des pages) attend donc minuit : ceux
-// qui suivent les jours durent bien moins (le plus long, l'entretien de Match, une demi-minute). L'attente vient avant l'essai,
-// jamais entre deux de ses pages.
+// commence dans les deux dernières minutes de la journée attend donc minuit : ceux qui suivent les jours durent bien moins (le
+// plus long, l'entretien de Match, une demi-minute). L'attente vient avant l'essai, jamais entre deux de ses pages. Deux
+// minuits comptent : celui de l'heure de cet appareil, qui est aussi celle des pages, et celui d'UTC, où la santé des
+// notifications compte ses jours. Ils tombent au même instant sur la CI (TZ UTC), pas ailleurs.
 beforeEach(async () => {
   const maintenant = new Date(), minuit = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate() + 1);
-  if (minuit - maintenant < 120e3) await new Promise(ok => setTimeout(ok, minuit - maintenant + 500));
+  const reste = Math.min(minuit - maintenant, 864e5 - (maintenant.getTime() % 864e5));
+  if (reste < 120e3) await new Promise(ok => setTimeout(ok, reste + 500));
 });
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
