@@ -7957,23 +7957,31 @@ end $$;
 --  sponsorisée d'un admin supprimé gardait son auteur disparu. Ces liens sont vidés ici, comme la clé étrangère le prévoit
 --  (« on delete set null ») : la ligne reste, rien d'autre n'y change. Une base saine n'a rien à vider ; relançable.
 --  Une table n'est touchée que s'il y a un lien à vider (une mise à jour, même vide, préviendrait les pages ouvertes :
---  maj_tables).
+--  maj_tables). Une ligne peut avoir plusieurs liens disparus (un recrutement dont la demande, le lauréat et l'offre
+--  n'existent plus) : elle est mise à jour une seule fois, tous ses liens disparus vidés ensemble. Vidés un par un, le
+--  deuxième échouait : une ligne déjà changée dans la transaction voit toutes ses clés étrangères vérifiées à nouveau, et
+--  celle d'un lien encore à vider vise une ligne disparue.
 -- =====================================================================
 do $$
 declare r record; v boolean;
 begin
-  for r in select k.conrelid::regclass as t, a.attname as col, k.confrelid::regclass as ref, b.attname as rcol
+  for r in select k.conrelid::regclass as t,
+      array_agg(a.attname::text order by a.attname) as cols,
+      array_agg(format('(x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))', a.attname, k.confrelid::regclass, b.attname, a.attname)
+        order by a.attname) as vides
     from pg_constraint k
     join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
     join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
     where k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and k.connamespace = 'public'::regnamespace
-    order by 1, 2
+    group by k.conrelid
+    order by 1
   loop
-    execute format('select exists (select 1 from %s x where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))',
-      r.t, r.col, r.ref, r.rcol, r.col) into v;
+    execute format('select exists (select 1 from %s x where %s)', r.t, array_to_string(r.vides, ' or ')) into v;
     continue when not v;
-    execute format('update %s x set %I = null where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I)',
-      r.t, r.col, r.col, r.ref, r.rcol, r.col);
+    -- Chaque lien vidé seulement là où il vise une ligne disparue ; les autres gardent leur valeur
+    execute format('update %s x set %s where %s', r.t,
+      (select string_agg(format('%I = case when %s then null else x.%I end', c, d, c), ', ') from unnest(r.cols, r.vides) as u(c, d)),
+      array_to_string(r.vides, ' or '));
   end loop;
 end $$;
 
