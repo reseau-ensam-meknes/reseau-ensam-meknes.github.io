@@ -1182,12 +1182,22 @@ const siteCss = () => fs.readFileSync(path.join(SITE, 'site.css'), 'utf8');
 
 // Un visiteur dont les polices (ou autre chose) restent en route : la page n'est jamais « chargée », ni calme
 // (cssVu : l'appareil a déjà appliqué le CSS complet de cette version, comme après une déconnexion)
-// sansImages : requestAnimationFrame ne répond jamais, comme dans un onglet ouvert en arrière-plan ; Preact passe alors
-// ses effets 100 ms après l'affichage
-async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false, sansImages = false } = {}) {
+// arrierePlan : comme dans un onglet ouvert en arrière-plan, requestAnimationFrame ne répond jamais, et Preact passe ses
+// effets 100 ms après l'affichage (dans un vrai onglet en arrière-plan, une seconde ou plus). Le dessin de l'école (scene.js)
+// est alors demandé dès le début, et la page (entree.js) l'attend : il est toujours là avant le premier affichage, donc avant
+// l'effet qui le guette. Playwright guette lui aussi par requestAnimationFrame : un waitForFunction n'y revérifie sa condition
+// qu'avec polling (comme app() ci-dessous) ; waitForSelector, lui, n'en dépend pas.
+async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false, arrierePlan = false } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  if (sansImages) await ctx.addInitScript(() => { window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {}; });
+  if (arrierePlan) {
+    await ctx.addInitScript(() => {
+      window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {};
+      if (/^https?:$/.test(location.protocol)) import(new URL('scene.js', location.href).href).catch(() => {});
+    });
+    const dessin = new Promise(ok => ctx.on('requestfinished', q => { if (new URL(q.url()).pathname === '/scene.js') ok(); }));
+    await ctx.route(/\/entree\.js$/, async r => { await dessin; await r.continue().catch(() => {}); });
+  }
   const js = [], css = [], tenus = []; let tenir = true;
   ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); else if (u.pathname === '/site.css') css.push(q.url()); });
   if (retenir) await ctx.route(retenir, r => (tenir ? tenus.push(r) : r.continue()));
@@ -1198,7 +1208,7 @@ async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, h
   await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#entree .entree-form');
   const lacher = async () => { tenir = false; for (const r of tenus.splice(0)) await r.continue().catch(() => {}); };
-  const app = () => page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000 });
+  const app = () => page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000, polling: arrierePlan ? 100 : 'raf' });
   return { ctx, page, erreurs, js, css, tenus, lacher, app };
 }
 const parti =(page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
@@ -1255,10 +1265,11 @@ test('page d’entrée plus légère : sans geste, le magasin part une fois la p
 });
 
 test('page d’entrée ouverte en arrière-plan : le dessin de l’école se pose quand même', async () => {
-  // Sans images (onglet en arrière-plan, appareil très chargé), le dessin (scene.js) arrive avant l'effet qui l'attend.
+  // Dans un onglet en arrière-plan (ou sur un appareil très chargé), le dessin (scene.js) arrive avant l'effet qui l'attend.
   // L'illustration le croyait encore en route et ne se posait jamais : seul le ciel restait (vu sur la CI : 30 s sans dessin).
-  const v = await visiteLegere({ sansImages: true });
-  await v.page.waitForSelector('#entree .entree-scene .scene svg', { timeout: 5000 });
+  // Ici, il est toujours arrivé avant : sans la correction, l'essai échoue à coup sûr.
+  const v = await visiteLegere({ arrierePlan: true });
+  await v.page.waitForSelector('#entree .entree-scene .scene svg', { timeout: 15000 });
   assert.deepEqual(v.erreurs, []);
   await v.ctx.close();
 });
