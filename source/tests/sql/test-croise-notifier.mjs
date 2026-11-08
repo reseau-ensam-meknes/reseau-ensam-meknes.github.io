@@ -348,6 +348,12 @@ before(async () => {
   await tache('dimanche 10:00 semaine_push', aujourdhuiA(10, 0), 'select public.semaine_push()');
   await tache('lundi 12:30 midi_push', LUNDI, 'select public.midi_push()');
   await tache('18:00 rappels_soir', aujourdhuiA(18, 0), 'select public.rappels_soir()');
+  // Le rendez-vous et l'entretien « dans 10 minutes » (M5, R2) sont ceux du rappel de 15 minutes, aujourd'hui. Lancé après
+  // 23:50 UTC, ils tombent le lendemain et la veille les annoncerait aussi, à juste titre : Salma aurait trois veilles et plus
+  // de place pour ses groupes. Notés comme déjà annoncés, l'essai donne la même chose à toute heure.
+  await db.query(`insert into public.veilles_envoyees (quoi, id, rdv_at)
+    select 'rdv', id, rdv_at from public.mentorships where id = $1 union all select 'entretien', id, rdv_at from public.messages where id = $2`,
+  [ids.M5, ids.R2]);
   await tache('19:30 veille_push', aujourdhuiA(19, 30), 'select public.veille_push()');
   await tache('chaque minute rappels_rdv', aujourdhuiA(10, 0), 'select public.rappels_rdv()');
 });
