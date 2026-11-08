@@ -1,7 +1,7 @@
 {
-  "name": "Réseau ENSAM Meknès",
-  "short_name": "Réseau ENSAM",
-  "description": "Lauréats et étudiants de l'ENSAM Meknès : offres, mentorat, entraide, groupes.",
+  "name": "Twiza · Lauréats & étudiants",
+  "short_name": "Twiza",
+  "description": "Twiza : le réseau des lauréats et des étudiants de chaque école. Offres, mentorat, entraide, groupes.",
   "lang": "fr",
   "start_url": "../#accueil",
   "scope": "../",
@@ -40,14 +40,14 @@
       "sizes": "1080x1920",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "L’accueil du Réseau ENSAM sur téléphone (démo, données fictives)"
+      "label": "L’accueil de Twiza sur téléphone (démo, données fictives)"
     },
     {
       "src": "captures/ordinateur.jpg",
       "sizes": "1920x1080",
       "type": "image/jpeg",
       "form_factor": "wide",
-      "label": "Le Réseau ENSAM sur ordinateur (démo, données fictives)"
+      "label": "Twiza sur ordinateur (démo, données fictives)"
     }
   ],
   "shortcuts": [

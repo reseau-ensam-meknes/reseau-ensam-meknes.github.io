@@ -1855,7 +1855,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   await s.page.setViewportSize({ width: 360, height: 640 });
   await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
   const t = await s.page.locator('.modal.appli').innerText();
-  assert.match(t, /Ouvre le Réseau ENSAM dans Chrome/);
+  assert.match(t, /Ouvre Twiza dans Chrome/);
   assert.match(t, /Ce lien s’est ouvert dans Instagram\s: ici, les notifications ne peuvent pas arriver\./);
   // Le lien rouvre la même page dans Chrome (sinon la même adresse), avec la feuille d'activation en arrivant
   assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?mode=connexion&notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fmode%3Dconnexion%26notifs%3D1;end$/);
@@ -1884,7 +1884,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   // iPhone : les gestes pour passer dans Safari, puis à l'écran d'accueil
   const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS });
   await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
-  assert.match(await i.page.locator('.modal.appli').innerText(), /Ouvre le Réseau ENSAM dans Safari/);
+  assert.match(await i.page.locator('.modal.appli').innerText(), /Ouvre Twiza dans Safari/);
   assert.equal(await i.page.locator('.appli .ios-steps li').count(), 3);
   await i.page.click('#appli-ok'); await i.page.waitForTimeout(300);
   await i.page.waitForSelector('.pastille[data-sorte="appli"]');
@@ -8802,14 +8802,14 @@ test('noms latins (l’application, Chrome, Safari, iPad) chacun dans un <span t
   const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
   await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
   assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-head h2'), { apart: ['Chrome'], nus: [] }, 'le titre de la feuille');
-  assert.equal(await a.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
+  assert.equal(await a.page.getAttribute('.modal.appli', 'aria-label'), 'افتح تويزة في Chrome');
   assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-body, #appli-chrome'), { apart: ['Instagram', 'Chrome', 'Chrome', 'Chrome'], nus: [] }, 'la feuille');
   assert.equal((await a.page.locator('#appli-chrome').innerText()).trim(), 'فتح في Chrome');
   assert.deepEqual(latinRestant(await a.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Chrome']), []);
   await a.page.click('#appli-tard');
   await a.page.waitForSelector('.push-bandeau[data-etat="appli"]');
   assert.deepEqual(await nomsLatinsDans(a.page, '.push-bandeau .push-b-txt > strong, .push-bandeau .push-b-txt > span, #push-b-oui'), { apart: ['Chrome', 'Instagram', 'Chrome'], nus: [] }, 'le bandeau');
-  assert.equal(await a.page.getAttribute('.push-bandeau', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
+  assert.equal(await a.page.getAttribute('.push-bandeau', 'aria-label'), 'افتح تويزة في Chrome');
   await a.page.waitForSelector('.pastille[data-sorte="appli"]');
   assert.deepEqual(await nomsLatinsDans(a.page, '.pastille'), { apart: ['Chrome'], nus: [] }, 'la pastille');
   assert.equal(await a.page.getAttribute('.pastille', 'aria-label'), 'فتح في Chrome');
@@ -8826,7 +8826,7 @@ test('noms latins (l’application, Chrome, Safari, iPad) chacun dans un <span t
   const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS, langue: 'ar' });
   await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
   assert.deepEqual(await nomsLatinsDans(i.page, '.modal.appli .modal-head h2, .modal.appli .ios-steps'), { apart: ['Safari', 'Safari', 'Safari'], nus: [] }, 'iPhone : le titre et les gestes');
-  assert.equal(await i.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Safari');
+  assert.equal(await i.page.getAttribute('.modal.appli', 'aria-label'), 'افتح تويزة في Safari');
   assert.deepEqual(latinRestant(await i.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Safari']), []);
   assert.deepEqual((await i.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
   assert.deepEqual(i.erreurs, []);
@@ -8912,7 +8912,7 @@ test('iPad (iPadOS, qui se présente comme un Mac) : les feuilles disent « iPad
   await s.aller('accueil'); await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   await s.page.waitForSelector('.modal.prevenir');
   const p = await s.page.locator('.modal.prevenir').innerText();
-  assert.match(p, /Sur iPad, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil/);
+  assert.match(p, /Sur iPad, les notifications arrivent une fois Twiza ajouté à l’écran d’accueil/);
   assert.match(p, /Dans Safari, touche Partager, en haut de l’écran\./);
   assert.doesNotMatch(p, /iPhone/);
   await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
@@ -9609,12 +9609,12 @@ test('« Tester » sur iPhone et sur iPad, notification d’essai reçue : les r
   for (const [ua, tactile, nom] of [[SAFARI_IPHONE, 'iPhone', 'iPhone'], [SAFARI_IPADOS, 'MacIntel', 'iPad']]) {
     const m = await membreEnLigne({ ua, tactile, deja: true, chemin: '#profil/notifications' });
     const t = await diagnostic(m, 'Notification de test envoyée.');
-    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Réseau ENSAM, active «\sAutoriser les notifications\s»\.$/, nom);
+    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Twiza (ou Réseau ENSAM), active «\sAutoriser les notifications\s»\.$/, nom);
     assert.doesNotMatch(t, /barre de notifications|économie de batterie|téléphone|navigateur/, nom);
     await m.page.evaluate(() => localStorage.setItem('ensam-lang', 'ar'));
     await m.page.reload();
     const ta = await diagnostic(m, 'تم إرسال إشعار تجريبي.');
-    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات»\.$/, nom);
+    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › تويزة (أو شبكة ENSAM)، فعّل «السماح بالإشعارات»\.$/, nom);
     assert.deepEqual(latinRestant(ta, ['ENSAM']), [], nom);
     assert.deepEqual(m.erreurs, [], nom);
     await m.ctx.close();

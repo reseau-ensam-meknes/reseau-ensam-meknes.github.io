@@ -260,12 +260,12 @@ const SECTIONS = [
 export function PrivacyPage({ onBack }) {
   const c = cfg();
   return html`<section class="page narrow privacy">
-    <header class="page-head"><div class="row"><${BrandLogo} size=${44}/><div><p class="eyebrow">Réseau ENSAM Meknès</p><h1>Confidentialité</h1></div></div>
+    <header class="page-head"><div class="row"><${BrandLogo} size=${44}/><div><p class="eyebrow">Twiza</p><h1>Confidentialité</h1></div></div>
       ${onBack ? html`<button class="btn ghost" onClick=${onBack}>← Retour</button>` : null}</header>
     <p class="lead">Cette plateforme est faite par et pour la communauté de l’ENSAM Meknès. Tes données servent à une seule chose : t’aider à trouver ou à aider.</p>
     ${SECTIONS.map(([ic, h, items]) => html`<div class="panel priv-sec"><h2 class="h-ico"><${Icon} name=${ic}/> ${h}</h2><ul>${items.map(t => html`<li>${t}</li>`)}</ul></div>`)}
     <div class="panel priv-sec"><h2 class="h-ico"><${Icon} name="inbox"/> Contact</h2>
-      <p>Responsable du traitement : <strong translate="no">${responsableTraitement(c)}</strong>, qui administre le Réseau ENSAM Meknès.</p>
+      <p>Responsable du traitement : <strong translate="no">${responsableTraitement(c)}</strong>, qui administre Twiza et son Réseau ENSAM Meknès.</p>
       ${adresseContact(c) ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + adresseContact(c)} dir="ltr" translate="no">${adresseContact(c)}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
       ${c.cndp ? html`<p class="small muted">Déclaration CNDP : <span dir="ltr" translate="no">${c.cndp}</span></p>` : null}
     </div>
@@ -327,7 +327,7 @@ export function MesDonnees({ ctx }) {
     for (const [t, cols] of Object.entries(owner)) mine[t] = (data[t] || []).filter(r => cols.some(c => r[c] === me.id));
     const relues = new Set(mine.relectures_cv.map(r => r.id));
     mine.relecture_commentaires = (data.relecture_commentaires || []).filter(c => c.author_id === me.id || relues.has(c.relecture_id));
-    const out = { exporte_le: new Date().toISOString(), plateforme: 'Réseau ENSAM Meknès', email: store.session?.user?.email || null, profil: me, ...mine };
+    const out = { exporte_le: new Date().toISOString(), plateforme: 'Twiza', email: store.session?.user?.email || null, profil: me, ...mine };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
     a.download = 'mes-donnees-reseau-ensam.json';

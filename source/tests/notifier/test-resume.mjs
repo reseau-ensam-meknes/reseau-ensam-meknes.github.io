@@ -287,5 +287,7 @@ test('écoles : la marque d’une autre école dans les emails', () => {
   const c = N.marquer({ sujet: 'Ta semaine · Réseau ENSAM Meknès', html: '<b>Réseau ENSAM Meknès</b> شبكة ENSAM مكناس', texte: 'Réseau ENSAM Meknès' }, { nom: 'ENSAM Casablanca', nom_ar: 'ENSAM الدار البيضاء' });
   assert.equal(c.sujet, 'Ta semaine · Réseau ENSAM Casablanca');
   assert.match(c.html, /شبكة ENSAM الدار البيضاء/);
+  // L'expéditeur affiché est le réseau de l'école du membre (Meknès : SENDER_NAME, sans marque)
+  assert.equal(c.nom, 'Réseau ENSAM Casablanca');
   assert.equal(N.marquer(c, null), c);
 });

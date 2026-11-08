@@ -111,7 +111,7 @@ const Etapes = ({ liste }) => html`<ol class="ios-steps">${liste.map(([ico, txt]
 const PARTAGER = { safari: 'Dans Safari, touche Partager : en bas de l’écran, ou dans le menu •••.', ipad: 'Dans Safari, touche Partager, en haut de l’écran.', autre: 'Touche Partager, dans la barre d’adresse ou dans le menu du navigateur.' };
 const ETAPES_IOS = [
   ['plus', 'Choisis « Sur l’écran d’accueil », laisse « Ouvrir en tant qu’app web » activé, puis touche « Ajouter ».'],
-  ['bell', 'Ouvre le Réseau ENSAM depuis sa nouvelle icône, connecte-toi une fois, puis touche « Activer ».'],
+  ['bell', 'Ouvre Twiza depuis sa nouvelle icône, connecte-toi une fois, puis touche « Activer ».'],
 ];
 const etapesIos = () => [['share', /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ? PARTAGER.autre : surIPad() ? PARTAGER.ipad : PARTAGER.safari], ...ETAPES_IOS];
 const EtapesIos = () => html`<${Etapes} liste=${etapesIos()}/>`;
@@ -119,7 +119,7 @@ const EtapesIos = () => html`<${Etapes} liste=${etapesIos()}/>`;
 const ETAPES_ANDROID = [
   ['more-v', 'Touche le menu ⋮ du navigateur, en haut à droite.'],
   ['plus', 'Choisis « Installer l’application » ou « Ajouter à l’écran d’accueil ».'],
-  ['bell', 'Ouvre le Réseau ENSAM depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.'],
+  ['bell', 'Ouvre Twiza depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.'],
 ];
 // La fiche « Installer l'application » (gestes illustrés, iPhone, iPad et Android) : installer.js
 export { IosInstallHelp };
@@ -128,10 +128,10 @@ addAR({
   [PARTAGER.ipad]: 'في Safari، المس «مشاركة» في أعلى الشاشة.',
   [PARTAGER.autre]: 'المس «مشاركة»، في شريط العنوان أو في قائمة المتصفح.',
   [ETAPES_IOS[0][1]]: 'اختر «إضافة إلى الشاشة الرئيسية»، واترك «فتح كتطبيق ويب» مفعّلًا، ثم المس «إضافة».',
-  [ETAPES_IOS[1][1]]: 'افتح شبكة ENSAM من أيقونتها الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
+  [ETAPES_IOS[1][1]]: 'افتح تويزة من أيقونتها الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
   [ETAPES_ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح، أعلى الشاشة.',
   [ETAPES_ANDROID[1][1]]: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
-  [ETAPES_ANDROID[2][1]]: 'افتح شبكة ENSAM من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
+  [ETAPES_ANDROID[2][1]]: 'افتح تويزة من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
 });
 
 function b64ToBytes(b64) {
@@ -473,14 +473,14 @@ addAR({
 // Reçue, mais rien à l'écran : sur iPhone et iPad (l'application de l'écran d'accueil), les mêmes réglages que pour les débloquer
 const DIAG_RECUE = {
   autre: 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.',
-  ios: 'Reçue par cet appareil. Rien ne s’affiche ? Dans Réglages › Notifications › Réseau ENSAM, active « Autoriser les notifications ».',
+  ios: 'Reçue par cet appareil. Rien ne s’affiche ? Dans Réglages › Notifications › Twiza (ou Réseau ENSAM), active « Autoriser les notifications ».',
 };
 const DIAG_PERDUE = 'Pas arrivée. L’abonnement de cet appareil vient d’être refait : touche « Tester » de nouveau.';
 const PUSH_POURQUOI = 'Messages, réponses, rendez-vous : ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 addAR({
   [PUSH_POURQUOI]: 'الرسائل والأجوبة والمواعيد: ما يخصك يصلك فورًا، حتى والتطبيق مغلق.',
   [DIAG_RECUE.autre]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
-  [DIAG_RECUE.ios]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات».',
+  [DIAG_RECUE.ios]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء؟ من الإعدادات › الإشعارات › تويزة (أو شبكة ENSAM)، فعّل «السماح بالإشعارات».',
   [DIAG_PERDUE]: 'لم يصل الإشعار. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» مرة أخرى.',
   'Activées sur cet appareil': 'مفعّلة على هذا الجهاز', 'Comment les débloquer ?': 'كيف ترفع الحظر عنها؟',
 });
@@ -554,7 +554,7 @@ addAR({
 // Dit dans la pastille, Mon profil, le bandeau de l'accueil, et à l'ouverture (une fois par visite au plus).
 // En démo, on le simule (ensam-prevenir-demo = appli, ou le user-agent d'une application) ; le lien n'y ouvre rien.
 // ---------------------------------------------------------------------------
-const APPLI_TITRE = { android: 'Ouvre le Réseau ENSAM dans Chrome', ios: 'Ouvre le Réseau ENSAM dans Safari', pc: 'Ouvre le Réseau ENSAM dans ton navigateur' };
+const APPLI_TITRE = { android: 'Ouvre Twiza dans Chrome', ios: 'Ouvre Twiza dans Safari', pc: 'Ouvre Twiza dans ton navigateur' };
 const APPLI_INCONNUE = 'Ce lien s’est ouvert dans une application : ici, les notifications ne peuvent pas arriver.';
 const appliIci = nom => (nom ? `Ce lien s’est ouvert dans ${nom} : ici, les notifications ne peuvent pas arriver.` : APPLI_INCONNUE);
 const APPLI_CHROME = 'Dans Chrome, ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
@@ -615,7 +615,7 @@ a.pastille-go { text-decoration: none; }
 `);
 const NOMS_APPLIS = APPLIS.map(([nom]) => nom).join('|');
 addAR({
-  [APPLI_TITRE.android]: 'افتح شبكة ENSAM في Chrome', [APPLI_TITRE.ios]: 'افتح شبكة ENSAM في Safari', [APPLI_TITRE.pc]: 'افتح شبكة ENSAM في متصفحك',
+  [APPLI_TITRE.android]: 'افتح تويزة في Chrome', [APPLI_TITRE.ios]: 'افتح تويزة في Safari', [APPLI_TITRE.pc]: 'افتح تويزة في متصفحك',
   [APPLI_INCONNUE]: 'فُتح هذا الرابط داخل تطبيق: هنا لا يمكن أن تصلك الإشعارات.',
   [APPLI_CHROME]: 'في Chrome، يصلك ما يخصك فورًا، حتى والتطبيق مغلق.',
   [APPLI_RIEN]: 'لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح».',
@@ -947,7 +947,7 @@ async function accepterNotif(store, me) {
   }
 }
 
-const PREVENIR_IOS = 'Sur iPhone, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil :';
+const PREVENIR_IOS = 'Sur iPhone, les notifications arrivent une fois Twiza ajouté à l’écran d’accueil :';
 function FeuillePrevenir({ ctx, f, onClose }) {
   const { store, me } = ctx;
   const [busy, setBusy] = useState(false);
@@ -1350,7 +1350,7 @@ addAR({
   'Te prévenir de la réponse ?': 'هل نُعلمك عند وصول الرد؟', 'Me prévenir': 'أعلِمني', 'J’ai compris': 'فهمت', 'Plus tard': 'لاحقًا',
   'Tu ne rateras pas la réponse': 'لن تفوتك الإجابة',
   'Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».': 'لا شيء غير ذلك: لا إعلانات، ويمكنك إيقافه متى شئت من «ملفي الشخصي».',
-  [PREVENIR_IOS]: 'على iPhone، تصل الإشعارات بعد إضافة شبكة ENSAM إلى الشاشة الرئيسية:',
+  [PREVENIR_IOS]: 'على iPhone، تصل الإشعارات بعد إضافة تويزة إلى الشاشة الرئيسية:',
   [PAR_EMAIL.demande]: 'لا يستطيع هذا المتصفح إرسال إشعار إليك حاليًا. يصلك كل اقتراح في رسائلك أيضًا، ويُنبّهك بريد إلكتروني إن لم تقرأه.',
   [PAR_EMAIL.question]: 'لا يستطيع هذا المتصفح إرسال إشعار إليك حاليًا. تجد الأجوبة على سؤالك في ملخصك الأسبوعي بالبريد الإلكتروني.',
   [NOTIF_RAISON.demande]: 'بمجرد أن يقترح عليك أحد الخريجين مساعدته، يصلك إشعار على هذا الجهاز.',
@@ -1489,12 +1489,12 @@ export function PastilleApp({ ctx, cache }) {
 // Chrome montre à gauche de l'adresse un cadenas ou l'icône des réglages ; si le téléphone lui-même bloque Chrome, une ligne de plus.
 const DEBLOQUER = {
   android: [['lock', 'Touche l’icône à gauche de l’adresse (cadenas ou réglages).'], ['bell', 'Ouvre « Autorisations », puis « Notifications ».'], ['check', 'Choisis « Autoriser », puis reviens ici.']],
-  appli: [['phone', 'Appuie longuement sur l’icône du Réseau ENSAM, puis sur « Infos sur l’appli ».'], ['bell', 'Ouvre « Notifications ».'], ['check', 'Active « Afficher les notifications », puis reviens ici.']],
-  ios: [['phone', 'Ouvre les Réglages de l’iPhone, puis « Notifications ».'], ['bell', 'Choisis « Réseau ENSAM ».'], ['check', 'Active « Autoriser les notifications », puis reviens ici.']],
+  appli: [['phone', 'Appuie longuement sur l’icône de Twiza, puis sur « Infos sur l’appli ».'], ['bell', 'Ouvre « Notifications ».'], ['check', 'Active « Afficher les notifications », puis reviens ici.']],
+  ios: [['phone', 'Ouvre les Réglages de l’iPhone, puis « Notifications ».'], ['bell', 'Choisis « Twiza » (ou « Réseau ENSAM »).'], ['check', 'Active « Autoriser les notifications », puis reviens ici.']],
   pc: [['lock', 'Clique sur le cadenas à gauche de l’adresse du site.'], ['bell', 'À la ligne « Notifications », choisis « Autoriser ».'], ['check', 'Recharge la page, puis touche « C’est fait ».']],
 };
 const DEBLOQUER_PLUS = 'Toujours rien ? Réglages du téléphone › Applications › Chrome › Notifications : autorise-les.';
-const DEBLOQUER_INTRO = 'Ce navigateur a bloqué les notifications du Réseau ENSAM. Pour les recevoir :';
+const DEBLOQUER_INTRO = 'Ce navigateur a bloqué les notifications de Twiza. Pour les recevoir :';
 const TOUJOURS_BLOQUEES = 'Toujours bloquées. Suis les trois gestes, puis réessaie.';
 function FeuilleDebloquer({ ctx, onClose }) {
   const { store, me } = ctx;
@@ -1528,17 +1528,17 @@ addAR({
   'Masquer quelques jours': 'إخفاء لبضعة أيام',
   [DEMO_INSTALL]: 'على المنصة الحقيقية، يُثبَّت التطبيق هنا بلمسة واحدة.',
   'Débloquer les notifications': 'رفع الحظر عن الإشعارات', 'C’est fait': 'تمّ',
-  [DEBLOQUER_INTRO]: 'حظر هذا المتصفح إشعارات شبكة ENSAM. لتصلك:',
+  [DEBLOQUER_INTRO]: 'حظر هذا المتصفح إشعارات تويزة. لتصلك:',
   [TOUJOURS_BLOQUEES]: 'ما زالت محظورة. اتبع الخطوات الثلاث، ثم أعد المحاولة.',
   [DEBLOQUER_PLUS]: 'ما زال لا شيء؟ إعدادات الهاتف › التطبيقات › Chrome › الإشعارات: اسمح بها.',
   [DEBLOQUER.android[0][1]]: 'المس الأيقونة بجانب عنوان الموقع (القفل أو الإعدادات).',
   [DEBLOQUER.android[1][1]]: 'افتح «الأذونات»، ثم «الإشعارات».',
   [DEBLOQUER.android[2][1]]: 'اختر «السماح»، ثم ارجع إلى هنا.',
-  [DEBLOQUER.appli[0][1]]: 'اضغط مطوّلًا على أيقونة شبكة ENSAM، ثم على «معلومات التطبيق».',
+  [DEBLOQUER.appli[0][1]]: 'اضغط مطوّلًا على أيقونة تويزة، ثم على «معلومات التطبيق».',
   [DEBLOQUER.appli[1][1]]: 'افتح «الإشعارات».',
   [DEBLOQUER.appli[2][1]]: 'فعّل «إظهار الإشعارات»، ثم ارجع إلى هنا.',
   [DEBLOQUER.ios[0][1]]: 'افتح إعدادات iPhone، ثم «الإشعارات».',
-  [DEBLOQUER.ios[1][1]]: 'اختر «شبكة ENSAM».',
+  [DEBLOQUER.ios[1][1]]: 'اختر «تويزة» (أو «شبكة ENSAM»).',
   [DEBLOQUER.ios[2][1]]: 'فعّل «السماح بالإشعارات»، ثم ارجع إلى هنا.',
   [DEBLOQUER.pc[0][1]]: 'انقر على القفل بجانب عنوان الموقع.',
   [DEBLOQUER.pc[1][1]]: 'في سطر «الإشعارات»، اختر «السماح».',
@@ -1550,7 +1550,7 @@ addAR({
 const IPAD_AR = [
   [INSTALLER_D_ABORD, 'على iPhone، ثبّت التطبيق أولًا على الشاشة الرئيسية.'],
   [BANDEAU.ios[1], 'على iPhone، هذه هي الطريقة الوحيدة لتلقي التوافقات والرسائل.'],
-  [PREVENIR_IOS, 'على iPhone، تصل الإشعارات بعد إضافة شبكة ENSAM إلى الشاشة الرئيسية:'],
+  [PREVENIR_IOS, 'على iPhone، تصل الإشعارات بعد إضافة تويزة إلى الشاشة الرئيسية:'],
   [IOS_TITRE, 'الأهم يصلك على iPhone الخاص بك'],
   [IOS_INTRO, 'على iPhone، لا تصل الإشعارات إلا داخل التطبيق المضاف إلى الشاشة الرئيسية. دقيقة واحدة، ومرة واحدة فقط:'],
   [PASTILLE_IOS, 'لتصلك إشعاراتك على iPhone'],
