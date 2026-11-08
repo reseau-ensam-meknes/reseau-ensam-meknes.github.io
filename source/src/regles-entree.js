@@ -99,8 +99,10 @@ export const ECOLE_MOTIF = '[a-z0-9-]{2,40}';
 const ECOLE_RE = new RegExp(`^${ECOLE_MOTIF}$`);
 export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
 // Adresse d'un lien à partager pour une autre école que l'ENSAM Meknès : elle dit l'école (&ecole=…), que la page d'entrée
-// garde jusqu'à l'inscription. Pour l'ENSAM Meknès (ou sans école), l'adresse ne change pas.
-export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+// garde jusqu'à l'inscription. La page d'aperçu d'une promo (promo/AAAA/, promo/AAAA/ar/) devient alors sa page neutre
+// (promo/AAAA/e/, outils/pages-promo.mjs), dont l'aperçu ne nomme pas l'ENSAM Meknès. Pour l'ENSAM Meknès (ou sans école),
+// l'adresse ne change pas.
+export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a.replace(/\/promo\/\d{4}\/(?:ar\/)?$/, '$&e/')}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
 
 // Ce que la page d'entrée emporte dans un autre navigateur (lienChrome, appareil.js, qui le réexporte ; l'adresse gardée dans
 // le navigateur d'une application sur iPhone ou iPad, adresseAvecContexte) : la promo d'un lien d'invitation, le code de qui

@@ -1896,11 +1896,15 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer ? { data: { ...(meta || {}), par_code: true } } : {}) } });
     if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
   }
-  async verifierCode(email, token, meta = null) {
-    const { error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
+  // ecole : à l'inscription, l'école du lien que la page suit (ecoleRetenue, entree.js), null sans lien
+  async verifierCode(email, token, meta = null, ecole = null) {
+    const { data, error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
-    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur)
-    if (meta) await this.sb.auth.updateUser({ data: meta }).catch(() => {});
+    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur). Le compte né de la
+    // demande de code du lien d'une autre école ne la garde plus (null l'efface) : le lien suivi ici décide. Sinon, la même
+    // mise à jour qu'avant
+    const avant = data?.user?.user_metadata?.ecole;
+    if (meta) await this.sb.auth.updateUser({ data: ecole && avant && avant !== ecole && !meta.ecole ? { ...meta, ecole: null } : meta }).catch(() => {});
   }
   async resetPassword(email) {
     const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });

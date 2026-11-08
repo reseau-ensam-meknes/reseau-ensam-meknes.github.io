@@ -125,7 +125,12 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande 
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
-  useLayoutEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande, align, fit]);
+  useLayoutEffect(() => {
+    const t = ref.current?.querySelector('.g-txt');
+    if (!t || (!bande && t.__b == null)) return;
+    t.__b ??= t.textContent; const b = bande || t.__b; t.textContent = b; if (!bande) t.__b = null;
+    for (const [k, v] of [['textLength', 212], ['lengthAdjust', 'spacingAndGlyphs']]) if (b.length > 20) t.setAttribute(k, v); else t.removeAttribute(k);
+  }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -154,6 +159,7 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
+const CLE_MEKNES = 'ensam-invite-meknes';
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
@@ -162,7 +168,7 @@ export function lireInvitation() {
   try {
     const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
     if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-    if (e === null) { if (de !== null || promo) ecrire(CLE_ECOLE); } else if (ecoleValide(e)) ecrire(CLE_ECOLE, e);
+    if (e === null) { if (de !== null || promo) { ecrire(CLE_ECOLE); ecrire(CLE_MEKNES, '1'); } } else if (ecoleValide(e)) { ecrire(CLE_ECOLE, e); ecrire(CLE_MEKNES); }
     q.delete('de'); q.delete('ecole');
     if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
     const n = Number(q.get('promo'));
@@ -194,10 +200,11 @@ function reprendreArrivee() {
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+export const ecoleRetenue = () => ecoleInvitee() || (lire(CLE_MEKNES) ? 'ensam-meknes' : null);
 export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); adresseIci(null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_MEKNES, null); ecrire(CLE_DE, null); adresseIci(null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 function adresseIci(mode) {
   if (APPLI_ICI !== 'ios' || mode === 'nouveau') return;
@@ -260,7 +267,7 @@ const lignesP = new Map(), lus = new Map();
 export function ecoleDuLien(cfg = window.ENSAM_CONFIG || {}) {
   const e = argsEcole().p_ecole;
   if (!e || !enLigneCfg(cfg)) return Promise.resolve(null);
-  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) lignesP.delete(e); const n = r.ok && Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
+  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) return void lignesP.delete(e); const n = Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
   return lignesP.get(e);
 }
 export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
@@ -448,8 +455,14 @@ export function AuthScreen({ store }) {
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
   const autre = argsEcole().p_ecole;
   const [noms, setNoms] = useState(() => (!autre ? null : lus.has(autre) ? lus.get(autre) : undefined));
-  useEffect(() => { if (!autre) return; let vivant = true; ecoleDuLien().then(n => { if (vivant) setNoms(n); }); return () => { vivant = false; }; }, []);
-  useEffect(() => { if (noms) document.title = noms.marque; }, [noms]);
+  useEffect(() => {
+    if (!autre || noms !== undefined) return;
+    let vivant = true; const relire = () => ecoleDuLien().then(n => { if (vivant && n !== undefined) setNoms(n); });
+    relire(); addEventListener('online', relire);
+    return () => { vivant = false; removeEventListener('online', relire); };
+  }, [noms === undefined, !store]);
+  const marqueFr = noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès';
+  useLayoutEffect(() => { if (autre) document.title = marqueFr; }, [marqueFr]);
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
     const c = codeInvite(); if (!c) return;
@@ -472,7 +485,8 @@ export function AuthScreen({ store }) {
   const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   const envoyer = (creer, renvoi = false) => run(async s => {
-    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : s.domainesEcole();
+    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : n === undefined ? [] : s.domainesEcole();
+    if (autre && n !== undefined) setNoms(n);
     if (creer && role === 'etudiant' && (n ? n.obligatoire : s.reglages?.email_ecole_obligatoire === true) && doms.length && !estEmailEcole(e, doms)) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e, role);
@@ -486,7 +500,8 @@ export function AuthScreen({ store }) {
     if (renvoi) { setCode(''); essai.current = ''; const el = document.getElementById('au-code'); if (el) el.value = ''; setMsg({ t: 'Nouveau code envoyé. Seul le dernier code reçu marche.' }); }
   });
   const verifier = v => { essai.current = v; run(async s => {
-    try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
+    const ins = origine === 'inscription';
+    try { await s.verifierCode(email.trim(), v, ins ? meta() : null, ins ? ecoleRetenue() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
     noterAttente(null); marquerMembre(); setEntre(true); apresConnexion();
   }); };
   const saisir = e => {
@@ -523,7 +538,7 @@ export function AuthScreen({ store }) {
 
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
-    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès'}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
+    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${marqueFr}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class=${'entree-promesse' + (serre ? ' serre' : '')}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
@@ -557,7 +572,7 @@ export function AuthScreen({ store }) {
       </div>
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
-    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms?.bande}/></div>
+    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms ? noms.bande : noms === undefined ? 'ENSAM' : undefined}/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }

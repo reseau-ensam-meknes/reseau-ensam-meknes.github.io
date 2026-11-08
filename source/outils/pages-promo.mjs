@@ -2,8 +2,10 @@
 // WhatsApp, LinkedIn et Facebook lisent ses balises og sans exécuter de JavaScript : l'aperçu nomme la promo et
 // montre l'entrée dessinée (img/apercu-promo.jpg, outils/generer-apercu.mjs). Une personne, elle, est envoyée
 // tout de suite vers l'application avec ?promo=AAAA (et &lang=ar, et &de=… : le code de qui invite, invitation nommée,
-// et &ecole=… : l'école du lien quand ce n'est pas l'ENSAM Meknès, écrite comme l'accepte ecoleValide). Les textes des
-// pages, eux, ne nomment que l'ENSAM Meknès : aucune page n'est faite pour une autre école.
+// et &ecole=… : l'école du lien quand ce n'est pas l'ENSAM Meknès, écrite comme l'accepte ecoleValide). Ces pages
+// nomment l'ENSAM Meknès. Les liens d'une autre école (avecEcole, regles-entree.js) mènent à leurs pages neutres,
+// dist/promo/AAAA/e/ et dist/promo/AAAA/ar/e/ : les mêmes, sans nom d'école (« Réseau ENSAM », « de ton école »,
+// img/apercu-promo-neutre.jpg : une entrée dont la porte dit « ENSAM »), qui envoient vers l'application de la même façon.
 // Les promos sont celles qu'accepte le lien d'invitation (regles-entree.js) : la sortie ne dépend pas de la date,
 // la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
@@ -25,8 +27,16 @@ const TXT = {
     desc: 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة: تداريب، مشاريع نهاية الدراسة، وظائف ونصائح بين خريجي وطلبة ENSAM مكناس. التسجيل مجاني، ودفعتك محدَّدة مسبقًا.',
     site: 'شبكة ENSAM مكناس', alt: 'رسم لمدخل ENSAM مكناس', ouvrir: 'فتح شبكة ENSAM مكناس' },
 };
-function html(a, l) {
-  const t = TXT[l], ici = `${site}promo/${a}/${l === 'ar' ? 'ar/' : ''}`, vers = `${l === 'ar' ? '../../../' : '../../'}?promo=${a}${l === 'ar' ? '&lang=ar' : ''}`;
+// Les pages neutres (liens d'une autre école que l'ENSAM Meknès) : aucun nom d'école, jamais celui d'une école pas encore ouverte
+const NEUTRE = {
+  fr: { ...TXT.fr, desc: 'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois et conseils entre lauréats et étudiants de ton école. Inscription gratuite, ta promo est déjà indiquée.',
+    site: 'Réseau ENSAM', alt: 'Dessin d’une entrée d’école', ouvrir: 'Ouvrir le Réseau ENSAM' },
+  ar: { ...TXT.ar, desc: 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة: تداريب، مشاريع نهاية الدراسة، وظائف ونصائح بين خريجي وطلبة مدرستك. التسجيل مجاني، ودفعتك محدَّدة مسبقًا.',
+    site: 'شبكة ENSAM', alt: 'رسم لمدخل مدرسة', ouvrir: 'فتح شبكة ENSAM' },
+};
+function html(a, l, neutre = false) {
+  const t = (neutre ? NEUTRE : TXT)[l], ici = `${site}promo/${a}/${l === 'ar' ? 'ar/' : ''}${neutre ? 'e/' : ''}`;
+  const vers = `${'../'.repeat(2 + (l === 'ar') + neutre)}?promo=${a}${l === 'ar' ? '&lang=ar' : ''}`;
   return `<!doctype html>
 <html lang="${t.lang}" dir="${t.dir}">
 <head>
@@ -42,7 +52,7 @@ function html(a, l) {
 <meta property="og:url" content="${ici}">
 <meta property="og:title" content="${esc(t.titre(a))}">
 <meta property="og:description" content="${esc(t.desc)}">
-<meta property="og:image" content="${site}img/apercu-promo.jpg">
+<meta property="og:image" content="${site}img/${neutre ? 'apercu-promo-neutre' : 'apercu-promo'}.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -58,8 +68,8 @@ function html(a, l) {
 }
 fs.rmSync(path.join(dist, 'promo'), { recursive: true, force: true });
 let n = 0;
-for (let a = PREMIERE; a <= DERNIERE; a++) for (const l of ['fr', 'ar']) {
-  const d = path.join(dist, 'promo', String(a), l === 'ar' ? 'ar' : '');
-  fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'index.html'), html(a, l)); n++;
+for (let a = PREMIERE; a <= DERNIERE; a++) for (const l of ['fr', 'ar']) for (const neutre of [false, true]) {
+  const d = path.join(dist, 'promo', String(a), l === 'ar' ? 'ar' : '', neutre ? 'e' : '');
+  fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'index.html'), html(a, l, neutre)); n++;
 }
-console.log(`pages de promo : ${n} (${PREMIERE}-${DERNIERE}, fr et ar)`);
+console.log(`pages de promo : ${n} (${PREMIERE}-${DERNIERE}, fr et ar, celles de l'ENSAM Meknès et leurs pages neutres)`);

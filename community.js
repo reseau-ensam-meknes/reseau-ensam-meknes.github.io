@@ -6,7 +6,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci, nomsDeLigne } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide, ecoleDe, nomsAPartager } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -20,7 +20,7 @@ import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
-import { oublierInvitation, ecoleInvitee } from './invitation.js';
+import { oublierInvitation, ecoleRetenue } from './invitation.js';
 import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
@@ -114,6 +114,13 @@ export function EntraidePage(ctx) {
   </div>`;
 }
 
+// Le message WhatsApp d'une question (#q-partage) : le lien l'ouvre dans son école (celle de la question, sinon celle du
+// membre), le texte la nomme (nomsAPartager : une école pas encore ouverte, « ENSAM » sans ville)
+export function texteQuestion(q, { data, store, me } = {}) {
+  const ecole = q.ecole || ecoleDe(me), n = nomsAPartager((data || store?.data)?.ecoles, ecole), lien = lienDirect('reseau/entraide/' + q.id, ecole);
+  return getLang() === 'ar' ? `سؤال على شبكة ${n.nomAr}: « ${q.titre} »\nيمكنك الجواب هنا: ${lien}` : `Question sur le Réseau ${n.nom} : « ${q.titre} »\nTu peux y répondre ici : ${lien}`;
+}
+
 function QuestionView({ ctx, q, onBack }) {
   const { data, store, me, act, openProfile, scores } = ctx;
   const [txt, setTxt] = useBrouillon(me.id + ':reponse:' + q.id, '');
@@ -127,7 +134,7 @@ function QuestionView({ ctx, q, onBack }) {
       <h2 class="q-title">${q.titre}</h2>
       ${q.body ? html`<p>${q.body}</p>` : null}
       <div class="row"><${Person} p=${au} onOpen=${openProfile} size=${30}/><span class="muted small">${timeAgo(q.created_at)}</span><span class="spacer"></span>
-        <${PartagerWhatsApp} id="q-partage" texte=${getLang() === 'ar' ? `سؤال على شبكة ENSAM مكناس: « ${q.titre} »\nيمكنك الجواب هنا: ${lienDirect('reseau/entraide/' + q.id)}` : `Question sur le Réseau ENSAM Meknès : « ${q.titre} »\nTu peux y répondre ici : ${lienDirect('reseau/entraide/' + q.id)}`}/>
+        <${PartagerWhatsApp} id="q-partage" texte=${texteQuestion(q, ctx)}/>
         ${(q.author_id === me.id || me.role === 'admin') ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette question et ses réponses ?', () => act(async () => { await store.remove('questions', q.id); onBack(); }))}>Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="question" id=${q.id}/>`}</div>
     </article>
     <h2 class="section-title">${ans.length} réponse${ans.length > 1 ? 's' : ''}</h2>
@@ -623,9 +630,10 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   // Inscription courte : rôle, nom, promo, filière (et, pour un lauréat, s'il peut aider) ; le reste est replié sous « Facultatif »
   const [details, setDetails] = useState(!onboarding);
   const plus = !onboarding || details;
-  // L'école de l'inscription : celle du lien gardé sur cet appareil, sinon celle que le compte a reçue avec la demande de code
-  // (fini sur un autre appareil, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
-  const ecoleIns = onboarding ? [ecoleInvitee(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
+  // L'école de l'inscription : celle du lien que la page suit, gardé sur cet appareil (l'ENSAM Meknès d'un lien d'invitation
+  // sans école aussi : ecoleRetenue), avant celle que le compte a reçue avec une demande de code (fini sur un autre appareil,
+  // sans lien, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
+  const ecoleIns = onboarding ? [ecoleRetenue(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
   const autreEcole = ecoleIns && ecoleIns !== 'ensam-meknes' ? ecoleIns : null;
   // Email de l'école obligatoire pour les étudiants : le réglage de l'administration (ENSAM Meknès) ; pour une autre école,
   // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. À l'inscription, l'école de l'inscription : sa

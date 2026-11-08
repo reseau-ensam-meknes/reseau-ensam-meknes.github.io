@@ -79,18 +79,19 @@ test('ENSAM Meknès : les 68 liens et textes d’invitation, de réussite, d’a
   assert.equal(L.messageCamarade({ promo: 2019, role: 'laureat' }, 'ar', 'LIEN', 7, 2026, nomsEcole(ECOLES, 'ensam-meknes')), o['messageCamarade 2019 laureat ar 7']);
 });
 
-test('liens d’une autre école : &ecole= dans la page d’aperçu et le lien simple, en français et en arabe, avec ou sans code', () => {
+test('liens d’une autre école : &ecole= dans la page d’aperçu (sa page neutre, e/) et le lien simple, en français et en arabe, avec ou sans code', () => {
   const base = 'https://r.io/index.html?x=1#admin/inviter';
-  assert.equal(L.lienPromo(2019, 'fr', true, base, 'ensa-fes'), 'https://r.io/promo/2019/?ecole=ensa-fes');
-  assert.equal(L.lienPromo(2019, 'ar', true, base, 'ensa-fes'), 'https://r.io/promo/2019/ar/?ecole=ensa-fes');
+  // La page d'aperçu d'une autre école : sa page neutre (promo/AAAA/e/, promo/AAAA/ar/e/), qui ne nomme pas l'ENSAM Meknès
+  assert.equal(L.lienPromo(2019, 'fr', true, base, 'ensa-fes'), 'https://r.io/promo/2019/e/?ecole=ensa-fes');
+  assert.equal(L.lienPromo(2019, 'ar', true, base, 'ensa-fes'), 'https://r.io/promo/2019/ar/e/?ecole=ensa-fes');
   assert.equal(L.lienPromo(1995, 'ar', false, base, 'ensa-fes'), 'https://r.io/?promo=1995&lang=ar&ecole=ensa-fes');
   assert.equal(L.lienPromo(2027, 'fr', false, base, 'ensa-fes'), 'https://r.io/?promo=2027&ecole=ensa-fes');
   // Le code de qui invite après l'école : la page d'aperçu et le service worker les font suivre tous les deux
-  assert.equal(I.lienDeMembre(2019, 'fr', 'nadia219', true, 'ensa-fes'), 'https://r.io/promo/2019/?ecole=ensa-fes&de=nadia219');
-  assert.equal(I.lienDeMembre(2019, 'ar', 'nadia219', true, 'ensa-fes'), 'https://r.io/promo/2019/ar/?ecole=ensa-fes&de=nadia219');
+  assert.equal(I.lienDeMembre(2019, 'fr', 'nadia219', true, 'ensa-fes'), 'https://r.io/promo/2019/e/?ecole=ensa-fes&de=nadia219');
+  assert.equal(I.lienDeMembre(2019, 'ar', 'nadia219', true, 'ensa-fes'), 'https://r.io/promo/2019/ar/e/?ecole=ensa-fes&de=nadia219');
   assert.equal(I.lienDeMembre(2019, 'ar', 'nadia219', false, 'ensa-fes'), 'https://r.io/?promo=2019&lang=ar&ecole=ensa-fes&de=nadia219');
-  assert.equal(I.lienDeMembre(2019, 'fr', null, true, 'ensa-fes'), 'https://r.io/promo/2019/?ecole=ensa-fes', 'sans code (base pas à jour, pas de réseau)');
-  assert.equal(I.lienDeMembre(2019, 'fr', 'MAL<', true, 'ensa-fes'), 'https://r.io/promo/2019/?ecole=ensa-fes', 'un code mal formé ne part pas');
+  assert.equal(I.lienDeMembre(2019, 'fr', null, true, 'ensa-fes'), 'https://r.io/promo/2019/e/?ecole=ensa-fes', 'sans code (base pas à jour, pas de réseau)');
+  assert.equal(I.lienDeMembre(2019, 'fr', 'MAL<', true, 'ensa-fes'), 'https://r.io/promo/2019/e/?ecole=ensa-fes', 'un code mal formé ne part pas');
   // L'adresse du site (résumé, merci, fondateurs, « Une offre de ta boîte », affiche des lauréats)
   assert.equal(lienSite('fr', 'ensa-fes'), 'https://r.io/?ecole=ensa-fes');
   assert.equal(lienSite('ar', 'ensa-fes'), 'https://r.io/?lang=ar&ecole=ensa-fes');
@@ -102,6 +103,14 @@ test('liens d’une autre école : &ecole= dans la page d’aperçu et le lien s
     assert.equal(L.avecEcole('https://r.io/promo/2019/', e), 'https://r.io/promo/2019/', String(e));
     assert.equal(L.ecoleValide(e), false, String(e));
   }
+  // La page d'aperçu d'une promo : sa page neutre, seulement quand l'école est dite (l'ENSAM Meknès, ou rien : celle d'avant)
+  assert.equal(L.avecEcole('https://r.io/promo/2019/', 'ensa-fes'), 'https://r.io/promo/2019/e/?ecole=ensa-fes');
+  assert.equal(L.avecEcole('https://r.io/promo/2019/ar/?de=nadia219', 'ensa-fes'), 'https://r.io/promo/2019/ar/e/?de=nadia219&ecole=ensa-fes');
+  assert.equal(L.avecEcole('https://r.io/site/promo/2040/#x', 'fst-settat'), 'https://r.io/site/promo/2040/e/?ecole=fst-settat#x');
+  for (const e of ['ensam-meknes', undefined, '']) assert.equal(L.avecEcole('https://r.io/promo/2019/ar/', e), 'https://r.io/promo/2019/ar/', String(e));
+  // Une autre adresse que celle d'une page d'aperçu ne change pas de chemin
+  for (const a of ['https://r.io/', 'https://r.io/promo/', 'https://r.io/promo/2019', 'https://r.io/promo/2019/e/', 'https://r.io/promo/2019/fr/', 'https://r.io/promo/19/', 'https://r.io/?r=promo/2019/'])
+    assert.equal(L.avecEcole(a, 'ensa-fes').replace(/[?&]ecole=ensa-fes/, ''), a, a);
   assert.ok(L.ecoleValide('ensa-fes') && L.ecoleValide('x'.repeat(40)) && L.ecoleValide('ensam-meknes'));
   assert.equal(E.ecoleInvitee(), null);
 });
@@ -213,7 +222,7 @@ test('console : les messages, les liens et l’affiche sont ceux de l’école q
   const fermee = L.ecoleDesTextes({ me: { ...me, ecole: 'ecole-exemple' }, ecoles: ECOLES, ecoleConsole: '' });
   assert.deepEqual([fermee.slug, fermee.noms.nom, fermee.autre], ['ecole-exemple', 'ENSAM', false]);
   // Les liens qui vont avec (Inviter, Animer, Affiches)
-  assert.equal(I.lienInvitation(2019, 'fr', true, f.slug), 'https://r.io/promo/2019/?ecole=ensa-fes');
+  assert.equal(I.lienInvitation(2019, 'fr', true, f.slug), 'https://r.io/promo/2019/e/?ecole=ensa-fes');
   assert.equal(I.lienInvitation(2019, 'ar', false, vue('').slug), 'https://r.io/?promo=2019&lang=ar');
   assert.equal(lienSite('fr', vue('ecole-exemple').slug), 'https://r.io/');
 });
