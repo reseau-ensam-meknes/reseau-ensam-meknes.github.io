@@ -7766,9 +7766,11 @@ grant execute on function public.reussites_publiques(text) to anon, authenticate
 --  recrutements et ses matchs (puis « pas dans ton réseau » quand l'étudiant confirmait ou gardait ses notes) ; la carte
 --  sponsorisée d'un admin supprimé gardait son auteur disparu. Ces liens sont vidés ici, comme la clé étrangère le prévoit
 --  (« on delete set null ») : la ligne reste, rien d'autre n'y change. Une base saine n'a rien à vider ; relançable.
+--  Une table n'est touchée que s'il y a un lien à vider (une mise à jour, même vide, préviendrait les pages ouvertes :
+--  maj_tables).
 -- =====================================================================
 do $$
-declare r record;
+declare r record; v boolean;
 begin
   for r in select k.conrelid::regclass as t, a.attname as col, k.confrelid::regclass as ref, b.attname as rcol
     from pg_constraint k
@@ -7777,6 +7779,9 @@ begin
     where k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and k.connamespace = 'public'::regnamespace
     order by 1, 2
   loop
+    execute format('select exists (select 1 from %s x where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))',
+      r.t, r.col, r.ref, r.rcol, r.col) into v;
+    continue when not v;
     execute format('update %s x set %I = null where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I)',
       r.t, r.col, r.col, r.ref, r.rcol, r.col);
   end loop;

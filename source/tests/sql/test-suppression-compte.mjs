@@ -281,3 +281,21 @@ test('la mise à jour (deux fois) vide les liens cassés laissés avant, et seul
     assert.deepEqual(await une(b, 'select created_by, titre from public.sponsorises'), { created_by: null, titre: 'Carte' });
   } finally { await b.close(); }
 });
+
+test('une base saine : la mise à jour ne touche aucune table pour rien (les pages ouvertes ne rechargent pas leurs listes)', async () => {
+  const b = await nouvelleBase(SCHEMA);
+  try {
+    const L = uid(2301);
+    await creerCompte(b, { id: L, full_name: 'Nadia Bennis', role: 'laureat', filiere: 'Génie Industriel', promo: 2016 });
+    await en(b, L, tx => tx.query(`insert into public.entretiens (author_id, entreprise, questions) values ($1, 'OCP', '{"Pourquoi OCP ?"}')`, [L]));
+    // maj_tables : une mise à jour de ces tables, même sans ligne, préviendrait chaque page ouverte
+    const lire = async () => (await b.query(`select cle, maj from public.maj_tables where cle in ('entretiens', 'avis_stage') order by cle`)).rows
+      .map(r => `${r.cle} ${r.maj.toISOString()}`);
+    const avant = await lire();
+    assert.equal(avant.length, 1);
+    const maj = lireSql(MAJ);
+    await b.exec(maj);
+    await b.exec(maj);
+    assert.deepEqual(await lire(), avant);
+  } finally { await b.close(); }
+});
