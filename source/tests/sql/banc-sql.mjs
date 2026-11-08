@@ -2,6 +2,14 @@
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'node:fs';
 
+// Un fichier d'essai tient dans un seul jour (UTC). Le jour du calendrier de la base vient de l'heure que le fichier lui règle
+// (aujourdhuiA, plus bas, relue à chaque appel), les dates de ses lignes de l'heure réelle (now()). Un fichier qui passait
+// minuit en route mélangeait les deux jours : le rendez-vous posé pour « demain » avant minuit n'était plus le lendemain de
+// l'heure réglée après, et la veille ne le trouvait plus (test-veille, test-match-jour). Lancé dans les deux dernières
+// minutes de la journée, un fichier attend donc minuit avant de commencer : aucun ne dure aussi longtemps.
+const AVANT_MINUIT = 864e5 - (Date.now() % 864e5);
+if (AVANT_MINUIT < 120e3) await new Promise(ok => setTimeout(ok, AVANT_MINUIT + 500));
+
 export const SUPABASE = `
 create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
 grant usage on schema public to anon, authenticated, service_role;

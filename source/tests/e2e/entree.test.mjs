@@ -14,6 +14,11 @@ import { test } from './partie.mjs';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const saison = (d = new Date()) => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1);
+// S vaut pour tout le fichier (les promos des liens, des visiteurs et des inscrits). Lancé dans les dix dernières minutes d'une
+// saison (le 31 août au soir), le fichier attend la nouvelle : sinon le site changerait de saison en route, et la promo de 5A
+// des liens deviendrait celle des jeunes diplômés. Le fichier dure bien moins (3 à 4 minutes en entier).
+const finSaison = new Date(saison() + 1, 8, 1) - Date.now();
+if (finSaison < 6e5) await new Promise(ok => setTimeout(ok, finSaison + 500));
 const S = saison();
 const OFFRE = '3f2b8c1e-9a7d-4e21-b6c0-5d4e3f2a1b0c', DISPARUE = '11111111-2222-4333-8444-555555555555', INCONNUE = '99999999-2222-4333-8444-555555555555';
 const AUTEUR = '00000000-0000-4000-8000-0000000000b2';
@@ -1003,11 +1008,15 @@ test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la répons
   assert.ok(c, 'une copie de l’accueil est gardée');
   assert.equal(c.uid, UID);
   assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
-  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il vient de l'appareil, puisque la base est tenue.
+  // La mise à jour part juste après lui (rafraichir, store.js), parfois quand il est déjà affiché : on attend qu'elle soit
+  // demandée, et l'accueil est toujours là.
   tenir = true;
   await m.page.reload();
   await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
-  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length > 0, 'la mise à jour est demandée à la base');
+  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste là tant que la base ne répond pas');
   assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForTimeout(1200);

@@ -1,6 +1,6 @@
 // Le site construit (dist/, ou SITE_DIR) ouvert dans Chromium, en démo : aucun appel à la vraie base.
 // Chaque profil de démo parcourt tous les écrans, puis les parcours importants sont rejoués.
-import { before, after } from 'node:test';
+import { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -49,6 +49,17 @@ before(async () => {
   navigateur = await chromium.launch();
 });
 after(async () => { await navigateur?.close(); serveur?.close(); });
+// Un essai tient dans un seul jour : sinon les jours de l'application changeraient en route (le tour du jour de Match,
+// « Vu · 14:05 », la semaine d'un merci, le « Demain » d'un entretien, la vue du jour d'une carte sponsorisée…). Celui qui
+// commence dans les deux dernières minutes de la journée attend donc minuit : ceux qui suivent les jours durent bien moins (le
+// plus long, l'entretien de Match, une demi-minute). L'attente vient avant l'essai, jamais entre deux de ses pages. Deux
+// minuits comptent : celui de l'heure de cet appareil, qui est aussi celle des pages, et celui d'UTC, où la santé des
+// notifications compte ses jours. Ils tombent au même instant sur la CI (TZ UTC), pas ailleurs.
+beforeEach(async () => {
+  const maintenant = new Date(), minuit = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate() + 1);
+  const reste = Math.min(minuit - maintenant, 864e5 - (maintenant.getTime() % 864e5));
+  if (reste < 120e3) await new Promise(ok => setTimeout(ok, reste + 500));
+});
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
@@ -440,8 +451,13 @@ test('mentorat : le prochain rendez-vous en billet (date, vrai compte à rebours
   const d = new Date(rdv);
   assert.equal(await billet.locator('.bt-num').innerText(), String(d.getDate()));
   assert.equal(await billet.locator('.bt-heure').innerText(), `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
-  const h = Math.floor((d - Date.now()) / 36e5);
-  assert.match(await billet.locator('.m-rebours').innerText(), h >= 24 ? /^Dans \d+ jours$|^Demain$/ : /^Dans \d+ (h|min)/);
+  // La règle de l'application : en heures tant qu'il reste au plus 1439 minutes (arrondies au-dessus), en jours ensuite. Son
+  // heure se met à jour toutes les 30 s, donc elle peut avoir jusqu'à 30 s de retard : tout près du seuil, les deux sont justes.
+  const rebours = await billet.locator('.m-rebours').innerText(), reste = d - Date.now(), seuil = 1439 * 6e4;
+  const enJours = /^Dans \d+ jours$|^Demain$/, enHeures = /^Dans \d+ (h|min)/;
+  if (reste > seuil) assert.match(rebours, enJours);
+  else if (reste + 35e3 <= seuil) assert.match(rebours, enHeures);
+  else assert.ok(enJours.test(rebours) || enHeures.test(rebours), rebours);
   // Avant de confirmer : une seule action pleine (« Je serai là ») ; la visio attend
   assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
   assert.match(await billet.locator('.btn.primary').innerText(), /Je serai là/);
@@ -659,14 +675,17 @@ test('nouvelle version publiée pendant qu’un membre tape : pas de rechargemen
 
 test('lien d’invitation d’une promo : la promo est gardée, l’adresse nettoyée, le message prêt pour WhatsApp', async () => {
   const s = await ouvrir();
-  await s.page.goto(adresse + '?promo=2027'); await s.page.waitForSelector('.hello');
-  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2027');
+  // La promo des 5A de cette saison (celle de Salma) : elle a des inscrits, donc son lien est sa page d'aperçu. Une année
+  // écrite en dur finirait sans inscrits (lien ?promo=), puis hors de la liste.
+  const P = String(await s.page.evaluate(async () => (await import('./logic.js')).seasonOf()) + 1);
+  await s.page.goto(adresse + '?promo=' + P); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), P);
   assert.equal(await s.page.evaluate(() => location.search), '');
   await s.comme('Admin'); await s.aller('admin/inviter');
   assert.ok(await s.page.locator('.inv-row').count() >= 9);
-  const wa = await s.page.locator('.inv-row', { hasText: 'Promo 2027' }).locator('a[href^="https://wa.me/"]').getAttribute('href');
+  const wa = await s.page.locator('.inv-row', { hasText: 'Promo ' + P }).locator('a[href^="https://wa.me/"]').getAttribute('href');
   const msg = decodeURIComponent(wa.split('text=')[1]);
-  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + 'promo/2027/'));
+  assert.ok(msg.includes('promo ' + P), msg); assert.ok(msg.includes(adresse + 'promo/' + P + '/'));
   await s.page.click('.inv-opts .seg button:nth-child(3)');
   assert.match(await s.page.locator('.inv-msg').innerText(), /مرحبا دفعة/);
   assert.deepEqual(s.erreurs, []);
@@ -718,8 +737,10 @@ test('« Fais venir ta promo » : un bouton WhatsApp avec le message et le lien 
   await s.comme('Youssef'); await s.aller('espace');
   assert.match(await texte('#promo-wa'), /On est déjà \d+ de la promo 2016\./);
   assert.equal(await s.page.locator('#promo-wa.primary').count(), 0);
+  // La promo de Salma suit la saison (5A : la saison + 1)
   await s.comme('Salma'); await s.aller('parcours');
-  assert.ok((await texte('#promo-wa')).includes(adresse + 'promo/2027/'));
+  const promoSalma = await s.page.evaluate(() => window.__demo.me.promo);
+  assert.ok((await texte('#promo-wa')).includes(adresse + `promo/${promoSalma}/`));
   assert.doesNotMatch(await texte('#promo-wa'), /points|classement/);
   // Admin > Inviter : une promo sans aucun inscrit garde le lien simple ?promo=
   await s.comme('Admin'); await s.aller('admin/inviter');
@@ -733,7 +754,8 @@ test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en ar
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Salma'); await s.aller('parcours');
   const msg = decodeURIComponent((await s.page.getAttribute('#promo-wa', 'href')).split('text=')[1]);
-  assert.ok(msg.includes(adresse + 'promo/2027/ar/')); assert.ok(msg.includes('مرحبا دفعة 2027'));
+  const P = await s.page.evaluate(() => window.__demo.me.promo);
+  assert.ok(msg.includes(adresse + `promo/${P}/ar/`)); assert.ok(msg.includes(`مرحبا دفعة ${P}`));
   assert.equal(await s.debordement(), 0);
   await s.comme('Admin'); await s.aller('espace');
   assert.equal(await s.page.locator('#promo-card').count(), 0);
