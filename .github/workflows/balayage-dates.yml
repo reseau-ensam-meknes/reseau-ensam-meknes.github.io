@@ -1,0 +1,93 @@
+# Balayage des dates, lancé à la main (Actions → Balayage des dates → Run workflow) : tous les essais rejoués à des
+# dates à venir (fins de mois, 1er janvier, 29 février, été, rentrée, un dimanche soir, une nuit, dans cinq ans), pour
+# trouver avant le jour J ce qui ne casserait qu'à certaines dates ou à certaines heures. Node et chaque page partent de
+# la date choisie (source/tests/horloge-balayage.mjs) ; « maintenant » est le témoin : s'il est rouge, ce n'est pas la date.
+# À lancer avant de fusionner un changement qui touche aux dates, aux saisons ou aux heures.
+name: Balayage des dates
+
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "Instants ISO séparés par des virgules (vide : la liste de source/tests/dates-a-venir.mjs)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  dates:
+    name: Les dates à essayer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      dates: ${{ steps.liste.outputs.dates }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: liste
+        env:
+          DATES: ${{ inputs.dates }}
+        run: |
+          liste=$(node source/tests/dates-a-venir.mjs "$DATES")
+          echo "$liste"
+          echo "dates=$liste" >> "$GITHUB_OUTPUT"
+
+  essais:
+    name: ${{ matrix.date }} · ${{ matrix.suite }}
+    needs: dates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      # 20 machines à la fois pour tout le dépôt : en laisser pour les essais des changements en cours
+      max-parallel: 16
+      matrix:
+        date: ${{ fromJSON(needs.dates.outputs.dates) }}
+        # Comme les tests de chaque changement : les sources (calculs, base, emails) et le site en trois parts
+        suite: [verifs, site-1, site-2, site-3]
+    defaults:
+      run:
+        working-directory: source/tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/tests/package-lock.json
+      - name: Construire le site depuis les sources
+        working-directory: source
+        run: sh build.sh
+      - name: Installer les outils de test
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          npm ci
+          if [ "$SUITE" != verifs ]; then npx playwright install --with-deps chromium; fi
+      - name: Les essais à cette date
+        env:
+          FAUX_MAINTENANT: ${{ matrix.date }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set +e
+          H="--import ./horloge-balayage.mjs"
+          R="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination"
+          if [ "$SUITE" = verifs ]; then
+            node $H --test $R=tap-unit.txt unit/*.test.mjs; a=$?
+            node $H --test $R=tap-sql.txt sql/test-*.mjs; b=$?
+            node $H --test --test-concurrency=1 $R=tap-notifier.txt notifier/test-*.mjs; c=$?
+            code=$((a + b + c))
+          else
+            PARTIE="${SUITE#site-}/3" node $H --test $R=tap-site.txt e2e/*.test.mjs; code=$?
+          fi
+          echo "=== BILAN $FAUX_MAINTENANT $SUITE (code $code)"
+          grep -h -E "^ *not ok|^# (tests|pass|fail)" tap-*.txt
+          {
+            if [ "$code" = 0 ]; then echo "### $FAUX_MAINTENANT · $SUITE : vert"; else echo "### $FAUX_MAINTENANT · $SUITE : rouge"; fi
+            grep -h -E "^ *not ok" tap-*.txt | sed -E 's/^ *not ok [0-9]+ - /- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
