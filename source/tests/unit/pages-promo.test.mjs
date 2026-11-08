@@ -137,23 +137,25 @@ test('pages de l’ENSAM Meknès (promo/AAAA/, promo/AAAA/ar/) : à l’octet ce
 test('page neutre de la promo 2019 (lien d’une autre école) : aperçu sans nom d’école, en français et en arabe ; le site avec ?promo=2019, l’école et le code', () => {
   const pages = construire(), fr = pages['promo/2019/e/index.html'], ar = pages['promo/2019/ar/e/index.html'];
   const meta = (p, k) => (p.match(new RegExp(`<meta (?:property|name)="${k}" content="([^"]*)">`)) || [])[1];
-  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'description', 'og:image', 'og:image:alt', 'og:url', 'og:locale'].map(k => meta(fr, k)), [
+  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'description', 'og:image', 'og:image:alt', 'og:locale'].map(k => meta(fr, k)), [
     'Réseau ENSAM', 'Promo 2019 · tes camarades sont sur le Réseau',
     'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois et conseils entre lauréats et étudiants de ton école. Inscription gratuite, ta promo est déjà indiquée.',
     'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois et conseils entre lauréats et étudiants de ton école. Inscription gratuite, ta promo est déjà indiquée.',
-    `${SITE}img/apercu-promo-neutre.jpg`, 'Dessin d’une entrée d’école', `${SITE}promo/2019/e/`, 'fr_FR']);
-  assert.ok(fr.includes(`<link rel="canonical" href="${SITE}promo/2019/e/">`));
+    `${SITE}img/apercu-promo-neutre.jpg`, 'Dessin d’une entrée d’école', 'fr_FR']);
   assert.ok(fr.includes('<title>Promo 2019 · tes camarades sont sur le Réseau</title>'));
   assert.ok(fr.includes('<body><p><a href="../../../?promo=2019">Ouvrir le Réseau ENSAM</a></p></body>'));
   assert.ok(ar.includes('<html lang="ar" dir="rtl">'));
-  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'og:image', 'og:image:alt', 'og:url', 'og:locale'].map(k => meta(ar, k)), [
+  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'og:image', 'og:image:alt', 'og:locale'].map(k => meta(ar, k)), [
     'شبكة ENSAM', 'دفعة 2019 · زملاؤك على الشبكة',
     'مبادرة من الخريجين، مستقلة عن إدارة المدرسة: تداريب، مشاريع نهاية الدراسة، وظائف ونصائح بين خريجي وطلبة مدرستك. التسجيل مجاني، ودفعتك محدَّدة مسبقًا.',
-    `${SITE}img/apercu-promo-neutre.jpg`, 'رسم لمدخل مدرسة', `${SITE}promo/2019/ar/e/`, 'ar_MA']);
+    `${SITE}img/apercu-promo-neutre.jpg`, 'رسم لمدخل مدرسة', 'ar_MA']);
   assert.ok(ar.includes('<body><p><a href="../../../../?promo=2019&amp;lang=ar">فتح شبكة ENSAM</a></p></body>'));
-  // Aucune page neutre ne nomme une école (ni l'ENSAM Meknès, ni une autre), ni ne dit l'école ailleurs que dans son script
+  // Aucune page neutre ne nomme une école (ni l'ENSAM Meknès, ni une autre), ni ne dit l'école ailleurs que dans son script.
+  // Ni og:url ni canonical : Facebook (et d'autres) ramènent un lien partagé à cette adresse-là, sans ?ecole= ni la route
+  // en #, et la personne arriverait à l'ENSAM Meknès ; sans elles, le lien partagé reste celui qu'on a partagé
   for (const [f, p] of Object.entries(pages).filter(([f]) => /\/e\/index\.html$/.test(f))) {
     assert.doesNotMatch(p, /Meknès|مكناس|Casablanca|Fès|Settat|apercu-promo\.jpg/, f);
+    assert.doesNotMatch(p, /og:url|canonical/, f);
     assert.doesNotMatch(p.replace(/<script>[\s\S]*?<\/script>/, ''), /ecole=/, f);
     assert.ok(Buffer.byteLength(p) < 2500, `${f} : ${Buffer.byteLength(p)} octets`);
   }
@@ -200,12 +202,13 @@ test('pages neutres, service worker actif : la même adresse que la page ; celle
 test('page neutre du site (e.html) : aperçu sans nom d’école ; le site avec toute l’adresse', () => {
   const p = construire()['e.html'];
   const meta = k => (p.match(new RegExp(`<meta (?:property|name)="${k}" content="([^"]*)">`)) || [])[1];
-  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'description', 'og:image', 'og:image:alt', 'og:url', 'og:locale', 'robots'].map(meta), [
+  assert.deepEqual(['og:site_name', 'og:title', 'og:description', 'description', 'og:image', 'og:image:alt', 'og:locale', 'robots'].map(meta), [
     'Réseau ENSAM', 'Réseau ENSAM',
     'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois, conseils et entraide entre lauréats et étudiants de ton école.',
     'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois, conseils et entraide entre lauréats et étudiants de ton école.',
-    `${SITE}img/apercu-promo-neutre.jpg`, 'Dessin d’une entrée d’école', `${SITE}e.html`, 'fr_FR', 'noindex']);
-  assert.ok(p.includes(`<link rel="canonical" href="${SITE}e.html">`));
+    `${SITE}img/apercu-promo-neutre.jpg`, 'Dessin d’une entrée d’école', 'fr_FR', 'noindex']);
+  // Ni og:url ni canonical, comme index.html et les pages neutres des promos : le lien partagé garde l'école et la route
+  assert.doesNotMatch(p, /og:url|canonical/);
   assert.ok(p.includes('<title>Réseau ENSAM</title>'));
   assert.ok(p.includes('<body><p><a href="./">Ouvrir le Réseau ENSAM</a></p></body>'));
   assert.doesNotMatch(p, /Meknès|مكناس|Casablanca|Fès|Settat|apercu\.jpg|apercu-promo\.jpg|ecole=|http-equiv/);

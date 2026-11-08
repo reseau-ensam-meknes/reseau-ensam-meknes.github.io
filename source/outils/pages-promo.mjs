@@ -10,6 +10,9 @@
 // revenus depuis) refait cette adresse sans &ecole=, et la personne arriverait à l'ENSAM Meknès.
 // Les autres liens d'une autre école (une offre, une question, le site : avecEcole) mènent à dist/e.html, la page neutre du
 // site, à côté d'index.html : le même aperçu, sans promo, qui envoie vers le site avec toute l'adresse (?…, #…).
+// Les pages neutres n'ont ni og:url ni canonical : Facebook (et d'autres) ramènent un lien partagé à cette adresse-là, sans
+// ?ecole= ni la route en #, et la personne arriverait à l'ENSAM Meknès. Sans elles, le lien partagé reste celui qu'on a
+// partagé, comme pour index.html. Les pages de l'ENSAM Meknès gardent les leurs, à l'octet.
 // Les promos sont celles qu'accepte le lien d'invitation (regles-entree.js) : la sortie ne dépend pas de la date,
 // la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
@@ -39,8 +42,10 @@ const NEUTRE = {
     site: 'شبكة ENSAM', alt: 'رسم لمدخل مدرسة', ouvrir: 'فتح شبكة ENSAM' },
 };
 function html(a, l, neutre = false) {
-  const t = (neutre ? NEUTRE : TXT)[l], ici = `${site}promo/${a}/${l === 'ar' ? 'ar/' : ''}${neutre ? 'e/' : ''}`;
+  const t = (neutre ? NEUTRE : TXT)[l], ici = `${site}promo/${a}/${l === 'ar' ? 'ar/' : ''}`;
   const vers = `${'../'.repeat(2 + (l === 'ar') + neutre)}?promo=${a}${l === 'ar' ? '&lang=ar' : ''}`;
+  // L'adresse de la page (canonical, og:url) : seulement sur celles de l'ENSAM Meknès (voir plus haut)
+  const adresse = balise => (neutre ? '' : `${balise}\n`);
   return `<!doctype html>
 <html lang="${t.lang}" dir="${t.dir}">
 <head>
@@ -50,11 +55,9 @@ function html(a, l, neutre = false) {
 <title>${esc(t.titre(a))}</title>
 <meta name="description" content="${esc(t.desc)}">
 <meta name="robots" content="noindex">
-<link rel="canonical" href="${ici}">
-<meta property="og:type" content="website">
+${adresse(`<link rel="canonical" href="${ici}">`)}<meta property="og:type" content="website">
 <meta property="og:site_name" content="${t.site}">
-<meta property="og:url" content="${ici}">
-<meta property="og:title" content="${esc(t.titre(a))}">
+${adresse(`<meta property="og:url" content="${ici}">`)}<meta property="og:title" content="${esc(t.titre(a))}">
 <meta property="og:description" content="${esc(t.desc)}">
 <meta property="og:image" content="${site}img/${neutre ? 'apercu-promo-neutre' : 'apercu-promo'}.jpg">
 <meta property="og:image:type" content="image/jpeg">
@@ -90,10 +93,8 @@ fs.writeFileSync(path.join(dist, 'e.html'), `<!doctype html>
 <title>Réseau ENSAM</title>
 <meta name="description" content="${esc(desc)}">
 <meta name="robots" content="noindex">
-<link rel="canonical" href="${site}e.html">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Réseau ENSAM">
-<meta property="og:url" content="${site}e.html">
 <meta property="og:title" content="Réseau ENSAM">
 <meta property="og:description" content="${esc(desc)}">
 <meta property="og:image" content="${site}img/apercu-promo-neutre.jpg">
