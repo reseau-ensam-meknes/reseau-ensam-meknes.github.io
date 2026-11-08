@@ -409,9 +409,15 @@ export const placeCarte = (sys, lang, largeur, rem = 16) => `calc(${BORD[sys]}px
 // mesuré avec la carte de 320 à 899 px de large : le plus haut sous 23,4 rem de large (une ligne de plus), puis au-delà. Un
 // texte ou un style de la page qui change cette hauteur se reporte ici (e2e « Recevoir mon code au premier écran »).
 const SOUS_CARTE = { fr: [36.6, 35.15], ar: [37.05, 35.25] };
-export function carteTient(sys, lang, largeur, hauteur, rem = 16) {
-  const [etroit, large] = SOUS_CARTE[lang === 'ar' ? 'ar' : 'fr'];
-  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (largeur / rem < 23.4 ? etroit : large)) * rem;
+// Le bandeau d'un lien d'invitation (sur téléphone, sa première ligne seule) en plus, écart compris, en rem : 'promo'
+// (« Bienvenue, promo 2019 ! ») ou 'de' (« Invitation de Nadia · promo 2019 », qui passe sur deux lignes sous 23,4 rem
+// de large en français quand le prénom est long), mesuré de 320 à 899 px (e2e « lien d'invitation au premier écran »)
+const BANDE = { fr: { promo: [3.4, 3.4], de: [4.8, 3.4] }, ar: { promo: [3.55, 3.55], de: [3.55, 3.55] } };
+export function carteTient(sys, lang, largeur, hauteur, rem = 16, bande = '') {
+  const l = lang === 'ar' ? 'ar' : 'fr', etroite = largeur / rem < 23.4;
+  const [etroit, large] = SOUS_CARTE[l];
+  const enPlus = bande ? BANDE[l][bande][etroite ? 0 : 1] : 0;
+  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (etroite ? etroit : large) + enPlus) * rem;
 }
 // La ligne discrète qui remplace la carte dans la visite : 44 px, sauf là où sa phrase prend une ligne de plus (largeur en rem
 // jusqu'à laquelle, hauteur en rem). Android : « Rien ne s'ouvre ? » (après Chrome) ; iPhone, iPad : le geste de Safari.
@@ -466,7 +472,7 @@ function CarteAppli({ mode, role, invite, ligne = false, onEchec }) {
   // Dans un lien ou un bouton en flex, la phrase reste dans un seul span : un seul morceau, les espaces gardés
   const T = a.CARTE, f = x => a.nomsLatins(a.typo(t(x), getLang())).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
-  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
+  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, de: codeInvite(), ecole: ecoleInvitee(), role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
   // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie). L'application peut
   // aussi ignorer le lien : la page toujours là et visible 1,5 s après (ni cachée ni quittée), la carte dit quoi faire, à la
   // place de sa phrase (même hauteur : rien ne glisse sous le doigt)
@@ -526,13 +532,19 @@ export function AuthScreen({ store }) {
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
   // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
+  // Le bandeau d'un lien d'invitation, sur téléphone : sa première ligne seule (« Bienvenue, promo 2019 ! », ou qui invite),
+  // pour que le rôle, l'email, l'accord et « Recevoir mon code » restent au premier écran ; la phrase qui explique, sur
+  // ordinateur. Décidé à l'ouverture, comme court.
+  const [bandeCourte] = useState(() => innerWidth < 900);
   // Le navigateur d'une application sur téléphone : la carte seulement si « Recevoir mon code » tient encore avec elle au
   // premier écran ('carte') ; sinon sa ligne discrète au-dessus du formulaire ('ligne'), et sur un petit écran sous le titre, à
   // la place des chiffres ('haut'). Décidé à l'ouverture, comme court.
   const [appli] = useState(() => {
     if (!APPLI_ICI) return '';
     const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem) ? 'carte' : court ? 'haut' : 'ligne';
+    // Le bandeau d'invitation à venir : la promo du lien (son bandeau, avec le rôle de sa promo), ou le code de qui invite
+    const bande = mode !== 'inscription' ? '' : codeInvite() ? 'de' : invite && (!role || role === roleDePromo(invite)) ? 'promo' : '';
+    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem, bande) ? 'carte' : court ? 'haut' : 'ligne';
   });
   // appareil.js en échec : plus de ligne sous le titre, les chiffres reviennent
   const [appliKo, setAppliKo] = useState(false);
@@ -622,6 +634,8 @@ export function AuthScreen({ store }) {
   const inscription = mode === 'inscription';
   const etuAvant = (role || (invite ? roleDePromo(invite) : '')) === 'etudiant';
   const bandeau = invite && inscription && (!role || role === roleDePromo(invite));
+  // Qui invite (« Invitation de Nadia · promo 2019 ») prend la place de « Bienvenue, promo 2019 ! » quand c'est la même promo
+  const deIci = deQui && inscription, memePromo = !!(deIci && bandeau && Number(deQui.promo) === invite);
   const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
   const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
   const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
@@ -644,7 +658,7 @@ export function AuthScreen({ store }) {
       ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
-      ${bandeau || (deQui && inscription) ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deQui && inscription ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau ? html`<strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.` : null}</span></p>` : null}
+      ${bandeau || deIci ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deIci ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau && !memePromo ? html`<strong>Bienvenue, promo ${invite} !</strong>${bandeCourte ? null : ' Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.'}` : bandeau && !bandeCourte ? 'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.' : null}</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`

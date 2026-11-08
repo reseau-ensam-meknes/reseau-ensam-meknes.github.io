@@ -1144,9 +1144,19 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
     const fond = await m.page.evaluate(() => getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
     assert.ok(theme === 'dark' ? fond.every(x => x < 80) : fond.every(x => x > 200), `fond ${fond}`);
     assert.equal(await m.page.locator('.shell.squelette [role="status"]').count(), 1, 'dit aux lecteurs d’écran que ça charge');
+    // La barre du haut garde la forme de la vraie : messages, langue et cloche sur téléphone ; langue et cloche sur ordinateur
+    const icones = () => m.page.locator('.shell.squelette .top .sq-icone:visible').count();
+    assert.equal(await icones(), 3, 'téléphone');
+    await m.page.setViewportSize({ width: 1280, height: 800 });
+    assert.equal(await icones(), 2, 'ordinateur');
+    await m.page.setViewportSize({ width: 390, height: 844 });
     tenir = false; for (const r of tenus.splice(0)) await r.continue();
     await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
     assert.equal(await m.page.locator('.shell.squelette').count(), 0);
+    const vraies = () => m.page.locator('.shell .top > .icon-btn:visible, .shell .top > .lang-btn:visible').count();
+    assert.equal(await vraies(), 3, 'la vraie barre, sur téléphone');
+    await m.page.setViewportSize({ width: 1280, height: 800 });
+    assert.equal(await vraies(), 2, 'la vraie barre, sur ordinateur');
     // Seuls les prénoms des membres restent tels quels
     if (langue === 'ar') assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => !['Salma', 'Hajar'].includes(x))), []);
     assert.deepEqual(m.erreurs, []);
@@ -1848,7 +1858,8 @@ test('invitation nommée : « Invitation de Nadia · promo 2019 », le code part
   const s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019&de=nadia219' });
   await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
   assert.equal(await s.page.locator('#au-invite-de').innerText(), 'Invitation de Nadia · promo 2019');
-  assert.match(await s.page.locator('.invite-band').innerText(), /Bienvenue, promo 2019 !/);
+  // La même promo : qui invite prend la place de « Bienvenue, promo 2019 ! » ; sur téléphone, le bandeau tient en une ligne
+  assert.equal((await s.page.locator('.invite-band').innerText()).trim(), 'Invitation de Nadia · promo 2019');
   assert.equal(await s.page.evaluate(() => location.search), '', 'adresse nettoyée');
   assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219');
   assert.deepEqual(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').map(a => a.corps), [{ p_code: 'nadia219' }]);
@@ -1918,6 +1929,48 @@ test('invitation nommée : en arabe, depuis la page de la promo, code inconnu, c
   assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// Le bandeau d'un lien d'invitation laisse « Recevoir mon code » au premier écran : sur téléphone, sa première ligne seule
+// (qui invite, ou « Bienvenue, promo 2019 ! ») ; la phrase qui explique sur ordinateur
+test('lien d’invitation au premier écran : sur téléphone, le bandeau en une ligne laisse le rôle, l’email, l’accord et « Recevoir mon code » en vue ; sur ordinateur, la phrase en plus', async () => {
+  site.rpc.invitation_de = NADIA;
+  const ACCORD = '.entree-form label.check:has(#au-ok)', BOUTON = '.entree-form button.btn.primary';
+  for (const [largeur, hauteur, langue, query, attendu] of [
+    [360, 640, 'fr', '?promo=2019&de=nadia219', 'Invitation de Nadia · promo 2019'], [375, 667, 'fr', '?promo=2019&de=nadia219', 'Invitation de Nadia · promo 2019'],
+    [390, 664, 'fr', '?promo=2019&de=nadia219', 'Invitation de Nadia · promo 2019'], [360, 640, 'fr', '?promo=2019', 'Bienvenue, promo 2019 !'],
+    [390, 664, 'ar', '?promo=2019&de=nadia219', 'دعوة من ⁨Nadia⁩ · دفعة 2019'], [393, 690, 'ar', '?promo=2019', 'مرحبا بك، دفعة 2019!']]) {
+    const cas = `${largeur} × ${hauteur} ${langue} ${query}`;
+    const s = await visiteur({ largeur, hauteur, langue, query });
+    if (query.includes('de=')) await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+    await s.page.evaluate(() => document.fonts.ready);
+    assert.equal((await s.page.locator('.invite-band').innerText()).trim(), attendu, cas);
+    for (const sel of ['.invite-band', '#au-je-laureat', '#au-email', ACCORD, BOUTON]) {
+      const b = await s.page.locator(sel).boundingBox();
+      assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${sel} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    }
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
+    assert.ok((await s.debordement()) <= 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+  // Sur ordinateur : qui invite, puis la phrase ; une autre promo que celle de qui invite garde son « Bienvenue »
+  for (const [query, lignes] of [
+    ['?promo=2019&de=nadia219', ['Invitation de Nadia · promo 2019', 'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.']],
+    ['?promo=2019', ['Bienvenue, promo 2019 ! Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.']],
+    [`?promo=${S + 1}&de=nadia219`, ['Invitation de Nadia · promo 2019', `Bienvenue, promo ${S + 1} ! Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.`]]]) {
+    const s = await visiteur({ largeur: 1280, hauteur: 800, query });
+    if (query.includes('de=')) await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+    assert.deepEqual((await s.page.locator('.invite-band').innerText()).split('\n').map(x => x.trim()).filter(Boolean), lignes, query);
+    assert.deepEqual(s.erreurs, [], query);
+    await s.ctx.close();
+  }
+  const a = await visiteur({ largeur: 1280, hauteur: 800, langue: 'ar', query: '?promo=2019&de=nadia219' });
+  await a.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.deepEqual((await a.page.locator('.invite-band').innerText()).split('\n').map(x => x.trim()).filter(Boolean), ['دعوة من ⁨Nadia⁩ · دفعة 2019', 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.']);
+  assert.deepEqual(await a.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
 });
 
 const VISAGES = [{ nom: 'Nadia B.', promo: 2019, entreprise: 'Renault Tanger', photo: UID + '/photo-3.webp' }, { nom: 'Youssef E.', promo: 2016, entreprise: 'OCP', photo: null }];
