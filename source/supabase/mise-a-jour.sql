@@ -2077,9 +2077,15 @@ create table if not exists public.demandes_contact (
   check (demandeur_id <> cible_id)
 );
 
+-- Qui est en contact avec qui. La règle des coordonnées, la vue profils (voit_champ) et la messagerie (peut_discuter) le
+-- demandent pour l'appelant lui-même. Un membre qui l'appelle avec d'autres ids n'a de réponse que pour un lien où il
+-- est ; l'administration, pour deux membres de son école (celle du réseau : partout) ; la base seule (sans membre) : tout.
 create or replace function public.en_relation(p_viewer uuid, p_owner uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_viewer is not null and p_owner is not null and (
+  select p_viewer is not null and p_owner is not null
+    and (auth.uid() is null or auth.uid() = p_viewer or auth.uid() = p_owner or public.super_admin()
+         or (public.is_admin() and public.de_mon_ecole(p_viewer, p_owner)))
+    and (
     exists (select 1 from public.demandes_contact d where d.status = 'acceptee'
       and ((d.demandeur_id = p_viewer and d.cible_id = p_owner) or (d.demandeur_id = p_owner and d.cible_id = p_viewer)))
     or exists (select 1 from public.applications a join public.offers o on o.id = a.offer_id
@@ -2704,10 +2710,15 @@ create table if not exists public.verifications_pairs (
   check (laureat_id <> verificateur_id)
 );
 
+-- Les confirmations d'un lauréat par des lauréats vérifiés de sa promo : les membres de son école les lisent déjà
+-- (verifications_pairs et la vue profils). Un membre d'une autre école, ou son administration, a 0 ; l'administration du
+-- réseau et la base seule, le vrai compte. protect_profile (la vérification automatique) le demande pour le lauréat
+-- lui-même, son administration ou qui vient de le confirmer : tous de son école.
 create or replace function public.pairs_valides(p_id uuid, p_promo int) returns int
 language sql stable security definer set search_path = public as $$
   select count(*)::int from public.verifications_pairs v join public.profiles x on x.id = v.verificateur_id
-  where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo;
+  where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo
+    and (auth.uid() is null or auth.uid() = p_id or public.super_admin() or public.de_mon_ecole(p_id));
 $$;
 revoke all on function public.pairs_valides(uuid, int) from public, anon;
 grant execute on function public.pairs_valides(uuid, int) to authenticated, service_role;
@@ -3833,9 +3844,14 @@ alter table public.signalements drop constraint if exists signalements_cible_typ
 alter table public.signalements add constraint signalements_cible_type_check
   check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande','reponse_demande'));
 
+-- Seule l'administration l'apprend (règle « lecture membres » des messages, fichiers du chat) : celle de l'école des deux
+-- membres du message, celle du réseau pour tous ; la base seule (sans membre) aussi. Un membre n'a jamais de réponse,
+-- même l'auteur du message ou celui qui l'a reçu : il saurait qui l'a signalé.
 create or replace function public.message_signale(p_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id);
+  select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id)
+    and (auth.uid() is null or public.super_admin() or (public.is_admin()
+         and exists (select 1 from public.messages m where m.id = p_id and public.de_mon_ecole(m.author_id, m.dest_id))));
 $$;
 revoke all on function public.message_signale(uuid) from public, anon;
 grant execute on function public.message_signale(uuid) to authenticated, service_role;
