@@ -51,6 +51,9 @@ create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
+-- Les règles des membres l'appellent ; aucune de celles qu'un visiteur sans compte traverse
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated, service_role;
 
 -- L'administration du réseau (école ENSAM Meknès) voit toutes les écoles ; celle d'une autre école ne voit que la sienne.
 -- En plpgsql : la colonne « ecole » n'existe pas encore à cet endroit d'une première installation.
@@ -598,7 +601,7 @@ language sql stable security definer set search_path = public as $$
   select u.email::text from public.mentorships m join auth.users u on u.id = m.student_id
   where m.id = p_id and m.status = 'acceptee' and m.mentor_id = auth.uid();
 $$;
-revoke all on function public.email_rdv(uuid) from public;
+revoke all on function public.email_rdv(uuid) from public, anon;
 grant execute on function public.email_rdv(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
@@ -717,7 +720,7 @@ begin
     where public.super_admin() or exists (select 1 from public.profiles p where p.id = u.id and p.ecole = public.mon_ecole())
     order by u.created_at desc;
 end $$;
-revoke all on function public.admin_comptes() from public;
+revoke all on function public.admin_comptes() from public, anon;
 grant execute on function public.admin_comptes() to authenticated;
 
 -- ---------------------------------------------------------------------
@@ -2065,6 +2068,8 @@ language sql stable security definer set search_path = public as $$
     or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id
       where x.status = 'acceptee' and ((d.auteur_id = p_owner and x.laureat_id = p_viewer) or (d.auteur_id = p_viewer and x.laureat_id = p_owner))));
 $$;
+revoke all on function public.en_relation(uuid, uuid) from public, anon;
+grant execute on function public.en_relation(uuid, uuid) to authenticated, service_role;
 
 create or replace function public.protect_demande_contact() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -2147,6 +2152,8 @@ begin
   if p_champ = 'cv' and exists (select 1 from public.matchs m where m.etudiant_id = p_owner and m.laureat_id = auth.uid()) then return true; end if;
   return public.en_relation(auth.uid(), p_owner);
 end $$;
+revoke all on function public.voit_champ(uuid, jsonb, text) from public, anon;
+grant execute on function public.voit_champ(uuid, jsonb, text) to authenticated, service_role;
 
 -- =====================================================================
 --  Écoles : chaque école a son réseau, dans la même base (première partie, la seconde est à la fin du fichier).
@@ -2181,9 +2188,13 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.ecole_entree(text) from public, anon, authenticated;
 
--- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau
+-- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau. Un visiteur sans compte : les écoles
+-- ouvertes, par une règle à lui qui n'appelle aucune fonction (mon_ecole et super_admin ne lui sont pas permises : une
+-- seule règle pour les deux rôles lui refusait toute lecture, « permission denied for function »)
 drop policy if exists "lecture" on public.ecoles;
-create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+create policy "lecture" on public.ecoles for select to authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+drop policy if exists "lecture visiteurs" on public.ecoles;
+create policy "lecture visiteurs" on public.ecoles for select to anon using (ouverte);
 drop policy if exists "administration" on public.ecoles;
 create policy "administration" on public.ecoles for all to authenticated using (public.super_admin()) with check (public.super_admin());
 
@@ -2388,6 +2399,8 @@ begin
   if not found then return false; end if;
   return public.voit_champ(v_owner, v_vis, 'cv');
 end $$;
+revoke all on function public.peut_voir_cv(text) from public, anon;
+grant execute on function public.peut_voir_cv(text) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------
 -- Banque d'entretiens : les questions posées, par entreprise, partagées après l'entretien
@@ -2619,6 +2632,8 @@ language sql stable security definer set search_path = public as $$
   select coalesce(array(select lower(trim(x)) from jsonb_array_elements_text(
     (select valeur from public.reglages where cle = 'domaines_ecole' and jsonb_typeof(valeur) = 'array')) x where trim(x) <> ''), '{}');
 $$;
+revoke all on function public.domaines_ecole() from public, anon;
+grant execute on function public.domaines_ecole() to authenticated, service_role;
 
 -- Domaines et email obligatoire d'une école : ENSAM Meknès garde ses réglages (Administration > Réglages), les autres
 -- écoles ont les leurs dans ecoles (seconde partie « Écoles », plus bas)
@@ -2672,6 +2687,8 @@ language sql stable security definer set search_path = public as $$
   select count(*)::int from public.verifications_pairs v join public.profiles x on x.id = v.verificateur_id
   where v.laureat_id = p_id and x.role = 'laureat' and x.verified and x.promo = p_promo;
 $$;
+revoke all on function public.pairs_valides(uuid, int) from public, anon;
+grant execute on function public.pairs_valides(uuid, int) to authenticated, service_role;
 
 create or replace function public.protect_verification_pair() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -3790,6 +3807,8 @@ create or replace function public.message_signale(p_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.signalements s where s.cible_type = 'prive' and s.cible_id = p_id);
 $$;
+revoke all on function public.message_signale(uuid) from public, anon;
+grant execute on function public.message_signale(uuid) to authenticated, service_role;
 
 alter table public.messages enable row level security;
 alter table public.blocages enable row level security;
@@ -3863,6 +3882,8 @@ language sql stable security definer set search_path = public as $$
     (storage.foldername(p_name))[1] = auth.uid()::text or (storage.foldername(p_name))[2] = auth.uid()::text
     or (public.is_admin() and exists (select 1 from public.messages m where m.fichier = p_name and public.message_signale(m.id))));
 $$;
+revoke all on function public.peut_lire_fichier_chat(text) from public, anon;
+grant execute on function public.peut_lire_fichier_chat(text) to authenticated, service_role;
 do $$ begin
   insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
     values ('chat', 'chat', false, 5242880, array['image/jpeg','image/png','image/webp','audio/webm','audio/ogg','audio/mp4','audio/mpeg','audio/aac'])
@@ -4342,6 +4363,8 @@ language sql stable security definer set search_path = public as $$
   select case when cardinality(coalesce(public.parcours_de((select a.filiere from public.profiles a where a.id = d.auteur_id)), '{}'::text[])) = 0
     then d.created_at else d.created_at + interval '24 hours' end;
 $$;
+revoke all on function public.demande_large_le(public.demandes) from public, anon;
+grant execute on function public.demande_large_le(public.demandes) to authenticated, service_role;
 
 alter table public.demandes add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
 create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
@@ -7707,6 +7730,24 @@ begin
   loop
     execute format('update %s x set %I = null where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I)',
       r.t, r.col, r.col, r.ref, r.rcol, r.col);
+  end loop;
+end $$;
+
+-- =====================================================================
+--  Ce qu'un visiteur sans compte peut faire exécuter. Supabase permet à tous (public, anon) chaque nouvelle fonction ;
+--  une fonction SECURITY DEFINER tourne avec tous les droits. Un visiteur garde seulement celles de la page d'entrée, des
+--  liens partagés et des liens des emails, chacune revue (tests/sql/test-droits-visiteurs.mjs en tient la liste exacte).
+--  Les fonctions de déclencheur ne s'appellent pas : un déclencheur tourne sans le droit d'exécuter sa fonction (vérifié
+--  à sa création seulement). Personne n'a à les exécuter ; ce bloc, en fin de fichier, les couvre toutes. Relançable.
+-- =====================================================================
+do $$
+declare r record;
+begin
+  for r in select p.oid::regprocedure as f from pg_proc p
+    where p.pronamespace = 'public'::regnamespace and p.prokind = 'f' and p.prosecdef and p.prorettype = 'trigger'::regtype
+    order by 1
+  loop
+    execute format('revoke all on function %s from public, anon, authenticated', r.f);
   end loop;
 end $$;
 
