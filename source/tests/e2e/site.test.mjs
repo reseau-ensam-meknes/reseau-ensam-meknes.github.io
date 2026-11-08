@@ -10916,7 +10916,7 @@ test('console de l’administration du réseau, deux écoles : comme avant (rubr
   await s.aller('admin'); await s.page.waitForSelector('#adm-notifs');
   assert.deepEqual(await rubriquesAffichees(s), ['vue', 'traiter', 'animer', 'agenda', 'inviter', 'membres', 'contenus', 'moderation', 'liste', 'ecoles', 'partenaires', 'sponsorises', 'outils', 'reglages']);
   assert.deepEqual(await s.page.locator('#cs-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', ie]);
-  assert.match(await s.page.locator('.panel', { has: s.page.locator('button', { hasText: 'Attribuer les parrains' }) }).locator('p').innerText(), /Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne\.$/);
+  assert.match(await s.page.locator('.panel', { has: s.page.locator('button', { hasText: 'Attribuer les parrains' }) }).locator('p').innerText(), /Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin\.$/);
   for (const [r, sel] of [['admin/reglages', '#rg-domaines'], ['admin/ecoles', '#ec-reseaux'], ['admin/partenaires', '#pa-suivi'], ['admin/outils', '.affiche']]) {
     await s.aller(r); await s.page.waitForSelector(sel);
     assert.deepEqual(await rubriqueActive(s), [r.slice('admin/'.length)]);
@@ -10936,6 +10936,263 @@ test('console de l’administration du réseau, deux écoles : comme avant (rubr
   assert.equal(await s.page.locator('#lo-cndp span').innerText(), 'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).');
   assert.equal(await s.page.locator('#lo-file').isDisabled(), true);
   await s.page.click('#lo-cndp-ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Suivi de l'administration d'une école (pas celle du réseau) : la base ne lui donne que la sienne. Ni choix d'école (le
+// choix revenait aussitôt à la sienne), ni « tout, comme avant » (le cas d'une seule école, l'ENSAM Meknès) : sa page, à ses
+// chiffres, qui la nomme (en tête de page, dans le rapport imprimé), dès le premier appel à la base, même avant que la liste
+// des écoles arrive. L'administration du réseau garde le choix de l'école, comme avant.
+// ---------------------------------------------------------------------------
+const ecoleFixe = async s => (await s.page.locator('#suivi-ecole-fixe').textContent()).replace(/\s+/g, ' ').trim();
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`Suivi de l’administration d’une école : sans choix d’école, sa page et son nom (Placement, Insertion, rapport) ; le réseau garde le choix (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur, langue });
+    await adminDeLInstitut(s);
+    // Un choix d'école gardé sur cet appareil pour ce compte (quand il était celui du réseau) ne compte plus
+    await s.page.evaluate(() => localStorage.setItem('ensam-admin-ecole:' + window.__demo.me.id, JSON.stringify('ensam-meknes')));
+    const oublis = [];
+    const relever = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`); };
+    const nom = ar ? 'المدرسة Institut exemple' : 'École Institut exemple';
+    await s.aller('suivi'); await s.page.waitForSelector('#dash-season');
+    assert.equal(await s.page.locator('#suivi-ecole').count(), 0, 'Placement : pas de choix d’école');
+    assert.equal(await ecoleFixe(s), nom);
+    // Ses chiffres : l'Institut exemple n'a encore aucune offre (celles de l'ENSAM Meknès ne comptent pas)
+    assert.equal(sansIsolants(await s.page.locator('.sh-faits li').last().innerText()).replace(/\s+/g, ' ').trim(), ar ? '0 عرض مفتوح' : '0 offre ouverte');
+    assert.equal(await s.debordement(), 0, 'Placement : rien ne dépasse');
+    await relever('Placement');
+    await s.aller('suivi/insertion'); await s.page.waitForSelector('.ins-rapport-panel');
+    assert.equal(await s.page.locator('#suivi-ecole').count(), 0, 'Insertion : pas de choix d’école');
+    assert.equal(await ecoleFixe(s), nom);
+    assert.equal(await s.page.locator('.ins-print-head p').first().textContent(), 'Institut exemple', 'le rapport imprimé la nomme');
+    assert.equal(await s.debordement(), 0, 'Insertion : rien ne dépasse');
+    await relever('Insertion');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    // L'administration du réseau, deux écoles : le choix, comme avant ; jamais le nom fixe
+    const r = await ouvrir({ largeur, langue });
+    await r.comme('Admin'); await deuxiemeEcole(r);
+    for (const h of ['suivi', 'suivi/insertion']) {
+      await r.aller(h); await r.page.waitForSelector('#suivi-ecole');
+      assert.deepEqual(await r.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple'], h);
+      assert.equal(await r.page.locator('#suivi-ecole-fixe').count(), 0, h);
+    }
+    assert.deepEqual(r.erreurs, []);
+    await r.ctx.close();
+  });
+}
+
+// En ligne (faux Supabase) : les chiffres (stats_insertion) et le rapport (rapport_insertion) de l'administration d'une
+// école sont toujours demandés pour la sienne, dès le premier appel, et jamais sans école (avant, tant que la liste des
+// écoles n'était pas arrivée, la page partait « tout, comme avant » : un appel sans p_ecole, le rapport au nom de l'ENSAM
+// Meknès) ; puis aucun choix d'école ne paraît. L'administration du réseau : comme avant (Meknès, puis l'école choisie).
+test('Suivi de l’administration d’une école, en ligne : ses chiffres et son rapport demandés pour son école dès le premier appel, sans choix d’école ; le réseau comme avant', async () => {
+  const ECOLE_IE = { slug: 'institut-exemple', nom: 'Institut exemple', ouverte: false, created_at: '2026-11-01T00:00:00Z' };
+  const corps = (m, f) => m.site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + f).map(a => JSON.stringify(a.corps));
+  const listesEcoles = m => m.site.appels.filter(a => a.u === '/sb/rest/v1/ecoles' && a.m === 'GET').length;
+  // L'insertion, après l'accueil ; la liste des écoles que lit le suivi (en plus de celle de l'accueil) arrivée, la page a fini de changer
+  const insertion = async m => {
+    m.site.rpc.stats_insertion = () => []; m.site.rpc.rapport_insertion = () => [];
+    const avant = listesEcoles(m);
+    await m.page.evaluate(() => { location.hash = 'suivi/insertion'; });
+    await m.page.waitForSelector('.ins-rapport-panel', { timeout: 10000 });
+    for (let k = 0; k < 50 && listesEcoles(m) <= avant; k++) await m.page.waitForTimeout(100);
+    await m.page.waitForTimeout(600);
+  };
+  let m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Nadia Ferhat', role: 'admin', ecole: 'institut-exemple', promo: 2012 }, deja: true, chemin: '#accueil', tables: { ecoles: [ECOLE_IE] } });
+  await insertion(m);
+  for (const f of ['stats_insertion', 'rapport_insertion']) {
+    assert.ok(corps(m, f).length >= 1, f);
+    assert.deepEqual([...new Set(corps(m, f))], ['{"p_ecole":"institut-exemple"}'], f);
+  }
+  assert.equal(await m.page.locator('#suivi-ecole').count(), 0, 'pas de choix d’école');
+  assert.equal(await m.page.locator('#suivi-ecole-fixe').textContent(), 'École Institut exemple');
+  assert.equal(await m.page.locator('.ins-print-head p').first().textContent(), 'Institut exemple');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, deja: true, chemin: '#accueil', tables: { ecoles: [ECOLE_IE] } });
+  await insertion(m);
+  await m.page.waitForSelector('#suivi-ecole', { timeout: 10000 });
+  assert.deepEqual(await m.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple']);
+  assert.equal(await m.page.locator('#suivi-ecole-fixe').count(), 0);
+  assert.ok(corps(m, 'stats_insertion').includes('{"p_ecole":"ensam-meknes"}'), corps(m, 'stats_insertion').join(' '));
+  assert.ok(!corps(m, 'stats_insertion').some(c => c.includes('institut-exemple')));
+  await m.page.selectOption('#suivi-ecole', 'institut-exemple'); await m.page.waitForTimeout(600);
+  assert.equal(corps(m, 'stats_insertion').at(-1), '{"p_ecole":"institut-exemple"}');
+  assert.equal(corps(m, 'rapport_insertion').at(-1), '{"p_ecole":"institut-exemple"}');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Parrainage, administration du réseau, deux écoles : la phrase du bouton, dite en entier en français et en arabe. Avant,
+// sa virgule (« Le bouton, comme la plateforme chaque matin, … ») la livrait au motif large des raisons de Match
+// (« X, comme Y », match.js), passé avant le sien : l'arabe mêlait les deux langues.
+for (const langue of ['fr', 'ar']) {
+  test(`parrainage de l’administration du réseau, deux écoles : la phrase du bouton dite en entier (${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur: ar ? 390 : 1280, langue });
+    await s.comme('Admin');
+    const parrainage = s.page.locator('.panel', { has: s.page.locator('button', { hasText: ar ? 'تعيين العرّابين' : 'Attribuer les parrains' }) });
+    const phrase = async () => { await s.aller('admin/membres'); await s.aller('admin'); await parrainage.waitFor(); return sansIsolants(await parrainage.locator('p').innerText()); };
+    const UNE = ar ? 'كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.';
+    const DEUX = ar ? 'يعيّن الزر العرّابين في كل المدارس، كلٌّ في مدرسته؛ وتفعل المنصة ذلك أيضًا كل صباح.' : 'Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin.';
+    const seule = await phrase();
+    assert.ok(seule.endsWith(' ' + UNE), seule);
+    await deuxiemeEcole(s);
+    assert.equal(await phrase(), seule.slice(0, -UNE.length) + DEUX);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Les phrases de l'interface qui ont « , comme » (les chaînes et le texte des gabarits des modules du site construit, chaque
+// ${…} remplacé par un nombre ; hors commentaires et motifs) : chacune lue par la vraie recherche de l'arabe, les modules
+// chargés dans l'ordre du navigateur. Aucune ne garde un mot français : le motif large de match.js (« X, comme Y ») ne
+// prend que ce qui est fait pour lui (les raisons de Match).
+function phrasesAvecComme(src) {
+  const phrases = [];
+  const garder = x => { const y = x.replace(/\s+/g, ' ').trim(); if (y.includes(', comme ')) phrases.push(y); };
+  let i = 0;
+  const chaine = q => { let s = ''; i++; while (i < src.length && src[i] !== q) { if (src[i] === '\\') { s += src[i + 1]; i += 2; } else s += src[i++]; } i++; return s; };
+  const motif = () => {
+    i++; let classe = false;
+    while (i < src.length && src[i] !== '\n') { const c = src[i]; if (c === '\\') { i += 2; continue; } i++; if (c === '[') classe = true; else if (c === ']') classe = false; else if (c === '/' && !classe) break; }
+    while (/[a-z]/i.test(src[i] || '')) i++;
+  };
+  const gabarit = () => {
+    let s = ''; i++;
+    while (i < src.length && src[i] !== '`') {
+      if (src[i] === '\\') { s += src[i + 1]; i += 2; } else if (src[i] === '$' && src[i + 1] === '{') { i += 2; code(true); s += '2019'; } else s += src[i++];
+    }
+    i++;
+    // Le texte entre les balises, et les valeurs des attributs ; les commentaires d'une feuille de style ne comptent pas
+    for (const part of s.replace(/\/\*[\s\S]*?\*\//g, ' ').split(/[<>]/)) { for (const [, v] of part.matchAll(/="([^"]*)"/g)) garder(v); garder(part.replace(/="[^"]*"/g, '')); }
+  };
+  function code(dansGabarit) {
+    let prof = 0, dernier = '';
+    while (i < src.length) {
+      const c = src[i], d = src[i + 1];
+      if (c === '/' && d === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+      if (c === '/' && d === '*') { const f = src.indexOf('*/', i + 2); i = f < 0 ? src.length : f + 2; continue; }
+      if (c === "'" || c === '"') { garder(chaine(c)); dernier = 'x'; continue; }
+      if (c === '`') { gabarit(); dernier = 'x'; continue; }
+      if (c === '/' && (/^$|[(,=:[!&|?{};+\-*%<>~^]/.test(dernier) || /\b(return|typeof|case|in|of|void|delete|throw|new|else|do|yield|await)$/.test(src.slice(Math.max(0, i - 12), i).trimEnd()))) { motif(); dernier = 'x'; continue; }
+      if (c === '{') prof++;
+      else if (c === '}') { if (dansGabarit && prof === 0) { i++; return; } prof--; }
+      if (!/\s/.test(c)) dernier = c;
+      i++;
+    }
+  }
+  code(false);
+  return phrases;
+}
+test('arabe : aucune phrase de l’interface avec « , comme » ne reste à moitié en français (le motif large des raisons de Match)', async () => {
+  const phrases = new Map();
+  for (const f of fs.readdirSync(SITE).filter(f => f.endsWith('.js') && !f.startsWith('seed')).sort()) {
+    for (const p of phrasesAvecComme(fs.readFileSync(path.join(SITE, f), 'utf8'))) if (!phrases.has(p)) phrases.set(p, f);
+  }
+  // Le relevé trouve bien les phrases connues (une raison de Match, la confirmation d'une promo)
+  assert.ok(phrases.has('2019, comme 2019') && phrases.has('Je confirme : promo 2019, comme moi'), [...phrases.keys()].join(' | '));
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Admin'); await deuxiemeEcole(s);
+  for (const h of ['admin', 'admin/membres', 'suivi', 'suivi/insertion', 'enquete', 'match', 'admin']) await s.aller(h);
+  const lues = await s.page.evaluate(async ps => {
+    for (const f of new Set(ps.map(([, f]) => f))) await import('./' + f);
+    const { t } = await import('./i18n.js');
+    return ps.map(([p, f]) => [f, p, t(p)]);
+  }, [...phrases]);
+  const francais = lues.filter(([, , ar]) => /(?<![\p{L}])[a-zà-ÿœæç][a-zà-ÿœæç’'-]{2,}/u.test(ar)).map(([f, p, ar]) => `${f} : ${p} → ${ar}`);
+  assert.deepEqual(francais, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Agenda : l'exemple du champ « Lieu » d'un événement est à l'école de l'administration qui le publie : l'ENSAM Meknès
+// garde le sien (l'administration du réseau, une école ou deux) ; une école pas encore ouverte n'y est pas nommée
+// (« ENSAM ») ; une école ouverte, son nom. Jamais celui d'une autre école.
+for (const langue of ['fr', 'ar']) {
+  test(`Agenda : l’exemple de lieu d’un événement est à l’école de l’administration, jamais à une autre (${langue})`, async () => {
+    const ar = langue === 'ar';
+    const exemple = async s => {
+      // Sur ordinateur, le bouton de la page se cache derrière « Publier » de la barre latérale : le même clic
+      await s.aller('reseau/agenda'); await s.page.$eval('#ev-new', x => x.click()); await s.page.waitForSelector('#ev-lieu');
+      const p = await s.page.getAttribute('#ev-lieu', 'placeholder');
+      await s.fermer(); await s.page.waitForSelector('#ev-lieu', { state: 'detached' });
+      return sansIsolants(p);
+    };
+    const MEKNES = ar ? 'مثال: ENSAM مكناس، البهو الكبير' : 'Ex. ENSAM Meknès, grand hall';
+    let s = await ouvrir({ langue });
+    await s.comme('Admin');
+    assert.equal(await exemple(s), MEKNES, 'réseau, une école');
+    await deuxiemeEcole(s);
+    assert.equal(await exemple(s), MEKNES, 'réseau, deux écoles');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    s = await ouvrir({ langue });
+    await adminDeLInstitut(s);
+    assert.equal(await exemple(s), ar ? 'مثال: ENSAM، البهو الكبير' : 'Ex. ENSAM, grand hall', 'école pas encore ouverte');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    // Ouvrir l'Institut exemple se fait en français (ouvrirInstitut lit « Ouvert ») ; la démo enregistrée, la page passe ensuite en arabe
+    s = await ouvrir();
+    await adminDeLInstitut(s, { ouverte: true });
+    if (ar) { await s.page.evaluate(() => { localStorage.setItem('ensam-lang', 'ar'); location.hash = ''; }); await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); }
+    assert.equal(await s.page.getAttribute('html', 'lang'), langue);
+    assert.equal(await exemple(s), ar ? 'مثال: Institut exemple، البهو الكبير' : 'Ex. Institut exemple, grand hall', 'école ouverte');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Le formulaire d'une offre sur un téléphone : les puces des filières (« Plus de détails ») passent à la ligne, rien ne
+// dépasse (ni la page, ni la feuille, ni le formulaire), en français comme en arabe : un lauréat qui publie (pour les
+// étudiants, puis entre lauréats) ou modifie une offre, une étudiante qui en partage une. Sur ordinateur : comme avant.
+const mesureOffre = page => page.evaluate(() => {
+  const f = document.querySelector('#of-form'), m = f.closest('.modal'), q = f.getBoundingClientRect();
+  const dehors = [...f.querySelectorAll('button, .chip, input, textarea, summary, .seg')].filter(b => { const r = b.getBoundingClientRect(); return r.width && (r.left < q.left - 1 || r.right > q.right + 1); }).map(b => b.textContent.trim() || b.id);
+  return { page: document.documentElement.scrollWidth - innerWidth, feuille: m.scrollWidth - m.clientWidth, form: f.scrollWidth - f.clientWidth, dehors };
+});
+const RIEN_DEHORS = { page: 0, feuille: 0, form: 0, dehors: [] };
+const plusDeDetails = async s => { await s.page.click('#of-form details.more-fields > summary'); await s.page.waitForSelector('#of-form .fil-pick'); };
+for (const langue of ['fr', 'ar']) {
+  test(`Offres : le formulaire d’une offre tient sur un téléphone, filières comprises ; rien ne dépasse (360 et 390 px, ${langue})`, async () => {
+    for (const largeur of [360, 390]) {
+      const s = await ouvrir({ largeur, langue });
+      await s.comme('Youssef'); await s.aller('offres');
+      await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-form');
+      await plusDeDetails(s);
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : publier`);
+      await s.page.locator('#of-form > .seg button').nth(1).click(); await s.page.waitForTimeout(200);
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : entre lauréats`);
+      await s.fermer(); await s.page.waitForSelector('#of-form', { state: 'detached' });
+      // Modifier une de ses offres : « Plus de détails » s'ouvre d'emblée
+      await s.aller('espace/offres'); await s.page.locator('.esp-offre').first().click(); await s.page.waitForSelector('.od h2');
+      await s.page.click('.od .menu-wrap .icon-btn'); await s.page.locator('.menu-pop button').first().click(); await s.page.waitForSelector('#of-form .fil-pick');
+      assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS, `${largeur} px : modifier`);
+      await s.ctx.close();
+      // Une étudiante partage une offre vue ailleurs
+      const e = await ouvrir({ largeur, langue });
+      await e.comme('Salma'); await e.aller('offres');
+      await e.page.click('.page-head button.btn'); await e.page.waitForSelector('#of-form');
+      await plusDeDetails(e);
+      assert.deepEqual(await mesureOffre(e.page), RIEN_DEHORS, `${largeur} px : partager`);
+      assert.deepEqual([...s.erreurs, ...e.erreurs], []);
+      await e.ctx.close();
+    }
+  });
+}
+test('Offres sur ordinateur : le formulaire d’une offre comme avant, chaque puce des filières sur une ligne ; rien ne dépasse', async () => {
+  const s = await ouvrir();
+  await s.comme('Youssef'); await s.aller('offres');
+  // Le bouton de la page se cache derrière « Publier » de la barre latérale : le même clic
+  await s.page.$eval('.page-head #of-publier', x => x.click()); await s.page.waitForSelector('#of-form');
+  await plusDeDetails(s);
+  assert.deepEqual(await s.page.locator('#of-form .chip').evaluateAll(cs => cs.filter(c => getComputedStyle(c).whiteSpace !== 'nowrap').map(c => c.textContent.trim())), []);
+  assert.deepEqual(await mesureOffre(s.page), RIEN_DEHORS);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
