@@ -7,6 +7,8 @@
 name: Balayage des dates
 
 on:
+  push:
+    branches: [balayage-dates]
   workflow_dispatch:
     inputs:
       dates:
@@ -31,7 +33,7 @@ jobs:
           node-version: 22
       - id: liste
         env:
-          DATES: ${{ inputs.dates }}
+          DATES: ${{ inputs.dates || '2027-04-15T03:00:00Z,2026-11-22T18:00:00Z' }}
         run: |
           liste=$(node source/tests/dates-a-venir.mjs "$DATES")
           echo "$liste"
