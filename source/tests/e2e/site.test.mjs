@@ -65,8 +65,9 @@ beforeEach(async () => {
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
 // mouvement : les animations jouent (sinon, mouvement réduit) ; toucher : un écran tactile (événements touch, pour glisser au doigt)
 // heure : l'heure de l'appareil, qui avance ensuite (le ciel du thème clair la suit : celui du soir à la tombée du jour)
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false, heure } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
+// fuseau : le fuseau horaire de l'appareil (Europe/Paris…) ; sinon celui de la machine (UTC sur la CI)
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false, heure, fuseau } = {}) {
+  const ctx = await navigateur.newContext({ ...(fuseau ? { timezoneId: fuseau } : {}), viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (heure !== undefined) await ctx.clock.install({ time: heure });
   const page = await ctx.newPage(); const erreurs = [];
@@ -4252,6 +4253,31 @@ test('cloche : une relecture commencée reste à faire ; une note sans merci et 
   assert.match(await s.page.locator('.pas .pas-oeil').innerText(), /C’est l’heure/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('rappel d’un événement : le jour du passage à l’heure d’été, celui du lendemain est « demain » ; la veille, celui du surlendemain attend', async () => {
+  // À Paris, le dimanche 28 mars 2027 n'a que 23 heures : compter les jours en tranches de 24 h entre deux minuits disait
+  // « c'est aujourd'hui » pour l'événement du lundi, et « c'est demain » dès le samedi (deux jours avant)
+  const titre = 'Forum ENSAM Entreprises', debut = '2027-03-29T08:00:00Z';
+  for (const [heure, attendu] of [['2027-03-28T10:00:00Z', 'demain'], ['2027-03-27T11:00:00Z', null]]) {
+    const s = await ouvrir({ largeur: 390, fuseau: 'Europe/Paris', heure: new Date(heure) });
+    const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+    const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+    // Le rappel est une nouvelle de la cloche (pas une chose « À faire »)
+    const cloche = async () => { await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche'); const t = await s.page.locator('.modal.cloche').innerText(); await s.fermer(); return t; };
+    await s.comme('Salma');
+    await demo(`const sa = d.profiles.find(p => p.full_name.startsWith('Salma')), e = d.evenements.find(x => x.titre === ${JSON.stringify(titre)});
+      Object.assign(e, { debut: ${JSON.stringify(debut)}, fin: '2027-03-29T15:00:00Z', annule: false, public: 'tous', ecole: sa.ecole });
+      if (!d.evenement_participants.some(x => x.evenement_id === e.id && x.user_id === sa.id)) d.evenement_participants.push({ id: 'ep-heure-ete', evenement_id: e.id, user_id: sa.id, created_at: new Date().toISOString() });`);
+    await recharger();
+    assert.equal(await s.page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone), 'Europe/Paris');
+    const t = await cloche();
+    if (attendu) assert.match(t, new RegExp(`${titre} : c’est ${attendu}\\.`), `${heure} : ${t}`);
+    else assert.doesNotMatch(t, new RegExp(`${titre} : c’est`), `${heure} : l'événement est dans deux jours, pas encore de rappel`);
+    assert.doesNotMatch(t, new RegExp(`${titre} : c’est aujourd’hui`));
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('portes ouvertes : un refus dit le vrai nombre d’offres, un rendez-vous annulé propose d’autres horaires, les points restent côté lauréat', async () => {
