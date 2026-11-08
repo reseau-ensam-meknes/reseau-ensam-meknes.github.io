@@ -10446,7 +10446,9 @@ function clesEtrangeres() {
 // annonce, un événement et un signalement traité perdent leur auteur (un admin parti).
 async function apresUnDepart(s) {
   return s.page.evaluate(async fk => {
-    const d = window.__demo, D = d.data, { seasonOf, niveauOf } = await import('./logic.js');
+    // Les données lues après l'import : emit() (une écriture de la démo qui finit pendant cette attente) remplace d.data par
+    // une copie, et une table réassignée dans l'ancien objet ne serait plus celle de la démo
+    const d = window.__demo, { seasonOf, niveauOf } = await import('./logic.js'), D = d.data;
     const S = seasonOf(new Date()), t = Date.now(), il = j => new Date(t - j * 864e5).toISOString();
     const P = n => D.profiles.find(p => p.full_name === n);
     const salma = P('Salma Bennani'), amine = P('Amine Talbi'), youssef = P('Youssef El Amrani'), meryem = P('Meryem Kettani');
