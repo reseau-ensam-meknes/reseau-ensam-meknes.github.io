@@ -14,6 +14,11 @@ import { test } from './partie.mjs';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const saison = (d = new Date()) => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1);
+// S vaut pour tout le fichier (les promos des liens, des visiteurs et des inscrits). Lancé dans les dix dernières minutes d'une
+// saison (le 31 août au soir), le fichier attend la nouvelle : sinon le site changerait de saison en route, et la promo de 5A
+// des liens deviendrait celle des jeunes diplômés. Le fichier dure bien moins (3 à 4 minutes en entier).
+const finSaison = new Date(saison() + 1, 8, 1) - Date.now();
+if (finSaison < 6e5) await new Promise(ok => setTimeout(ok, finSaison + 500));
 const S = saison();
 const OFFRE = '3f2b8c1e-9a7d-4e21-b6c0-5d4e3f2a1b0c', DISPARUE = '11111111-2222-4333-8444-555555555555', INCONNUE = '99999999-2222-4333-8444-555555555555';
 const AUTEUR = '00000000-0000-4000-8000-0000000000b2';
@@ -1003,11 +1008,15 @@ test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la répons
   assert.ok(c, 'une copie de l’accueil est gardée');
   assert.equal(c.uid, UID);
   assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
-  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même. Il vient de l'appareil, puisque la base est tenue.
+  // La mise à jour part juste après lui (rafraichir, store.js), parfois quand il est déjà affiché : on attend qu'elle soit
+  // demandée, et l'accueil est toujours là.
   tenir = true;
   await m.page.reload();
   await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
-  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length > 0, 'la mise à jour est demandée à la base');
+  assert.ok(await m.page.isVisible(ACCUEIL), 'l’accueil reste là tant que la base ne répond pas');
   assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForTimeout(1200);
@@ -1277,20 +1286,37 @@ test('page d’entrée ouverte en arrière-plan : le dessin de l’école se pos
 // Le CSS de l'entrée (dans la page) face au CSS complet (site.css) : chaque élément, chaque propriété calculée, pseudo-éléments
 // compris, doit être pareil avec l'un ou l'autre. Le CSS complet est retenu (jamais servi, sans échec : un échec ferait
 // recharger la page d'un membre) pour voir la page sans lui.
-const stylesCalcules = page => page.evaluate(() => {
-  const out = {};
-  const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
-  els.forEach((e, i) => {
-    const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
-    for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
-      const st = getComputedStyle(e, pseudo);
-      if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
-      const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
-      out[id + (pseudo || '')] = o;
-    }
-  });
-  return out;
-});
+// Les deux relevés se font d'un seul tenant, dans la page, et rien ne passe entre eux. La page continue en effet de charger
+// derrière : le magasin puis l'application partent une fois la page calme, et l'application ajoute ses propres styles (le
+// guide de Match déclare --mx-montre, qui se pose alors sur chaque élément). Pris de part et d'autre d'une attente, un relevé
+// les voyait parfois sans l'autre (vu sur la CI : 446 différences, toutes --mx-montre). Les transitions sont coupées le temps
+// des relevés : sinon, juste après l'échange, une propriété qui change garderait encore son ancienne valeur.
+const comparerStyles = (page, css) => page.evaluate(css => {
+  const relever = () => {
+    const out = {};
+    const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
+    els.forEach((e, i) => {
+      const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+      for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
+        const st = getComputedStyle(e, pseudo);
+        if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
+        const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
+        out[id + (pseudo || '')] = o;
+      }
+    });
+    return out;
+  };
+  const sansTransition = document.createElement('style');
+  sansTransition.textContent = '*, ::before, ::after, ::placeholder, ::marker { transition: none !important; }';
+  document.head.append(sansTransition);
+  const seul = relever();
+  const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove();
+  const complet = relever();
+  sansTransition.remove();
+  const diffs = [];
+  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
+  return { elements: Object.keys(complet).length, diffs };
+}, css);
 async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, ua, faire } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
@@ -1305,13 +1331,8 @@ async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', t
   await page.waitForSelector(jeton ? '.shell.squelette' : '#entree .entree-form');
   if (faire) await faire(page);
   await page.waitForTimeout(1200);
-  const seul = await stylesCalcules(page);
-  await page.evaluate(css => { const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove(); }, siteCss());
-  await page.waitForTimeout(200);
-  const complet = await stylesCalcules(page);
-  const diffs = [];
-  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
-  assert.ok(Object.keys(complet).length > 30, `${nom} : ${Object.keys(complet).length} éléments`);
+  const { elements, diffs } = await comparerStyles(page, siteCss());
+  assert.ok(elements > 30, `${nom} : ${elements} éléments`);
   assert.deepEqual(diffs.slice(0, 8), [], `${nom} : ${diffs.length} différences`);
   await ctx.close();
 }
