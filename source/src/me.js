@@ -79,7 +79,7 @@ export function ParcoursPage(ctx) {
         // entre les deux plutôt que d'abréger le nom (« Renault Group Maroc », à 360 px)
         const corps = html`<${CompanyLogo} name=${a.entreprise} size=${44}/>
           <span class="esp-ligne-txt">${titre ? html`<strong class="esp-titre" translate="no" dir="auto">${titre}</strong>` : html`<strong class="esp-titre">Candidature</strong>`}
-            <span class="esp-sous pc-sous faits"><span class="pc-ent"><bdi translate="no">${a.entreprise}</bdi></span><span class="pc-quand nowrap">${o ? timeAgo(a.updated_at || a.created_at) : 'hors plateforme'}</span></span></span>`;
+            <span class="esp-sous pc-sous faits"><span class="pc-ent"><bdi translate="no">${a.entreprise}</bdi></span><span class="pc-quand nowrap">${o ? timeAgo(a.updated_at || a.created_at) : !a.offer_id && a.message != null ? 'Offre retirée' : 'hors plateforme'}</span></span></span>`;
         return o ? html`<li class="pc-cand" key=${a.id}><button type="button" class="esp-ligne" onClick=${() => openOffer(o.id)}>${corps}<span class=${'state-pill a-' + a.status}>${APP_STATUS[a.status]}</span></button></li>`
           : html`<li class="pc-cand hors" key=${a.id}><div class="esp-ligne">${corps}
             <span class="pc-hors-act"><select id=${'ap-' + a.id} aria-label="Statut" value=${a.status} onChange=${e => act(() => store.update('applications', a.id, { status: e.target.value, updated_at: new Date().toISOString() }))}>${Object.entries(APP_STATUS).map(([v, t]) => html`<option value=${v}>${t}</option>`)}</select>
@@ -989,6 +989,8 @@ addAR({
   'C’est noté : cette réussite est maintenant sur la page d’entrée.': 'تم الحفظ: هذا النجاح معروض الآن في صفحة الدخول.',
   'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.': 'تم الحفظ: سيُعرض في صفحة الدخول عندما يؤشّر الطرف الآخر أيضًا.',
   'La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.': 'صفحة الدخول عمومية: تظهر فيها الشركة واسماكما الشخصيان ودفعة الخريج والشهر، فقط إذا أشّرتما معًا. يمكنك إلغاء التأشير في أي وقت.',
+  'Offre retirée': 'عرض مسحوب',
+  '. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.': '. بعد التأكيد، يُوثَّق نجاحك من الطرفين ويُحتسب في تتبّع سنتك.',
 }, [
   [/^\+(\d+) depuis ta dernière visite$/, n => `+${n} منذ زيارتك الأخيرة`],
   [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],

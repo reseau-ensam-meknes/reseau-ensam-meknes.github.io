@@ -31,6 +31,8 @@ addAR({
   'Un rappel par email part tout seul 24 h après l’inscription.': 'يُرسَل تذكير بالبريد تلقائيًا بعد 24 ساعة من التسجيل.',
   'Lu :': 'المقروء:', 'Juste :': 'الصحيح:', 'Profil supprimé': 'ملف محذوف', 'Contenu déjà supprimé': 'المحتوى حُذف من قبل',
   '1 chose à traiter': 'أمر واحد للمعالجة', '1 recrutement à confirmer': 'توظيف واحد للتأكيد', '1 compte créé sans profil': 'حساب واحد دون ملف',
+  // Le lauréat qui a déclaré le recrutement a supprimé son compte
+  'déclaré par un ancien membre': 'بتصريح من عضو سابق',
 }, [
   [/^(\d+) choses à traiter$/, n => `${arCount(n, ['أمر واحد', 'أمران', 'أمور', 'أمرًا'])} للمعالجة`],
   [/^(\d+) recrutements à confirmer$/, n => `${arCount(n, ['توظيف واحد', 'توظيفان', 'توظيفات', 'توظيفًا'])} للتأكيد`],
@@ -105,7 +107,7 @@ function vue(ctx, it, comptes) {
     case 'recrutements': {
       const pl = it.pl, s = store.byId('profiles', pl.student_id), l = store.byId('profiles', pl.laureat_id);
       return {
-        ico: 'briefcase', ton: 'good', type: 'Recrutement à confirmer', titre: nom(s), meta: html`<span translate="no" dir="auto">${pl.entreprise || ''}</span> · <span>${`déclaré par ${l?.full_name || '?'}`}</span>`,
+        ico: 'briefcase', ton: 'good', type: 'Recrutement à confirmer', titre: nom(s), meta: html`<span translate="no" dir="auto">${pl.entreprise || ''}</span> · <span>${`déclaré par ${l?.full_name || (pl.laureat_id ? '?' : 'un ancien membre')}`}</span>`,
         gestes: html`<button type="button" class="btn small ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast('Recrutement refusé.'); })}>Refuser</button>
           <button type="button" class="btn small tonal" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'confirme' }); toast('Recrutement confirmé.'); })}>Confirmer</button>`,
         detail: () => html`<p class="small muted">Le lauréat a déclaré ce recrutement. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>

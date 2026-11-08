@@ -249,28 +249,36 @@ function AccepterAide({ l, x, onYes, onClose }) {
   <//>`;
 }
 
-// Le match, côté étudiant : avec qui, la suite, et la confirmation du démarrage
+// Le match, côté étudiant : avec qui, la suite, et la confirmation du démarrage.
+// Le lauréat a supprimé son compte (la base a vidé le lien, parti) : ni visage ni « Écrire » vers personne ; la demande reste
+// à l'étudiant, qui la rouvre ou la ferme, et un démarrage déclaré avant son départ se confirme encore
 function MatchAuteur({ ctx, d }) {
   const { data, store, act, openProfile } = ctx;
   const x = store.byId('propositions', d.proposition_id);
   const l = store.byId('profiles', d.laureat_id);
+  const parti = !d.laureat_id;
   const pl = declarationDe(data, d);
-  const arreter = () => ctx.confirm(`Ça ne s’est pas fait avec ${prenom(l)} ? Ta demande se rouvre et d’autres lauréats pourront te proposer leur aide.`, () => act(async () => { await store.update('demandes', d.id, { status: 'ouverte' }); toast('Ta demande est de nouveau ouverte.'); }), 'Rouvrir ma demande');
+  const rouvrir = () => act(async () => { await store.update('demandes', d.id, { status: 'ouverte' }); toast('Ta demande est de nouveau ouverte.'); });
+  const arreter = () => (parti ? rouvrir() : ctx.confirm(`Ça ne s’est pas fait avec ${prenom(l)} ? Ta demande se rouvre et d’autres lauréats pourront te proposer leur aide.`, rouvrir, 'Rouvrir ma demande'));
   const trouve = () => ctx.confirm('Tu as trouvé autrement ? Ta demande sera fermée. Pense à l’indiquer dans Mon parcours.', () => act(async () => { await store.update('demandes', d.id, { status: 'fermee' }); toast('Bravo ! Ta demande est fermée.', 'win'); ctx.go('parcours'); }), 'Fermer ma demande');
   const confirmer = () => act(async () => {
     await store.update('placements', pl.id, { status: 'confirme' });
     if (ctx.me?.role === 'laureat' && ctx.me.en_recherche) await store.update('profiles', ctx.me.id, { en_recherche: false }).catch(() => {});
-    if (!celebrate({ cle: 'demande-reussie-' + d.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !', texte: `Ta réussite chez ${pl.entreprise} est vérifiée des deux côtés et annoncée dans le réseau. Un petit merci fera plaisir à ${prenom(l)}.`, action: { label: `Dire merci à ${prenom(l)}`, icon: 'heart', onClick: () => ctx.go('parcours') } })) toast('Félicitations ! Ta réussite est confirmée.', 'win');
+    const fete = parti ? { texte: `Ta réussite chez ${pl.entreprise} est vérifiée des deux côtés et annoncée dans le réseau.` }
+      : { texte: `Ta réussite chez ${pl.entreprise} est vérifiée des deux côtés et annoncée dans le réseau. Un petit merci fera plaisir à ${prenom(l)}.`, action: { label: `Dire merci à ${prenom(l)}`, icon: 'heart', onClick: () => ctx.go('parcours') } };
+    if (!celebrate({ cle: 'demande-reussie-' + d.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !', ...fete })) toast('Félicitations ! Ta réussite est confirmée.', 'win');
   });
   return html`<div class="dm-match">
     <p class="eyebrow"><${Icon} name="check" size=${13}/> C’est un match</p>
-    <div class="dm-prop-head"><${Person} p=${l} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${MessageBtn} ctx=${ctx} p=${l} cls="btn small"/></div>
+    ${parti ? html`<div class="dm-prop-head"><span class="open-to"><span class="open-ico"><${Icon} name="user" size=${18}/></span><span><strong>Un ancien membre</strong><span class="small muted">Ce compte a été supprimé.</span></span></span></div>`
+      : html`<div class="dm-prop-head"><${Person} p=${l} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${MessageBtn} ctx=${ctx} p=${l} cls="btn small"/></div>`}
     ${x ? html`<${Aide} x=${x}/>` : null}
-    ${pl && pl.status === 'en_attente' ? html`<div class="dm-box accent"><${Icon} name="briefcase" size=${18}/><p><strong>${`${prenom(l)} indique que tu as commencé chez ${pl.entreprise}.`}</strong> <span class="small">Une fois confirmé, ta réussite est vérifiée des deux côtés et annoncée.</span></p>
-        <div class="row"><button type="button" class="btn small ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); })}>Pas encore</button>
+    ${pl && pl.status === 'en_attente' ? html`<div class="dm-box accent"><${Icon} name="briefcase" size=${18}/><p><strong>${parti ? `Ton démarrage chez ${pl.entreprise} a été déclaré.` : `${prenom(l)} indique que tu as commencé chez ${pl.entreprise}.`}</strong> <span class="small">Une fois confirmé, ta réussite est vérifiée des deux côtés et annoncée.</span></p>
+        <div class="row"><button type="button" class="btn small ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast(parti ? 'C’est noté.' : 'C’est noté. Le lauréat sera informé.'); })}>Pas encore</button>
         <button type="button" class="btn small primary dm-confirmer" onClick=${confirmer}><${Icon} name="check" size=${15}/> Oui, je confirme</button></div></div>`
+      : parti ? html`<p class="small muted">Rouvre ta demande pour que d’autres lauréats te proposent leur aide, ou ferme-la si tu as trouvé.</p>`
       : html`<p class="small muted">${`Vous avez accès à vos coordonnées. Quand tu commences, ${prenom(l)} le déclare ici et tu confirmes.`}</p>`}
-    <div class="row dm-sortie"><button type="button" class="linkish small" onClick=${arreter}>Ça ne s’est pas fait</button><button type="button" class="linkish small" onClick=${trouve}>J’ai trouvé autrement</button></div>
+    <div class="row dm-sortie"><button type="button" class="linkish small" onClick=${arreter}>${parti ? 'Rouvrir ma demande' : 'Ça ne s’est pas fait'}</button><button type="button" class="linkish small" onClick=${trouve}>J’ai trouvé autrement</button></div>
   </div>`;
 }
 
@@ -278,8 +286,8 @@ function ReussiteAuteur({ ctx, d }) {
   const { data, store, go, openProfile } = ctx;
   const l = store.byId('profiles', d.laureat_id);
   const pl = data.placements.find(p => p.demande_id === d.id && p.status === 'confirme');
-  return html`<div class="dm-box good"><${Icon} name="trophy" size=${18}/><p>${pl ? `Réussite confirmée chez ${pl.entreprise}, avec ${l?.full_name || 'un lauréat'}.` : 'Réussite confirmée.'}</p>
-    ${pl && !pl.merci ? html`<button type="button" class="btn small" onClick=${() => go('parcours')}><${Icon} name="heart" size=${14}/> Dire merci</button>` : l ? html`<button type="button" class="btn tiny ghost" onClick=${() => openProfile(l)}>Voir son profil</button>` : null}</div>`;
+  return html`<div class="dm-box good"><${Icon} name="trophy" size=${18}/><p>${!pl ? 'Réussite confirmée.' : d.laureat_id ? `Réussite confirmée chez ${pl.entreprise}, avec ${l?.full_name || 'un lauréat'}.` : `Réussite confirmée chez ${pl.entreprise}.`}</p>
+    ${pl && !pl.merci && d.laureat_id ? html`<button type="button" class="btn small" onClick=${() => go('parcours')}><${Icon} name="heart" size=${14}/> Dire merci</button>` : l ? html`<button type="button" class="btn tiny ghost" onClick=${() => openProfile(l)}>Voir son profil</button>` : null}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +779,12 @@ addAR({
   'Un lauréat a proposé son aide': 'اقترح خريج واحد مساعدته',
   'Les lauréats voient ta demande et ton CV ; les étudiants de ton année, ta demande seulement. Tes coordonnées restent cachées jusqu’au match.': 'يرى الخريجون طلبك وسيرتك الذاتية، ويرى طلبة سنتك طلبك فقط. تبقى معلومات الاتصال بك مخفية حتى التطابق.',
   'Quelques lignes suffisent : 20 caractères au moins.': 'تكفي بضعة أسطر: 20 حرفًا على الأقل.',
+  // Le lauréat du match a supprimé son compte
+  'Un ancien membre': 'عضو سابق', 'Ce compte a été supprimé.': 'حُذف هذا الحساب.', 'C’est noté.': 'تم التسجيل.',
+  'Rouvre ta demande pour que d’autres lauréats te proposent leur aide, ou ferme-la si tu as trouvé.': 'أعد فتح طلبك ليقترح عليك خريجون آخرون مساعدتهم، أو أغلقه إن وجدت.',
 }, [
+  [/^Ton démarrage chez (.+) a été déclaré\.$/, e => `تم التصريح ببدايتك لدى ${e}.`],
+  [/^Ta réussite chez (.+) est vérifiée des deux côtés et annoncée dans le réseau\.$/, e => `نجاحك لدى ${e} موثّق من الطرفين ومُعلن في الشبكة.`],
   [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux te proposer une place dans mon équipe\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع أن أقترح عليك مكانًا في فريقي. يسعدني أن نتحدث في الأمر متى شئت.`],
   [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux t’encadrer dans mon entreprise\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع تأطيرك في شركتي. يسعدني أن نتحدث في الأمر متى شئت.`],
   [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux te recommander dans mon entreprise\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع التوصية بك في شركتي. يسعدني أن نتحدث في الأمر متى شئت.`],
@@ -804,6 +817,7 @@ addAR({
   [/^Ça ne s’est pas fait avec (.+) \? Ta demande se rouvre et d’autres lauréats pourront te proposer leur aide\.$/, n => `لم يتم الأمر مع ${n}؟ يُعاد فتح طلبك ويمكن لخريجين آخرين اقتراح مساعدتهم.`],
   [/^Ta réussite chez (.+) est vérifiée des deux côtés et annoncée dans le réseau\. Un petit merci fera plaisir à (.+)\.$/, (e, n) => `نجاحك لدى ${e} موثّق من الطرفين ومُعلن في الشبكة. كلمة شكر صغيرة ستُسعد ${n}.`],
   [/^Réussite confirmée chez (.+), avec (.+)\.$/, (e, n) => `تم تأكيد النجاح لدى ${e}، مع ${n}.`],
+  [/^Réussite confirmée chez (.+)\.$/, e => `تم تأكيد النجاح لدى ${e}.`],
   [/^(.+) a confirmé son démarrage\. Ta réussite est annoncée dans le réseau : merci !$/, n => `تأكيد البداية من ${n}. نجاحك مُعلن في الشبكة: شكرًا!`],
   [/^(.+) choisit parmi les propositions reçues\.$/, n => `الاختيار بين الاقتراحات الواردة بيد ${n}.`],
   [/^(.+) a choisi une autre voie\. Merci d’avoir proposé ton aide !$/, n => `اختيار ${n}: طريق آخر. شكرًا على اقتراح مساعدتك!`],

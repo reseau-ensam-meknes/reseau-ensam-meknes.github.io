@@ -10306,3 +10306,214 @@ test('Mon parcours, en ligne : « peut citer mon nom » refusé ou perdu en rout
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+// Un compte supprimé, des offres retirées par leur auteur : la base ne garde que ce qui reste (supabase/schema.sql). Chaque
+// clé étrangère « on delete cascade » emporte les lignes qui visaient ce qui part ; chaque « on delete set null » vide leur
+// lien et garde la ligne (le recrutement reste à l'étudiant, la demande en match à son auteur, la relecture rendue à qui
+// l'a demandée, la rubrique du guide et la carte sponsorisée à tous). Une relecture pas encore rendue redevient ouverte à
+// tous, sans son brouillon (protect_relecture). Les clés sont lues dans le schéma : la démo efface comme la vraie base.
+let CLES_ETRANGERES;
+function clesEtrangeres() {
+  if (CLES_ETRANGERES) return CLES_ETRANGERES;
+  const sql = fs.readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
+  const fk = []; let table = null;
+  for (const l of sql.split('\n')) {
+    const t = l.match(/^create table if not exists public\.(\w+)/);
+    if (t) table = t[1]; else if (/^\)/.test(l)) table = null;
+    const a = l.match(/^alter table public\.(\w+) add column if not exists (\w+) uuid references public\.(\w+)\(id\) on delete (cascade|set null)/);
+    const c = !a && table && l.match(/^\s+(\w+) uuid\b[^,]*?references public\.(\w+)\(id\) on delete (cascade|set null)/);
+    if (a) fk.push([a[1], a[2], a[3], a[4]]); else if (c) fk.push([table, c[1], c[2], c[3]]);
+  }
+  assert.ok(fk.length > 80 && fk.some(k => k.join() === 'placements,laureat_id,profiles,set null'), 'les clés étrangères du schéma');
+  return (CLES_ETRANGERES = fk);
+}
+
+// La démo d'avant, puis un lauréat (L) qui avait aidé Salma et Amine supprime son compte, et trois offres sont retirées par
+// leur auteur. L avait : recruté Salma l'an dernier par son offre (merci, nom cité), déclaré le stage d'Amine (à confirmer),
+// fait un match avec la demande de Salma, rendu une relecture de son CV et commencé une autre, écrit la rubrique France du
+// guide ; d'autres ont félicité une étudiante qu'il a recrutée. Youssef retire son PFE (une candidature de Salma en entretien,
+// deux recrutements) et l'offre de son match ; Meryem retire celle de son match avec Salma. Les cartes sponsorisées, une
+// annonce, un événement et un signalement traité perdent leur auteur (un admin parti).
+async function apresUnDepart(s) {
+  return s.page.evaluate(async fk => {
+    const d = window.__demo, D = d.data, { seasonOf, niveauOf } = await import('./logic.js');
+    const S = seasonOf(new Date()), t = Date.now(), il = j => new Date(t - j * 864e5).toISOString();
+    const P = n => D.profiles.find(p => p.full_name === n);
+    const salma = P('Salma Bennani'), amine = P('Amine Talbi'), youssef = P('Youssef El Amrani'), meryem = P('Meryem Kettani');
+    const L = D.profiles.find(p => p.role === 'laureat' && !p._persona && p.verified && p.entreprise && p.id !== meryem.id && D.offers.some(o => o.author_id === p.id));
+    const oL = D.offers.find(o => o.author_id === L.id);
+    const pl = (st, x) => ({ id: 'pl-dep-' + st.id + '-' + x.saison, student_id: st.id, laureat_id: L.id, offer_id: oL.id, demande_id: null, source: 'plateforme', type: oL.type === 'pfe' ? 'pfe' : 'stage',
+      entreprise: oL.entreprise, ville: oL.ville || null, pays: 'Maroc', niveau: Math.min(niveauOf(st, x.saison), 6), merci: null, note: null, partage_ok: false, public_etudiant: false, public_laureat: false, created_at: il(40), confirmed_at: null, ...x });
+    // Salma : recrutée l'an dernier par L (sa réussite d'alors, confirmée, avec un merci et le nom cité)
+    D.placements = D.placements.filter(x => !(x.student_id === salma.id && x.saison === S - 1));
+    D.placements.push(pl(salma, { saison: S - 1, status: 'confirme', merci: 'Merci pour ta confiance et tes conseils pendant tout le stage.', note: 5, partage_ok: true, public_etudiant: true, public_laureat: true, confirmed_at: il(300), created_at: il(310) }));
+    // Amine : sa demande de stage en match avec L, qui a déclaré son démarrage (pas encore confirmé)
+    D.demandes.push({ id: 'dm-dep-amine', auteur_id: amine.id, type: 'stage', titre: 'Stage d’été en maintenance', details: 'Je cherche un stage d’été de deux mois en maintenance industrielle, près de Meknès.', lieu: 'Meknès',
+      debut: null, duree: '2 mois', status: 'match', laureat_id: L.id, proposition_id: 'pr-dep-amine', match_at: il(6), relancee_at: il(12), created_at: il(12), updated_at: il(6) });
+    D.propositions.push({ id: 'pr-dep-amine', demande_id: 'dm-dep-amine', laureat_id: L.id, aide: 'encadre', entreprise: L.entreprise, poste: null, message: 'Je peux t’encadrer cet été dans mon atelier.', status: 'acceptee', repondu_at: il(6), created_at: il(8) });
+    D.placements.push(pl(amine, { saison: S, status: 'en_attente', offer_id: null, demande_id: 'dm-dep-amine', aide: 'encadre', created_at: il(2) }));
+    // Une étudiante recrutée par L cette saison, félicitée par Salma et Youssef
+    const etu = D.profiles.find(p => p.role === 'etudiant' && !p._persona && !D.placements.some(x => x.student_id === p.id && x.saison === S));
+    const rec = pl(etu, { saison: S, status: 'confirme', merci: 'Merci de m’avoir fait confiance !', confirmed_at: il(1), created_at: il(6) });
+    D.placements.push(rec);
+    D.kudos.push({ id: 'k-dep-1', placement_id: rec.id, user_id: salma.id, created_at: il(1) }, { id: 'k-dep-2', placement_id: rec.id, user_id: youssef.id, created_at: il(1) });
+    // La demande de Salma, en match avec L
+    const dem = { id: 'dm-dep', auteur_id: salma.id, type: 'pfe', titre: 'PFE en excellence opérationnelle', details: 'Je cherche un PFE de six mois en amélioration continue, idéalement dans l’automobile.', lieu: 'Tanger',
+      debut: null, duree: '6 mois', status: 'match', laureat_id: L.id, proposition_id: 'pr-dep', match_at: il(3), relancee_at: il(9), created_at: il(9), updated_at: il(3) };
+    D.demandes.push(dem);
+    D.propositions.push({ id: 'pr-dep', demande_id: dem.id, laureat_id: L.id, aide: 'recrute', entreprise: L.entreprise, poste: null, message: 'Je peux te prendre en PFE dans mon équipe, parlons-en.', status: 'acceptee', repondu_at: il(3), created_at: il(5) });
+    // Les relectures du CV de Salma par L : une rendue, une commencée
+    D.relectures_cv.push({ id: 'rc-dep-rendue', student_id: salma.id, reviewer_id: L.id, cv_path: salma.cv_path || salma.id + '/cv-demo.pdf', message: 'Mon CV est-il prêt pour les PFE ?', status: 'rendue',
+      synthese: 'Clair et bien construit. Chiffre tes résultats de stage et garde une seule page.', merci: null, note: null, created_at: il(20), pris_at: il(19), rendue_at: il(18) });
+    D.relectures_cv.push({ id: 'rc-dep-cours', student_id: salma.id, reviewer_id: L.id, cv_path: salma.cv_path || salma.id + '/cv-demo.pdf', message: 'Une deuxième lecture avant le forum ?', status: 'en_cours',
+      synthese: 'Brouillon de L', merci: null, note: null, created_at: il(4), pris_at: il(3), rendue_at: null });
+    // Une candidature de Salma et un avis d'entretien sur l'offre de L
+    D.applications.push({ id: 'a-dep', student_id: salma.id, offer_id: oL.id, entreprise: oL.entreprise, titre: oL.titre, status: 'postule', message: 'Bonjour, votre offre m’intéresse beaucoup.', note: '', created_at: il(8), updated_at: il(8) });
+    const ent = D.entretiens.find(x => x.author_id === salma.id); if (ent) ent.offer_id = oL.id;
+    // La rubrique France du guide, écrite par L
+    for (const g of D.guide_pays.filter(x => x.pays === 'France')) g.updated_by = L.id;
+    for (const g of D.guide_pays_historique) g.updated_by = L.id;
+    // Un admin parti : les cartes sponsorisées, une annonce, un événement et un signalement traité perdent leur auteur
+    for (const x of D.sponsorises) x.created_by = null;
+    if (D.annonces[0]) D.annonces[0].author_id = null;
+    if (D.evenements[0]) D.evenements[0].author_id = null;
+    for (const x of D.signalements) if (x.traite_par) x.traite_par = null;
+    // La base, quand des lignes s'en vont
+    const effacer = (table, ids) => {
+      const file = [[table, new Set(ids)]];
+      while (file.length) {
+        const [tb, partis] = file.shift();
+        if (D[tb]) D[tb] = D[tb].filter(r => !partis.has(r.id));
+        for (const [ft, col, ref, regle] of fk) {
+          if (ref !== tb || !D[ft]) continue;
+          if (regle === 'cascade') {
+            const suite = D[ft].filter(r => partis.has(r[col]));
+            if (!suite.length) continue;
+            D[ft] = D[ft].filter(r => !partis.has(r[col]));
+            const ids2 = new Set(suite.map(r => r.id).filter(Boolean));
+            if (ids2.size) file.push([ft, ids2]);
+          } else D[ft] = D[ft].map(r => !partis.has(r[col]) ? r
+            : { ...r, [col]: null, ...(ft === 'relectures_cv' && r.status === 'en_cours' ? { status: 'demandee', pris_at: null, synthese: null } : {}) });
+        }
+      }
+    };
+    const avant = { offresL: D.offers.filter(o => o.author_id === L.id).length };
+    effacer('profiles', [L.id]);
+    const offres = ['o-002u', 'o-00fm', 'o-0033'].filter(id => D.offers.some(o => o.id === id));
+    effacer('offers', offres);
+    d.persist(); d.emit();
+    return { L: L.full_name, oL: oL.id, offres, avant, etu: etu.full_name, entreprise: oL.entreprise, pfe: 'PFE : réduction des rebuts sur ligne d’emboutissage', titreL: oL.titre,
+      restes: { placements: D.placements.filter(x => x.id.startsWith('pl-dep-')).map(x => [x.status, x.laureat_id, x.offer_id]),
+        demande: ['dm-dep', 'dm-dep-amine'].flatMap(id => { const x = D.demandes.find(y => y.id === id); return x ? [x.status, x.laureat_id] : []; }),
+        relectures: D.relectures_cv.filter(x => x.id.startsWith('rc-dep')).map(x => [x.id, x.status, x.reviewer_id, x.synthese]), matchs: D.matchs.map(x => x.offre_id), kudos: D.kudos.filter(x => x.id.startsWith('k-dep')).length } };
+  }, clesEtrangeres());
+}
+
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`un compte supprimé et des offres retirées : chaque profil parcourt tous ses écrans sans erreur, sans « undefined », sans texte oublié (${largeur} px, ${langue})`, async () => {
+    const s = await ouvrir({ largeur, langue });
+    const consoles = [];
+    s.page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_/.test(m.text())) consoles.push(m.text()); });
+    const dep = await apresUnDepart(s);
+    // La base a bien fait ce qu'elle fait : les liens vidés, les lignes gardées, la relecture commencée rouverte
+    assert.deepEqual(dep.restes.placements, [['confirme', null, null], ['en_attente', null, null], ['confirme', null, null]]);
+    assert.deepEqual(dep.restes.demande, ['match', null, 'match', null], 'les deux demandes restent en match, sans leur lauréat');
+    assert.deepEqual(dep.restes.relectures, [['rc-dep-rendue', 'rendue', null, 'Clair et bien construit. Chiffre tes résultats de stage et garde une seule page.'], ['rc-dep-cours', 'demandee', null, null]]);
+    assert.deepEqual(dep.restes.matchs, [null, null], 'les deux matchs gardés, sans leur offre');
+    assert.equal(dep.restes.kudos, 2);
+    assert.ok(dep.avant.offresL >= 1 && dep.offres.length === 3);
+    const problemes = [], oublis = new Map();
+    const lireOublis = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!oublis.has(x)) oublis.set(x, ou); };
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
+      for (const e of ECRANS) {
+        await s.aller(e);
+        const txt = await s.page.evaluate(() => document.body.innerText);
+        const bris = txt.match(/\bundefined\b|\bnull\b|NaN|\[object Object\]/);
+        if (bris) problemes.push(`${nom} · ${e} : « ${bris[0]} » à l’écran`);
+        if (txt.includes(dep.L)) problemes.push(`${nom} · ${e} : le nom du compte supprimé à l’écran`);
+        const d = await s.debordement(); if (d > 0) problemes.push(`${nom} · ${e} : ${d} px de trop en largeur`);
+        if (langue === 'ar') {
+          await lireOublis(`${nom} · ${e}`);
+          // Un nom de repli resté en français dans une phrase arabe (un motif le prend pour un nom)
+          for (const x of await s.page.evaluate(replisFrancais)) problemes.push(`${nom} · ${e} : repli en français ${JSON.stringify(x)}`);
+        }
+      }
+    }
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...consoles, ...problemes], []);
+    await verifierReplis(s, langue, dep);
+    if (langue === 'ar') await lireOublis('après les gestes');
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...consoles, ...problemes], []);
+    await s.ctx.close();
+  });
+}
+
+// Dans la page : les textes de l'interface où un nom de repli est resté en français (sauf le français voulu : l'affiche
+// bilingue, lang="fr", et le choix du profil de démo)
+function replisFrancais() {
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), out = [];
+  for (let n; (n = w.nextNode());) {
+    if (!n.parentElement || n.parentElement.closest('[lang="fr"], script, style, #persona')) continue;
+    if (/\b[Uu]n (?:lauréat|ancien membre|membre|étudiant)\b|L’étudiant|[Ll]e lauréat\b|Offre retirée/.test(n.textContent)) out.push(n.textContent.trim());
+  }
+  return out;
+}
+
+// Ce que chacun voit de ce qui est parti : « Un ancien membre » à la place d'un nom, « Offre retirée » à la place d'une
+// offre ; jamais un nom inventé, un visage ou un bouton « Écrire » vers personne. Puis les gestes qui restent : rouvrir la
+// demande, confirmer le démarrage déclaré avant le départ.
+async function verifierReplis(s, langue, dep) {
+  const ar = langue === 'ar';
+  const T = ar ? { ancien: 'عضو سابق', supprime: 'حُذف هذا الحساب.', retiree: 'عرض مسحوب', declare: 'بتصريح من عضو سابق', tous: 'كل الخريجين', hors: 'خارج المنصة' }
+    : { ancien: 'Un ancien membre', supprime: 'Ce compte a été supprimé.', retiree: 'Offre retirée', declare: 'déclaré par un ancien membre', tous: 'Tous les lauréats', hors: 'hors plateforme' };
+  // Salma : sa demande en match avec L, sans visage ni « Écrire » ; elle peut la rouvrir ou la fermer
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  const match = s.page.locator('#dm-dm-dep .dm-match');
+  await match.waitFor();
+  let t = await match.innerText();
+  assert.ok(t.includes(T.ancien) && t.includes(T.supprime), `la demande de Salma : ${t}`);
+  assert.equal(await match.locator('.person, .msg-btn').count(), 0, 'ni visage ni « Écrire » vers un compte supprimé');
+  assert.equal(await match.locator('.dm-sortie button').count(), 2, 'rouvrir ou fermer');
+  // Ses relectures : la rendue garde sa synthèse et dit qui l'a faite sans nom ; la commencée est rouverte à tous
+  await s.aller('mentorat/cv');
+  const rendue = s.page.locator('.rel-card:has-text("Clair et bien construit")');
+  t = await rendue.innerText();
+  assert.ok(t.includes(T.ancien) && !t.includes(T.tous), `la relecture rendue : ${t}`);
+  assert.equal(await s.page.locator('#rv-q-rc-dep-rendue').count(), 0, 'pas de question à un compte supprimé');
+  assert.ok((await s.page.locator('.rel-card:has-text("Une deuxième lecture avant le forum")').innerText()).includes(T.tous), 'la relecture commencée, ouverte à tous');
+  // Ses candidatures aux offres retirées : « Offre retirée », pas « hors plateforme »
+  await s.aller('parcours');
+  for (const titre of [dep.pfe, dep.titreL]) {
+    const q = await s.page.locator('.pc-cand', { hasText: titre }).first().locator('.pc-quand').innerText();
+    assert.equal(q, T.retiree, `${titre} : ${q}`);
+  }
+  assert.equal(await s.page.locator('.pc-cand:has-text("Decathlon") .pc-quand').innerText(), T.hors, 'une candidature hors plateforme le reste');
+  // Hajar, lauréate : la relecture rouverte est dans la file de tous les lauréats
+  await s.comme('Hajar'); await s.aller('mentorat/cv');
+  assert.equal(await s.page.locator('.rel-card:has-text("Une deuxième lecture avant le forum")').count(), 1);
+  // L'administration : le recrutement à confirmer d'Amine, déclaré par un ancien membre (pas « ? »)
+  await s.comme('Admin'); await s.aller('admin/traiter');
+  t = await s.page.evaluate(() => document.body.innerText);
+  assert.ok(t.includes(T.declare) && !t.includes(ar ? 'بتصريح من ?' : 'déclaré par ?'), 'le recrutement d’Amine dans « À traiter »');
+  // Amine : sa demande en match, le démarrage déclaré avant le départ ; il le confirme
+  await s.comme('Amine'); await s.aller('offres/demandes');
+  const sien = s.page.locator('#dm-dm-dep-amine .dm-match');
+  t = await sien.innerText();
+  assert.ok(t.includes(T.ancien), `la demande d’Amine : ${t}`);
+  if (!ar) assert.ok(t.includes(`Ton démarrage chez ${dep.entreprise} a été déclaré.`), t);
+  assert.equal(await sien.locator('.person, .msg-btn').count(), 0);
+  if (ar) return;
+  await sien.locator('.dm-confirmer').click();
+  await s.page.waitForSelector('text=Félicitations, c’est officiel !');
+  t = await s.page.evaluate(() => document.body.innerText);
+  assert.ok(t.includes(`Ta réussite chez ${dep.entreprise} est vérifiée des deux côtés et annoncée dans le réseau.`) && !t.includes('Dire merci à'), 'la fête, sans merci à personne');
+  assert.deepEqual(await s.page.evaluate(() => { const d = window.__demo.data; const p = d.placements.find(x => x.demande_id === 'dm-dep-amine'); return [p.status, d.demandes.find(x => x.id === 'dm-dep-amine').status]; }), ['confirme', 'pourvue']);
+  await s.fermer();
+  // Salma rouvre sa demande : d'autres lauréats pourront lui proposer leur aide
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.locator('#dm-dm-dep .dm-sortie button', { hasText: 'Rouvrir ma demande' }).click();
+  await s.page.waitForSelector('.toast:has-text("Ta demande est de nouveau ouverte.")');
+  assert.deepEqual(await s.page.evaluate(() => { const d = window.__demo.data.demandes.find(x => x.id === 'dm-dep'); return [d.status, d.laureat_id]; }), ['ouverte', null]);
+}
