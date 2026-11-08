@@ -124,7 +124,7 @@ export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (sce
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
-  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
   useLayoutEffect(() => {
     const t = ref.current?.querySelector('.g-txt');
     if (!t || (!bande && t.__b == null)) return;
@@ -132,6 +132,8 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande 
     for (const [k, v] of [['textLength', 212], ['lengthAdjust', 'spacingAndGlyphs']]) if (b.length > 20) t.setAttribute(k, v); else t.removeAttribute(k);
   }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
+  const [cadre] = useState([align, fit]);
+  useLayoutEffect(() => { ref.current?.querySelector('svg')?.setAttribute('preserveAspectRatio', `${align} ${fit}`); }, [align, fit, pret]);
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === 'undefined') return;
@@ -140,7 +142,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande 
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(...cadre) : '' }}></div>`;
 }
 
 let signaler = () => {};

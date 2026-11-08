@@ -1,6 +1,6 @@
 // Le site construit (dist/, ou SITE_DIR) ouvert dans Chromium, en démo : aucun appel à la vraie base.
 // Chaque profil de démo parcourt tous les écrans, puis les parcours importants sont rejoués.
-import { before, after } from 'node:test';
+import { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -49,6 +49,17 @@ before(async () => {
   navigateur = await chromium.launch();
 });
 after(async () => { await navigateur?.close(); serveur?.close(); });
+// Un essai tient dans un seul jour : sinon les jours de l'application changeraient en route (le tour du jour de Match,
+// « Vu · 14:05 », la semaine d'un merci, le « Demain » d'un entretien, la vue du jour d'une carte sponsorisée…). Celui qui
+// commence dans les deux dernières minutes de la journée attend donc minuit : ceux qui suivent les jours durent bien moins (le
+// plus long, l'entretien de Match, une demi-minute). L'attente vient avant l'essai, jamais entre deux de ses pages. Deux
+// minuits comptent : celui de l'heure de cet appareil, qui est aussi celle des pages, et celui d'UTC, où la santé des
+// notifications compte ses jours. Ils tombent au même instant sur la CI (TZ UTC), pas ailleurs.
+beforeEach(async () => {
+  const maintenant = new Date(), minuit = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate() + 1);
+  const reste = Math.min(minuit - maintenant, 864e5 - (maintenant.getTime() % 864e5));
+  if (reste < 120e3) await new Promise(ok => setTimeout(ok, reste + 500));
+});
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
@@ -440,8 +451,13 @@ test('mentorat : le prochain rendez-vous en billet (date, vrai compte à rebours
   const d = new Date(rdv);
   assert.equal(await billet.locator('.bt-num').innerText(), String(d.getDate()));
   assert.equal(await billet.locator('.bt-heure').innerText(), `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
-  const h = Math.floor((d - Date.now()) / 36e5);
-  assert.match(await billet.locator('.m-rebours').innerText(), h >= 24 ? /^Dans \d+ jours$|^Demain$/ : /^Dans \d+ (h|min)/);
+  // La règle de l'application : en heures tant qu'il reste au plus 1439 minutes (arrondies au-dessus), en jours ensuite. Son
+  // heure se met à jour toutes les 30 s, donc elle peut avoir jusqu'à 30 s de retard : tout près du seuil, les deux sont justes.
+  const rebours = await billet.locator('.m-rebours').innerText(), reste = d - Date.now(), seuil = 1439 * 6e4;
+  const enJours = /^Dans \d+ jours$|^Demain$/, enHeures = /^Dans \d+ (h|min)/;
+  if (reste > seuil) assert.match(rebours, enJours);
+  else if (reste + 35e3 <= seuil) assert.match(rebours, enHeures);
+  else assert.ok(enJours.test(rebours) || enHeures.test(rebours), rebours);
   // Avant de confirmer : une seule action pleine (« Je serai là ») ; la visio attend
   assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
   assert.match(await billet.locator('.btn.primary').innerText(), /Je serai là/);
@@ -659,14 +675,17 @@ test('nouvelle version publiée pendant qu’un membre tape : pas de rechargemen
 
 test('lien d’invitation d’une promo : la promo est gardée, l’adresse nettoyée, le message prêt pour WhatsApp', async () => {
   const s = await ouvrir();
-  await s.page.goto(adresse + '?promo=2027'); await s.page.waitForSelector('.hello');
-  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2027');
+  // La promo des 5A de cette saison (celle de Salma) : elle a des inscrits, donc son lien est sa page d'aperçu. Une année
+  // écrite en dur finirait sans inscrits (lien ?promo=), puis hors de la liste.
+  const P = String(await s.page.evaluate(async () => (await import('./logic.js')).seasonOf()) + 1);
+  await s.page.goto(adresse + '?promo=' + P); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), P);
   assert.equal(await s.page.evaluate(() => location.search), '');
   await s.comme('Admin'); await s.aller('admin/inviter');
   assert.ok(await s.page.locator('.inv-row').count() >= 9);
-  const wa = await s.page.locator('.inv-row', { hasText: 'Promo 2027' }).locator('a[href^="https://wa.me/"]').getAttribute('href');
+  const wa = await s.page.locator('.inv-row', { hasText: 'Promo ' + P }).locator('a[href^="https://wa.me/"]').getAttribute('href');
   const msg = decodeURIComponent(wa.split('text=')[1]);
-  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + 'promo/2027/'));
+  assert.ok(msg.includes('promo ' + P), msg); assert.ok(msg.includes(adresse + 'promo/' + P + '/'));
   await s.page.click('.inv-opts .seg button:nth-child(3)');
   assert.match(await s.page.locator('.inv-msg').innerText(), /مرحبا دفعة/);
   assert.deepEqual(s.erreurs, []);
@@ -718,8 +737,10 @@ test('« Fais venir ta promo » : un bouton WhatsApp avec le message et le lien 
   await s.comme('Youssef'); await s.aller('espace');
   assert.match(await texte('#promo-wa'), /On est déjà \d+ de la promo 2016\./);
   assert.equal(await s.page.locator('#promo-wa.primary').count(), 0);
+  // La promo de Salma suit la saison (5A : la saison + 1)
   await s.comme('Salma'); await s.aller('parcours');
-  assert.ok((await texte('#promo-wa')).includes(adresse + 'promo/2027/'));
+  const promoSalma = await s.page.evaluate(() => window.__demo.me.promo);
+  assert.ok((await texte('#promo-wa')).includes(adresse + `promo/${promoSalma}/`));
   assert.doesNotMatch(await texte('#promo-wa'), /points|classement/);
   // Admin > Inviter : une promo sans aucun inscrit garde le lien simple ?promo=
   await s.comme('Admin'); await s.aller('admin/inviter');
@@ -733,7 +754,8 @@ test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en ar
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Salma'); await s.aller('parcours');
   const msg = decodeURIComponent((await s.page.getAttribute('#promo-wa', 'href')).split('text=')[1]);
-  assert.ok(msg.includes(adresse + 'promo/2027/ar/')); assert.ok(msg.includes('مرحبا دفعة 2027'));
+  const P = await s.page.evaluate(() => window.__demo.me.promo);
+  assert.ok(msg.includes(adresse + `promo/${P}/ar/`)); assert.ok(msg.includes(`مرحبا دفعة ${P}`));
   assert.equal(await s.debordement(), 0);
   await s.comme('Admin'); await s.aller('espace');
   assert.equal(await s.page.locator('#promo-card').count(), 0);
@@ -4995,6 +5017,37 @@ test('accueil : au doigt, l’annonce (son texte et « Masquer l’annonce »), 
   }
 });
 
+test('accueil, de juin à septembre : « Masquer » du bandeau « Ton année » se touche lui aussi sur 44 px, sans empiéter sur « Voir mon année », pour chaque profil, à 390 px et en arabe à 360 px', async () => {
+  // Le bandeau ne paraît que l'été (bilanSaison) : l'essai d'au-dessus, à la date du jour, ne le mesure pas d'octobre à mai,
+  // et il échouait de juin à septembre (36 px de large). Ici l'appareil est à la mi-juin : le bandeau est là pour chaque
+  // membre, et toute la page se mesure comme au-dessus.
+  const d = new Date(), juin = new Date(Date.UTC(d.getUTCFullYear() + (d.getUTCMonth() >= 5 ? 1 : 0), 5, 15, 9));
+  for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
+    const s = await ouvrir({ largeur, langue, toucher: true, heure: juin });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [], sansBandeau = [];
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.aller('accueil'); await s.page.waitForTimeout(300);
+      // La zone invisible de « Masquer » (sa boîte prolongée par ::before) et le bouton voisin ne se chevauchent pas
+      const bandeau = await s.page.evaluate(() => {
+        const b = document.querySelector('#contenu .annee-strip'); if (!b) return window.__demo.me.role === 'admin' ? 'admin' : null;
+        const x = b.querySelector(':scope > .icon-btn.small'), v = b.querySelector(':scope > .btn').getBoundingClientRect();
+        const r = x.getBoundingClientRect(), z = getComputedStyle(x, '::before'), e = k => Math.min(0, parseFloat(z[k]) || 0);
+        const zone = { left: r.left + e('left'), right: r.right - e('right'), top: r.top + e('top'), bottom: r.bottom - e('bottom') };
+        return zone.right <= v.left || zone.left >= v.right || zone.bottom <= v.top || zone.top >= v.bottom ? 'ok' : 'empiete';
+      });
+      if (bandeau === null) sansBandeau.push(nom);
+      else if (bandeau === 'empiete') trop.push(`${largeur} ${langue} · ${nom} · la zone de « Masquer » empiète sur « Voir mon année »`);
+      for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${nom} · accueil : ${x}`);
+    }
+    assert.deepEqual(sansBandeau, [], 'le bandeau « Ton année » est là pour chaque membre');
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
 test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les offres se relisent dans Contenus, plus dans le tableau de bord', async () => {
   for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
     const s = await ouvrir({ largeur, langue });
@@ -5586,6 +5639,26 @@ test('le décor ne tourne plus sans fin : l’entrée dessinée s’anime à l�
   await s.ctx.close();
 });
 
+test('accueil : changer de langue garde le dessin de l’école tel qu’il est ; seul son cadrage suit la langue', async () => {
+  // Le dessin n'est posé qu'une fois. Remplacé à chaque langue (l'arabe le cale à gauche), il relançait ses animations : la
+  // porte se refermait puis se rouvrait, ou, l'accueil une fois posé (10 s, tout en pause), restait fermée, les massifs vides.
+  const s = await ouvrir({ largeur: 1280 });
+  await s.page.waitForSelector('.hello .scene svg');
+  const dessin = await s.page.$('.hello .scene svg');
+  const etat = () => dessin.evaluate(e => [e.isConnected, e.getAttribute('preserveAspectRatio')]);
+  // Le dessin de l'accueil, quel qu'il soit, une fois calé : l'essai regarde ensuite si c'est encore le premier
+  const cale = v => s.page.waitForFunction(v => document.querySelector('.hello .scene svg')?.getAttribute('preserveAspectRatio') === v, v);
+  assert.deepEqual(await etat(), [true, 'xMaxYMax meet']);
+  await s.page.click('.top .lang-btn'); await s.page.waitForFunction(() => document.documentElement.dir === 'rtl');
+  await cale('xMinYMax meet');
+  assert.deepEqual(await etat(), [true, 'xMinYMax meet'], 'le même dessin, calé à gauche en arabe');
+  await s.page.click('.top .lang-btn'); await s.page.waitForFunction(() => document.documentElement.dir === 'ltr');
+  await cale('xMaxYMax meet');
+  assert.deepEqual(await etat(), [true, 'xMaxYMax meet'], 'le même dessin, de retour à droite en français');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('arabe : les fêtes du match et du merci, et la carte « Fait », sont traduites ; les visages suivent le sens de lecture', async () => {
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Youssef'); await s.page.waitForTimeout(300);
@@ -5814,6 +5887,38 @@ test('écran chargé à la demande sans réseau : la forme de la page, puis un m
   assert.ok(await s.page.isVisible('#adm-parcours'));
   assert.equal(await s.page.evaluate(() => location.hash), '#admin');
   assert.deepEqual(s.erreurs.filter(e => !/admin\.js|dynamically imported module/i.test(e)), []);
+  await s.ctx.close();
+});
+
+test('écran chargé à la demande, rouvert pendant que son code arrive : il se pose quand même', async () => {
+  // Le Suivi ouvert puis quitté avant l'arrivée de son code (dashboard.js), puis rouvert dans un onglet en arrière-plan
+  // (requestAnimationFrame arrêté : l'effet de la page passe 100 ms après elle). Le code arrive entre les deux, juste après
+  // l'affichage : la page le croyait déjà posé et gardait sa forme d'attente (« Chargement… ») jusqu'au geste suivant.
+  const s = await ouvrir({ largeur: 390 });
+  // D'abord la proposition d'ambassadeur (1,2 s après l'ouverture, une fois par visite) : elle redessine toute l'application,
+  // ce qui cacherait l'oubli
+  await s.page.waitForTimeout(2000);
+  // Le code du Suivi s'arrête au début de son évaluation, tant que la page ne le lâche pas
+  await s.ctx.route(/\/dashboard\.js$/, async r => {
+    const rep = await r.fetch();
+    await r.fulfill({ response: rep, body: 'window.__suiviArrete = true; await window.__suiviLache;\n' + await rep.text() });
+  });
+  await s.page.evaluate(() => { window.__suiviLache = new Promise(ok => { window.__lacherSuivi = ok; }); location.hash = 'suivi'; });
+  await s.page.waitForSelector('.page-attente');
+  await s.page.waitForFunction(() => window.__suiviArrete);
+  await s.page.evaluate(() => { location.hash = 'accueil'; }); await s.page.waitForSelector('.hello');
+  await s.page.waitForTimeout(300);
+  // Rouvert en arrière-plan : le code est lâché dès l'affichage de la deuxième page, dans le rappel même de l'observateur.
+  // Sa fin d'évaluation et l'import ne prennent que des microtâches : il est posé avant toute minuterie, donc avant l'effet,
+  // même sur une machine lente (une minuterie de 40 ms pouvait passer après l'effet : l'essai passait alors sans la correction)
+  await s.page.evaluate(() => {
+    window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {};
+    new MutationObserver((_, mo) => { if (document.querySelector('.page-attente')) { mo.disconnect(); window.__lacherSuivi(); } }).observe(document.body, { childList: true, subtree: true });
+    location.hash = 'suivi';
+  });
+  // Le Suivi lui-même (l'accueil aussi est une .page : il ne doit pas passer pour lui)
+  await s.page.waitForSelector('#suivi-vue', { timeout: 10000 });
+  assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
 
@@ -9351,13 +9456,16 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   await s.aller('admin/liste');
   assert.equal(await s.page.locator('#lo-cndp').count(), 0);
   assert.equal(await s.page.locator('#lo-file').isDisabled(), false);
-  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from('nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,2031\n') });
+  // Une promo que la liste de l'ENSAM n'a jamais : la démo n'y met que celles à venir (S+1 à S+3). Une année écrite en dur
+  // (2031) y était de septembre 2028 à août 2031 : l'essai aurait échoué ces trois années-là
+  const P = await s.page.evaluate(async () => (await import('./logic.js')).seasonOf()) - 2;
+  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from(`nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,${P}\n`) });
   await s.page.click('#lo-go'); await s.page.waitForTimeout(300);
-  assert.match(await s.page.locator('.lo-couv').innerText(), /Promo 2031/);
-  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.promo === 2031)?.ecole), 'institut-exemple');
+  assert.match(await s.page.locator('.lo-couv').innerText(), new RegExp(`Promo ${P}\\b`));
+  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.email === 'ilyas@institut.example')?.ecole), 'institut-exemple');
   await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.liste h2').first().innerText(), /ENSAM Meknès/);
-  assert.doesNotMatch(await s.page.locator('.liste').innerText(), /Promo 2031/);
+  assert.doesNotMatch(await s.page.locator('.liste').innerText(), new RegExp(`Promo ${P}\\b`));
 
   // Une carte sponsorisée : l'école regardée d'abord, ou toutes les écoles ; la ligne dit pour quelle école
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/sponsorises');
