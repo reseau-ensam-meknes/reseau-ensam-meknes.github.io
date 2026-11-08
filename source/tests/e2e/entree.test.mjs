@@ -2635,3 +2635,67 @@ test('accueil d’un membre d’une autre école : la porte dessinée dit son é
     await m.ctx.close();
   }
 });
+
+// L'école gardée par le lien d'une autre école (ensam-invite-ecole), puis un lien d'invitation de l'ENSAM Meknès (?promo=,
+// &de=, sans école) : la page d'entrée, la demande de code, qui invite et le profil sont ceux de l'ENSAM Meknès ; dans le
+// navigateur d'une application, l'adresse gardée pour Safari et « Ouvrir dans Chrome » ne disent plus l'école effacée. Une
+// simple visite la garde ; un lien qui dit son école la remplace
+const ecoleGardee = page => page.evaluate(() => localStorage.getItem('ensam-invite-ecole'));
+test('école gardée par un ancien lien, puis un lien d’invitation sans école : l’ENSAM Meknès partout (page, code, qui invite, profil, Safari, Chrome) ; une simple visite la garde ; un lien qui dit son école la remplace', async () => {
+  const otp = email => site.appels.filter(a => a.u === '/sb/auth/v1/otp' && a.corps.email === email).pop()?.corps;
+  const corps = nom => site.appels.filter(a => a.u === '/sb/rest/v1/rpc/' + nom).map(a => a.corps);
+  const NADIA = c => (c?.p_code === 'nadia219' ? { prenom: 'Nadia', promo: 2019, role: 'laureat' } : null);
+  // Le lien d'une promo de l'ENSAM Meknès, après celui de l'ENSAM Casablanca (pas encore ouverte)
+  site.tables.ecoles = [FES, CASA];
+  let s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensam-casa' } });
+  assert.equal(await ecoleGardee(s.page), null, 'effacée');
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  await sInscrire(s.page, { role: 'laureat', email: 'hamza@gmail.com' });
+  assert.equal('ecole' in (otp('hamza@gmail.com').data || {}), false, `la demande de code sans école : ${JSON.stringify(otp('hamza@gmail.com').data)}`);
+  await finirLaureat(s.page);
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  assert.equal('ecole' in site.inscrits.find(x => x.id === UID), false, 'le profil de l’ENSAM Meknès');
+  for (const nom of ['chiffres_publics', 'fondateurs_publics']) assert.ok(corps(nom).every(c => JSON.stringify(c) === '{}'), `${nom} : ${JSON.stringify(corps(nom))}`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le lien de qui invite (&de=, sans promo), après celui de l'ENSA Fès (ouverte) : qui invite, cherché à l'ENSAM Meknès
+  site.vider(); site.tables.ecoles = [FES, CASA]; site.rpc.invitation_de = NADIA;
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?de=nadia219', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.equal(await ecoleGardee(s.page), null, 'effacée');
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès');
+  assert.ok(corps('invitation_de').length && corps('invitation_de').every(c => JSON.stringify(c) === '{"p_code":"nadia219"}'), JSON.stringify(corps('invitation_de')));
+  await s.app();
+  assert.equal(await marque(s.page), 'Réseau ENSAM Meknès', 'l’application reprend la page telle quelle');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Dans le navigateur d'une application : l'adresse gardée pour Safari (iPhone), « Ouvrir dans Chrome » (Android)
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM_IOS, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await quand(s.page, 'mode', 'inscription');
+  assert.deepEqual(await adresseDe(s.page), { promo: '2019', mode: 'inscription' }, 'iPhone : pas d’école dans l’adresse');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM, query: '?promo=2019', stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await s.page.waitForSelector('#au-appli-chrome', { timeout: 8000 });
+  const intent = await s.page.getAttribute('#au-appli-chrome', 'href');
+  const vers = new URL('https://' + intent.slice('intent://'.length).split('#Intent;')[0]).searchParams;
+  assert.deepEqual([vers.get('promo'), vers.has('ecole')], ['2019', false], `Android : ${intent}`);
+  assert.doesNotMatch(decodeURIComponent(intent), /ecole=/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Une simple visite : l'école gardée reste, et la page la dit
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, stockage: { 'ensam-invite-ecole': 'ensa-fes' } });
+  await quandMarque(s.page, 'Réseau ENSA Fès');
+  assert.equal(await ecoleGardee(s.page), 'ensa-fes');
+  await s.ctx.close();
+  // Un lien qui dit son école : elle remplace celle d'avant
+  site.vider(); site.tables.ecoles = [FES, CASA];
+  s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019&ecole=ensa-fes', stockage: { 'ensam-invite-ecole': 'ensam-casa' } });
+  await quandMarque(s.page, 'Réseau ENSA Fès');
+  assert.equal(await ecoleGardee(s.page), 'ensa-fes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

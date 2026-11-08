@@ -160,24 +160,15 @@ const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else
 
 export function lireInvitation() {
   try {
-    const u = new URL(location.href);
-    const de = u.searchParams.get('de');
-    if (de !== null) {
-      if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-      u.searchParams.delete('de');
-      if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-    }
-    if (u.searchParams.has('ecole')) {
-      const e = u.searchParams.get('ecole');
-      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
-      u.searchParams.delete('ecole');
-      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
-    }
-    if (!u.searchParams.has('promo')) return null;
-    const n = Number(u.searchParams.get('promo'));
+    const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
+    if (CODE_DE.test(de)) ecrire(CLE_DE, de);
+    if (e === null) { if (de !== null || promo) ecrire(CLE_ECOLE); } else if (ecoleValide(e)) ecrire(CLE_ECOLE, e);
+    q.delete('de'); q.delete('ecole');
+    if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    const n = Number(q.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
-    const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
-    u.searchParams.delete('promo'); u.searchParams.delete('lang');
+    const ar = q.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
+    q.delete('promo'); q.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     return ar ? 'ar' : null;
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }

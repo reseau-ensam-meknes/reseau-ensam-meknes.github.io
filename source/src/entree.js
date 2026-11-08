@@ -195,28 +195,22 @@ const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-// Au chargement : lit ?promo= (et &lang=ar, et &de= : le code de qui invite) dans l'adresse, garde la promo et le code,
-// puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
+// Au chargement : lit ?promo= (et &lang=ar, et &de= : le code de qui invite, et &ecole=) dans l'adresse, garde la promo, le
+// code et l'école, puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà
+// choisi sa langue. Un lien d'invitation sans école (?promo=, &de=) est celui de l'ENSAM Meknès : l'école gardée par le lien
+// d'une autre école, avant, ne vaut pas pour lui (effacée). Une simple visite la garde. Ce que le site fabrique pour emporter
+// le contexte ailleurs (adresseIci, lienChrome) dit toujours l'école gardée.
 export function lireInvitation() {
   try {
-    const u = new URL(location.href);
-    const de = u.searchParams.get('de');
-    if (de !== null) {
-      if (CODE_DE.test(de)) ecrire(CLE_DE, de);
-      u.searchParams.delete('de');
-      if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-    }
-    if (u.searchParams.has('ecole')) {
-      const e = u.searchParams.get('ecole');
-      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
-      u.searchParams.delete('ecole');
-      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
-    }
-    if (!u.searchParams.has('promo')) return null;
-    const n = Number(u.searchParams.get('promo'));
+    const u = new URL(location.href), q = u.searchParams, de = q.get('de'), e = q.get('ecole'), promo = q.has('promo');
+    if (CODE_DE.test(de)) ecrire(CLE_DE, de);
+    if (e === null) { if (de !== null || promo) ecrire(CLE_ECOLE); } else if (ecoleValide(e)) ecrire(CLE_ECOLE, e);
+    q.delete('de'); q.delete('ecole');
+    if (!promo) { if (de !== null || e !== null) history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    const n = Number(q.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
-    const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
-    u.searchParams.delete('promo'); u.searchParams.delete('lang');
+    const ar = q.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
+    q.delete('promo'); q.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     return ar ? 'ar' : null;
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
