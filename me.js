@@ -146,8 +146,14 @@ function ProchaineEtape({ ctx, obj, step, plein }) {
   </div>`;
 }
 
-// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non (ici, ou depuis la carte « prochaine étape » de l'accueil)
-export const refuserRecrutement = (ctx, pl) => ctx.act(async () => { await ctx.store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); });
+// Ce qui a été déclaré (Mon parcours, l'accueil, la cloche) : le lauréat, nommé (« Un lauréat » si son profil n'est pas là) ;
+// un lauréat qui a supprimé son compte depuis (la base vide laureat_id) n'est plus là : ce qui a été déclaré, comme sur la demande
+export const recrutementDeclare = (pl, qui) => (pl.laureat_id
+  ? (pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} déclare ton recrutement chez ${pl.entreprise}`)
+  : pl.demande_id ? `Ton démarrage chez ${pl.entreprise} a été déclaré` : `Ton recrutement chez ${pl.entreprise} a été déclaré par un ancien membre`);
+// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non (ici, ou depuis la carte « prochaine étape » de l'accueil) ;
+// un lauréat parti depuis n'est informé de rien
+export const refuserRecrutement = (ctx, pl) => ctx.act(async () => { await ctx.store.update('placements', pl.id, { status: 'refuse' }); toast(pl.laureat_id ? 'C’est noté. Le lauréat sera informé.' : 'C’est noté.'); });
 export const confirmerRecrutement = (ctx, pl, helper) => ctx.act(async () => {
   const { store } = ctx;
   await store.update('placements', pl.id, { status: 'confirme' });
@@ -169,7 +175,7 @@ export function ConfirmRecruit({ ctx, pl, helper }) {
   const d = pl.demande_id ? store.byId('demandes', pl.demande_id) : null;
   return html`<div class="confirm-card">
     <div class="confirm-top"><${CompanyLogo} name=${pl.entreprise} size=${48}/>
-      <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} déclare ton recrutement chez ${pl.entreprise}`}</h2>
+      <div><p class="eyebrow">À confirmer</p><h2>${recrutementDeclare(pl, helper?.full_name || 'Un lauréat')}</h2>
         <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.</p></div></div>
     <div class="row-end">
       <button class="btn ghost" onClick=${() => refuserRecrutement(ctx, pl)}>Ce n’est pas le cas</button>
@@ -991,7 +997,13 @@ addAR({
   'La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.': 'صفحة الدخول عمومية: تظهر فيها الشركة واسماكما الشخصيان ودفعة الخريج والشهر، فقط إذا أشّرتما معًا. يمكنك إلغاء التأشير في أي وقت.',
   'Offre retirée': 'عرض مسحوب',
   '. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.': '. بعد التأكيد، يُوثَّق نجاحك من الطرفين ويُحتسب في تتبّع سنتك.',
+  'C’est noté.': 'تم التسجيل.',
 }, [
+  // Un recrutement déclaré par un lauréat qui a supprimé son compte depuis (Mon parcours, l'accueil, la cloche)
+  [/^Ton démarrage chez (.+) a été déclaré\. Confirme-le\.$/, e => `تم التصريح ببدايتك لدى ${e}. أكّد ذلك.`],
+  [/^Ton démarrage chez (.+) a été déclaré$/, e => `تم التصريح ببدايتك لدى ${e}`],
+  [/^Ton recrutement chez (.+) a été déclaré par un ancien membre\. Confirme-le\.$/, e => `تصريح من عضو سابق بتوظيفك لدى ${e}. أكّده.`],
+  [/^Ton recrutement chez (.+) a été déclaré par un ancien membre$/, e => `تصريح من عضو سابق بتوظيفك لدى ${e}`],
   [/^\+(\d+) depuis ta dernière visite$/, n => `+${n} منذ زيارتك الأخيرة`],
   [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
   [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],

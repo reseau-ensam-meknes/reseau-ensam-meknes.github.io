@@ -10615,3 +10615,74 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
     await s.ctx.close();
   });
 }
+
+// Un recrutement déclaré par un lauréat qui a supprimé son compte depuis (la base vide laureat_id) : Mon parcours, l'accueil
+// et la cloche disent ce qui a été déclaré, comme sa demande (« Ton démarrage chez … a été déclaré. ») ; déclaré depuis une
+// offre, retirée avec lui : « … a été déclaré par un ancien membre ». « Ce n'est pas le cas » répond « C'est noté. », sans
+// promettre de prévenir un lauréat qui n'est plus là. Déclaré par un lauréat toujours là : les textes d'avant, à l'octet près.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`un recrutement déclaré par un compte supprimé depuis : Mon parcours, l’accueil et la cloche disent ce qui a été déclaré, « Ce n’est pas le cas » ne promet plus de prévenir personne ; un lauréat toujours là, comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const T = ar ? {
+      youssef: 'تصريح من Youssef El Amrani بتوظيفك لدى Renault Group Maroc', informe: 'تم التسجيل. سيتم إخبار الخريج.', note: 'تم التسجيل.', debut: 'تم التسجيل',
+      demarrage: e => `تم التصريح ببدايتك لدى ${e}`, offre: e => `تصريح من عضو سابق بتوظيفك لدى ${e}`,
+      cloche: { youssef: x => `${x}. أكّده.`, demarrage: x => `${x}. أكّد ذلك.`, offre: x => `${x}. أكّده.` },
+    } : {
+      youssef: 'Youssef El Amrani déclare ton recrutement chez Renault Group Maroc', informe: 'C’est noté. Le lauréat sera informé.', note: 'C’est noté.', debut: 'C’est noté',
+      demarrage: e => `Ton démarrage chez ${e} a été déclaré`, offre: e => `Ton recrutement chez ${e} a été déclaré par un ancien membre`,
+      cloche: { youssef: x => `${x}. Confirme-le.`, demarrage: x => `${x}. Confirme-le.`, offre: x => `${x}. Confirme-le.` },
+    };
+    const s = await ouvrir({ largeur, langue });
+    const net = x => x.replace(/[⁦-⁩]/g, '').trim();
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    // Ce que disent Mon parcours, la carte de l'accueil et la ligne de la cloche ; puis « Ce n'est pas le cas » (ici : sur
+    // Mon parcours ou sur l'accueil) et la réponse, seule
+    const verifier = async (id, titre, cloche, ici, reponse) => {
+      await s.aller('parcours');
+      assert.equal(net(await s.page.locator('.a-faire .confirm-card h2').innerText()), titre, 'Mon parcours');
+      await relever('Mon parcours');
+      await s.aller('accueil');
+      assert.equal(net(await s.page.locator(`.pas[data-pas="pa${id}"] .pas-titre`).innerText()), titre, 'l’accueil');
+      await relever('accueil');
+      await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+      assert.equal(net(await s.page.locator(`.cloche .af-row[data-cle="pa${id}"] .af-txt`).innerText()), cloche, 'la cloche');
+      await relever('cloche');
+      await s.fermer();
+      if (ici === 'parcours') { await s.aller('parcours'); await s.page.locator('.a-faire .confirm-card .btn.ghost').click(); }
+      else await s.page.locator(`.pas[data-pas="pa${id}"] .pas-lien`).click();
+      const toast = s.page.locator('.toast:not(.sortie) .toast-txt', { hasText: T.debut });
+      await toast.waitFor();
+      assert.equal(net(await toast.innerText()), reponse, `la réponse de « Ce n’est pas le cas » (${ici})`);
+      assert.equal(await s.page.evaluate(id => window.__demo.data.placements.find(p => p.id === id).status, id), 'refuse');
+      await relever(`réponse (${ici})`);
+    };
+    // Youssef, toujours là, déclare le recrutement de Salma : comme avant
+    await s.comme('Youssef'); await s.aller('accueil');
+    const idY = await s.page.evaluate(async () => {
+      const d = window.__demo, { seasonOf } = await import('./logic.js');
+      const salma = d.data.profiles.find(p => p.full_name.startsWith('Salma'));
+      await d.insert('placements', { student_id: salma.id, saison: seasonOf(), niveau: 5, type: 'pfe', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc' });
+      return d.data.placements.find(p => p.student_id === salma.id && p.status === 'en_attente').id;
+    });
+    await s.comme('Salma');
+    await verifier(idY, T.youssef, T.cloche.youssef(T.youssef), 'accueil', T.informe);
+    // Le lauréat qui avait déclaré le démarrage d'Amine (sa demande en match) supprime son compte
+    const dep = await apresUnDepart(s);
+    const idA = await s.page.evaluate(() => window.__demo.data.placements.find(p => p.demande_id === 'dm-dep-amine').id);
+    await s.comme('Amine');
+    await verifier(idA, T.demarrage(dep.entreprise), T.cloche.demarrage(T.demarrage(dep.entreprise)), 'parcours', T.note);
+    // Déclaré depuis une offre (retirée avec son auteur : ni offre, ni demande, ni lauréat)
+    await s.page.evaluate(id => {
+      const d = window.__demo;
+      d.data.placements = d.data.placements.map(p => (p.id === id ? { ...p, status: 'en_attente', demande_id: null, offer_id: null } : p)); d.persist(); d.emit();
+    }, idA);
+    await verifier(idA, T.offre(dep.entreprise), T.cloche.offre(T.offre(dep.entreprise)), 'accueil', T.note);
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}

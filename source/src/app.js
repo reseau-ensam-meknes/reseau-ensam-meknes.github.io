@@ -7,7 +7,7 @@ import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIF
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
-import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
+import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, recrutementDeclare, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
@@ -571,7 +571,7 @@ function buildNotifs({ data, me, store, saison }) {
   // Étudiant : recrutement à confirmer, évolution des candidatures, nouvelles offres
   for (const p of data.placements) {
     if (p.student_id !== me.id) continue;
-    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} déclare ton recrutement chez ${p.entreprise}. Confirme-le.` });
+    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: `${recrutementDeclare(p, name(p.laureat_id))}. Confirme-le.` });
     if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ key: 'pm' + p.id, ref: p.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: perso, at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
   }
   for (const a of data.applications) if (a.student_id === me.id && a.offer_id && a.status !== 'postule' && recent(a.updated_at || a.created_at, 21)) {
@@ -827,7 +827,7 @@ function pasRdv(ctx, m, q) {
 function pasConfirmer(ctx, pl, helper) {
   const { data } = ctx, qui = helper?.full_name || 'Un lauréat';
   const sur = (pl.offer_id && data.offers.find(o => o.id === pl.offer_id)?.titre) || (pl.demande_id && (data.demandes || []).find(d => d.id === pl.demande_id)?.titre) || null;
-  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} déclare ton recrutement chez ${pl.entreprise}`, detail: sur, detailMembre: true,
+  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: recrutementDeclare(pl, qui), detail: sur, detailMembre: true,
     cta: 'Oui, je confirme', ici: true, go: () => confirmerRecrutement(ctx, pl, helper), lien: { label: 'Ce n’est pas le cas', go: () => refuserRecrutement(ctx, pl) } };
 }
 // Une notification devient la carte : son geste est le bouton (jamais « Y aller »)
