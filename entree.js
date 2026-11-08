@@ -316,9 +316,12 @@ const placeRem = (sys, lang, largeur, rem) => {
 };
 export const placeCarte = (sys, lang, largeur, rem = 16) => `calc(${BORD[sys]}px + ${placeRem(sys, lang, largeur, rem)}rem)`;
 const SOUS_CARTE = { fr: [36.6, 35.15], ar: [37.05, 35.25] };
-export function carteTient(sys, lang, largeur, hauteur, rem = 16) {
-  const [etroit, large] = SOUS_CARTE[lang === 'ar' ? 'ar' : 'fr'];
-  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (largeur / rem < 23.4 ? etroit : large)) * rem;
+const BANDE = { fr: { promo: [3.4, 3.4], de: [4.8, 3.4] }, ar: { promo: [3.55, 3.55], de: [3.55, 3.55] } };
+export function carteTient(sys, lang, largeur, hauteur, rem = 16, bande = '') {
+  const l = lang === 'ar' ? 'ar' : 'fr', etroite = largeur / rem < 23.4;
+  const [etroit, large] = SOUS_CARTE[l];
+  const enPlus = bande ? BANDE[l][bande][etroite ? 0 : 1] : 0;
+  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (etroite ? etroit : large) + enPlus) * rem;
 }
 const MOT = { androidfr: [24, 3.42], iosfr: [23.25, 3.44], iosar: [17.56, 2.77] };
 export function placeMot(sys, lang, largeur, rem = 16) {
@@ -357,7 +360,7 @@ function CarteAppli({ mode, role, invite, ligne = false, onEchec }) {
   const placeLigne = placeMot(sys, getLang(), largeur, rem);
   if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || placeLigne }}></div>`;
   const T = a.CARTE, f = x => a.nomsLatins(a.typo(t(x), getLang())).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
-  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
+  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, de: codeInvite(), ecole: ecoleInvitee(), role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
   const ouvrir = e => {
     e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ }
     let parti = false; const p = () => { parti = true; }, ev = ['pagehide', 'blur', 'visibilitychange'];
@@ -404,10 +407,12 @@ export function AuthScreen({ store }) {
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
+  const [bandeCourte] = useState(() => innerWidth < 900);
   const [appli] = useState(() => {
     if (!APPLI_ICI) return '';
     const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem) ? 'carte' : court ? 'haut' : 'ligne';
+    const bande = mode !== 'inscription' ? '' : codeInvite() ? 'de' : invite && (!role || role === roleDePromo(invite)) ? 'promo' : '';
+    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem, bande) ? 'carte' : court ? 'haut' : 'ligne';
   });
   const [appliKo, setAppliKo] = useState(false);
   const carteIci = mode === 'inscription' || mode === 'connexion' || mode === 'motdepasse';
@@ -486,6 +491,7 @@ export function AuthScreen({ store }) {
   const inscription = mode === 'inscription';
   const etuAvant = (role || (invite ? roleDePromo(invite) : '')) === 'etudiant';
   const bandeau = invite && inscription && (!role || role === roleDePromo(invite));
+  const deIci = deQui && inscription, memePromo = !!(deIci && bandeau && Number(deQui.promo) === invite);
   const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
   const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
   const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
@@ -508,7 +514,7 @@ export function AuthScreen({ store }) {
       ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
-      ${bandeau || (deQui && inscription) ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deQui && inscription ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau ? html`<strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.` : null}</span></p>` : null}
+      ${bandeau || deIci ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deIci ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau && !memePromo ? html`<strong>Bienvenue, promo ${invite} !</strong>${bandeCourte ? null : ' Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.'}` : bandeau && !bandeCourte ? 'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.' : null}</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
