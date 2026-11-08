@@ -10939,3 +10939,197 @@ test('console de l’administration du réseau, deux écoles : comme avant (rubr
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// Un recrutement déclaré par un lauréat qui a supprimé son compte depuis (la base vide laureat_id) : Mon parcours, l'accueil
+// et la cloche disent ce qui a été déclaré, comme sa demande (« Ton démarrage chez … a été déclaré. ») ; déclaré depuis une
+// offre, retirée avec lui : « … a été déclaré par un ancien membre ». « Ce n'est pas le cas » répond « C'est noté. », sans
+// promettre de prévenir un lauréat qui n'est plus là. Déclaré par un lauréat toujours là : les textes d'avant, à l'octet près.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`un recrutement déclaré par un compte supprimé depuis : Mon parcours, l’accueil et la cloche disent ce qui a été déclaré, « Ce n’est pas le cas » ne promet plus de prévenir personne ; un lauréat toujours là, comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const T = ar ? {
+      youssef: 'تصريح من Youssef El Amrani بتوظيفك لدى Renault Group Maroc', informe: 'تم التسجيل. سيتم إخبار الخريج.', note: 'تم التسجيل.', debut: 'تم التسجيل',
+      demarrage: e => `تم التصريح ببدايتك لدى ${e}`, offre: e => `تصريح من عضو سابق بتوظيفك لدى ${e}`,
+      cloche: { youssef: x => `${x}. أكّده.`, demarrage: x => `${x}. أكّد ذلك.`, offre: x => `${x}. أكّده.` },
+    } : {
+      youssef: 'Youssef El Amrani déclare ton recrutement chez Renault Group Maroc', informe: 'C’est noté. Le lauréat sera informé.', note: 'C’est noté.', debut: 'C’est noté',
+      demarrage: e => `Ton démarrage chez ${e} a été déclaré`, offre: e => `Ton recrutement chez ${e} a été déclaré par un ancien membre`,
+      cloche: { youssef: x => `${x}. Confirme-le.`, demarrage: x => `${x}. Confirme-le.`, offre: x => `${x}. Confirme-le.` },
+    };
+    const s = await ouvrir({ largeur, langue });
+    const net = x => x.replace(/[⁦-⁩]/g, '').trim();
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    // Ce que disent Mon parcours, la carte de l'accueil et la ligne de la cloche ; puis « Ce n'est pas le cas » (ici : sur
+    // Mon parcours ou sur l'accueil) et la réponse, seule
+    const verifier = async (id, titre, cloche, ici, reponse) => {
+      await s.aller('parcours');
+      assert.equal(net(await s.page.locator('.a-faire .confirm-card h2').innerText()), titre, 'Mon parcours');
+      await relever('Mon parcours');
+      await s.aller('accueil');
+      assert.equal(net(await s.page.locator(`.pas[data-pas="pa${id}"] .pas-titre`).innerText()), titre, 'l’accueil');
+      await relever('accueil');
+      await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+      assert.equal(net(await s.page.locator(`.cloche .af-row[data-cle="pa${id}"] .af-txt`).innerText()), cloche, 'la cloche');
+      await relever('cloche');
+      await s.fermer();
+      if (ici === 'parcours') { await s.aller('parcours'); await s.page.locator('.a-faire .confirm-card .btn.ghost').click(); }
+      else await s.page.locator(`.pas[data-pas="pa${id}"] .pas-lien`).click();
+      const toast = s.page.locator('.toast:not(.sortie) .toast-txt', { hasText: T.debut });
+      await toast.waitFor();
+      assert.equal(net(await toast.innerText()), reponse, `la réponse de « Ce n’est pas le cas » (${ici})`);
+      assert.equal(await s.page.evaluate(id => window.__demo.data.placements.find(p => p.id === id).status, id), 'refuse');
+      await relever(`réponse (${ici})`);
+    };
+    // Youssef, toujours là, déclare le recrutement de Salma : comme avant
+    await s.comme('Youssef'); await s.aller('accueil');
+    const idY = await s.page.evaluate(async () => {
+      const d = window.__demo, { seasonOf } = await import('./logic.js');
+      const salma = d.data.profiles.find(p => p.full_name.startsWith('Salma'));
+      await d.insert('placements', { student_id: salma.id, saison: seasonOf(), niveau: 5, type: 'pfe', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc' });
+      return d.data.placements.find(p => p.student_id === salma.id && p.status === 'en_attente').id;
+    });
+    await s.comme('Salma');
+    await verifier(idY, T.youssef, T.cloche.youssef(T.youssef), 'accueil', T.informe);
+    // Le lauréat qui avait déclaré le démarrage d'Amine (sa demande en match) supprime son compte
+    const dep = await apresUnDepart(s);
+    const idA = await s.page.evaluate(() => window.__demo.data.placements.find(p => p.demande_id === 'dm-dep-amine').id);
+    await s.comme('Amine');
+    await verifier(idA, T.demarrage(dep.entreprise), T.cloche.demarrage(T.demarrage(dep.entreprise)), 'parcours', T.note);
+    // Déclaré depuis une offre (retirée avec son auteur : ni offre, ni demande, ni lauréat)
+    await s.page.evaluate(id => {
+      const d = window.__demo;
+      d.data.placements = d.data.placements.map(p => (p.id === id ? { ...p, status: 'en_attente', demande_id: null, offer_id: null } : p)); d.persist(); d.emit();
+    }, idA);
+    await verifier(idA, T.offre(dep.entreprise), T.cloche.offre(T.offre(dep.entreprise)), 'accueil', T.note);
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// La marque de la barre latérale et du haut de l'écran du téléphone (son lien « Accueil ») : celle de l'école du membre.
+// L'ENSAM Meknès garde « Réseau ENSAM » et « Meknès · Lauréats & étudiants », à l'octet près ; l'ENSA Fès : « Réseau ENSA » et
+// « Fès · Lauréats & étudiants » ; une école connue par son seul nom : « Réseau » et son nom (en arabe, son nom arabe) ; sa
+// ligne pas (encore) là : « Réseau ENSAM », sans ville, jamais Meknès. En arabe par la table de l'application.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`marque de la barre latérale et du téléphone : celle de l’école du membre (ENSA Fès, son seul nom, sa ligne pas là) ; l’ENSAM Meknès comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', couleur: '#225588', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+    const INSTITUT = { slug: 'institut-exemple', nom: 'Institut exemple', nom_ar: 'معهد مثال', ouverte: true, created_at: '2026-10-02T00:00:00Z' };
+    const A = ar ? {
+      meknes: ['شبكة ENSAM', 'مكناس · الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+      fes: ['شبكة ENSA', 'فاس · الخريجون والطلبة', 'شبكة ENSA', 'شبكة ENSA · الرئيسية'],
+      institut: ['شبكة معهد مثال', 'الخريجون والطلبة', 'شبكة معهد مثال', 'شبكة معهد مثال · الرئيسية'],
+      sans: ['شبكة ENSAM', 'الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+    } : {
+      meknes: ['Réseau ENSAM', 'Meknès · Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+      fes: ['Réseau ENSA', 'Fès · Lauréats & étudiants', 'Réseau ENSA', 'Réseau ENSA · Accueil'],
+      institut: ['Réseau Institut exemple', 'Lauréats & étudiants', 'Réseau Institut exemple', 'Réseau Institut exemple · Accueil'],
+      sans: ['Réseau ENSAM', 'Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+    };
+    const s = await ouvrir({ largeur, langue });
+    // La marque de la barre latérale (son nom, sa ligne) et celle du téléphone (son nom, le nom de son lien), et celle qu'on voit
+    const lire = () => s.page.evaluate(() => {
+      const side = document.querySelector('.side .brand-txt'), tel = document.querySelector('.top .brand.mobile-only');
+      const vue = [side.closest('.brand'), tel].filter(e => e.offsetParent !== null).map(e => e.querySelector('strong').innerText);
+      return { marque: [side.querySelector('strong').textContent, side.querySelector(':scope > span').textContent, tel.querySelector('strong').textContent, tel.getAttribute('aria-label')], vue };
+    });
+    // L'école du membre change ; on attend que la barre latérale le dise (son nom et sa ligne), puis on lit tout
+    const ecoleDuMembre = async (ecoles, ecole, attendu) => {
+      await s.page.evaluate(([ecoles, ecole]) => {
+        const d = window.__demo, moi = { ...d.me, ecole };
+        d.data.ecoles = ecoles; d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+      }, [ecoles, ecole]);
+      await s.page.waitForFunction(([t, sous]) => { const b = document.querySelector('.side .brand-txt'); return b?.querySelector('strong')?.textContent === t && b.querySelector(':scope > span')?.textContent === sous; }, attendu.slice(0, 2));
+    };
+    const verifier = async (attendu, ou) => {
+      const { marque, vue } = await lire();
+      assert.deepEqual(marque, attendu, ou);
+      assert.deepEqual(vue, [attendu[0]], `${ou} : la marque qu’on voit`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+      if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Réseau|Lauréats|Accueil/.test(x))), [], `${ou} : tout traduit`);
+    };
+    await s.comme('Salma'); await s.aller('accueil');
+    await verifier(A.meknes, 'ENSAM Meknès');
+    await ecoleDuMembre([FES, INSTITUT], 'ensa-fes', A.fes);
+    await verifier(A.fes, 'ENSA Fès');
+    await ecoleDuMembre([FES, INSTITUT], 'institut-exemple', A.institut);
+    await verifier(A.institut, 'son seul nom');
+    await ecoleDuMembre([], 'ensa-fes', A.sans);
+    await verifier(A.sans, 'sa ligne pas là');
+    await ecoleDuMembre([FES, INSTITUT], 'ensam-meknes', A.meknes);
+    await verifier(A.meknes, 'de nouveau l’ENSAM Meknès');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+// Ce qu'un membre emporte hors de l'application : son attestation (dessinée, et ce que LinkedIn en reçoit), l'en-tête de
+// son bilan de cooptation, ce que Google Agenda reçoit pour un événement de son école. Ceux de l'ENSAM Meknès, comme avant ;
+// pour un membre d'une autre école, seuls les noms changent (en arabe, son nom arabe) ; une école pas encore ouverte n'y est
+// jamais nommée (« ENSAM »)
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`attestation, lien LinkedIn, bilan de cooptation et agenda d’un événement : l’école du membre (ENSA Fès ; pas encore ouverte : « ENSAM ») ; l’ENSAM Meknès comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+    const FERMEE = { slug: 'ecole-exemple', nom: 'École exemple', nom_court: 'EE', ville: 'Exempleville', nom_ar: 'مدرسة مثال', ouverte: false, created_at: '2026-10-03T00:00:00Z' };
+    const s = await ouvrir({ largeur, langue });
+    await s.comme('Youssef');
+    // L'école du membre, et celle des événements (un membre ne voit que ceux de son école)
+    const ecoleDuMembre = ecole => s.page.evaluate(([ecoles, ecole]) => {
+      const d = window.__demo, moi = { ...d.me, ecole };
+      d.data.ecoles = ecoles; d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi;
+      d.data.evenements = d.data.evenements.map(e => ({ ...e, ecole })); d.persist(); d.emit();
+    }, [[FES, FERMEE], ecole]);
+    const lire = async () => {
+      // L'attestation : son en-tête, la phrase qui atteste, et le nom et l'organisation que reçoit LinkedIn
+      await s.aller('espace/documents');
+      const cartes = s.page.locator('#esp-panneau .esp-docs .attest-card');
+      await cartes.nth(0).locator('button').click(); await s.page.waitForSelector('.modal .certificate');
+      const linkedin = s.page.locator('.modal .cert-actions a[href*="linkedin.com/profile/add"]');
+      if (!(await linkedin.count())) { await s.page.locator('.modal .cert-actions .btn.primary').click(); await linkedin.waitFor(); }
+      const attestation = await s.page.evaluate(() => {
+        const c = document.querySelector('.modal .certificate'), u = new URL(document.querySelector('.modal .cert-actions a[href*="linkedin.com/profile/add"]').href);
+        return [c.querySelector('.cert-org strong').textContent, c.querySelector('.cert-kicker + p').textContent, u.searchParams.get('name'), u.searchParams.get('organizationName')];
+      });
+      await s.fermer(); await s.page.waitForSelector('.modal .certificate', { state: 'detached' });
+      // Le bilan : son en-tête, puis le titre pour tous les lauréats de son entreprise
+      await cartes.nth(1).locator('button').click(); await s.page.waitForSelector('.modal .bilan-sheet');
+      const seul = await s.page.locator('.bilan-title').textContent();
+      await s.page.check('#bl-eq'); await s.page.waitForFunction(t => document.querySelector('.bilan-title')?.textContent !== t, seul);
+      const bilan = await s.page.evaluate(() => [document.querySelector('.bilan-sheet .cert-org strong').textContent, document.querySelector('.bilan-title').textContent]);
+      await s.fermer(); await s.page.waitForSelector('.modal .bilan-sheet', { state: 'detached' });
+      // Google Agenda, depuis la fiche d'un événement à venir
+      await s.aller('reseau/agenda/' + await s.page.evaluate(() => window.__demo.data.evenements.find(e => e.titre === 'Forum ENSAM Entreprises').id));
+      await s.page.locator('.ev-detail .row > .spacer + button').click();
+      const gcal = await s.page.locator('.modal.ag-feuille a[href^="https://calendar.google.com"]').getAttribute('href');
+      await s.fermer(); await s.page.waitForSelector('.modal.ag-feuille', { state: 'detached' });
+      return { attestation, bilan, agenda: new URL(gcal).searchParams.get('details') };
+    };
+    const meknes = await lire();
+    assert.deepEqual(meknes.attestation, [ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès', ar ? 'تشهد منصة شبكة ENSAM مكناس أن' : 'La plateforme Réseau ENSAM Meknès atteste que',
+      'Attestation de contribution · Réseau ENSAM Meknès', 'Réseau ENSAM Meknès']);
+    assert.equal(meknes.bilan[0], ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès');
+    assert.match(meknes.bilan[1], ar ? /^⁨Renault Group Maroc⁩ · .+ من ENSAM مكناس$/ : /^Renault Group Maroc · \d+ lauréats? de l’ENSAM Meknès$/);
+    assert.ok(meknes.agenda.endsWith(ar ? '\n\nشبكة ENSAM مكناس' : '\n\nRéseau ENSAM Meknès'), meknes.agenda);
+    // Une autre école : seuls ses noms changent ; pas encore ouverte : « ENSAM », sans ville
+    const avec = (o, de, nom, nomAr) => JSON.parse(JSON.stringify(o).replaceAll('de l’ENSAM Meknès', de).replaceAll('ENSAM Meknès', nom).replaceAll('ENSAM مكناس', nomAr));
+    await ecoleDuMembre('ensa-fes');
+    const fes = await lire();
+    assert.deepEqual(fes, avec(meknes, 'de l’ENSA Fès', 'ENSA Fès', 'ENSA فاس'));
+    await ecoleDuMembre('ecole-exemple');
+    const fermee = await lire();
+    assert.deepEqual(fermee, avec(meknes, 'de l’ENSAM', 'ENSAM', 'ENSAM'));
+    for (const x of [fes, fermee].flatMap(o => [...o.attestation, ...o.bilan, o.agenda])) assert.doesNotMatch(x, /Meknès|مكناس|École exemple|Exempleville|مدرسة مثال/, x);
+    if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Réseau|atteste|lauréats? de l’/.test(x))), [], 'tout traduit');
+    // De nouveau à l'ENSAM Meknès : comme au début
+    await ecoleDuMembre('ensam-meknes');
+    assert.deepEqual(await lire(), meknes);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}

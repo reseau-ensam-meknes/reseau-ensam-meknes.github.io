@@ -962,6 +962,8 @@ export const nomsDuMembre = (data, me) => nomsEcole(data?.ecoles, ecoleDe(me));
 // seulement ; une école pas encore ouverte n'y est jamais nommée (son nom attend son accord) : « ENSAM », sans ville
 const ecoleOuverte = (ecoles, slug) => !slug || slug === ECOLE_DEFAUT || (ecoles || []).some(e => e?.slug === slug && e.ouverte === true);
 export const nomsAPartager = (ecoles, slug) => nomsEcole(ecoleOuverte(ecoles, slug) ? ecoles : [], slug);
+// Les mêmes, pour l'école d'un membre ou d'une ligne (un événement, un café) : l'ENSAM Meknès par défaut
+export const nomsAPartagerDe = (data, x) => nomsAPartager(data?.ecoles, ecoleDe(x));
 // L'école dont la console écrit les messages, les liens et les affiches (Animer, Inviter, Affiches) : celle qu'elle regarde
 // quand elle est ouverte, sinon celle de l'administration (« Toutes les écoles » ; une école pas encore ouverte, dont ni le
 // nom ni les liens ne servent avant son ouverture). ecoles : les lignes de la table des écoles (ctx.ecoles dans la console).
@@ -981,6 +983,24 @@ export function deLEcoleNommee(nom, apo = '’') {
 // Sous la marque de la barre latérale : la ville de l'école du membre (« Meknès · Lauréats & étudiants ») ; sans ville connue,
 // « Lauréats & étudiants » seulement
 export const sousMarque = noms => (noms?.ville ? `${noms.ville} · Lauréats & étudiants` : 'Lauréats & étudiants');
+// La marque de la barre latérale et du haut de l'écran du téléphone (son lien « Accueil ») : pour l'ENSAM Meknès, « Réseau
+// ENSAM » et « Meknès · Lauréats & étudiants », comme avant ; pour une autre école, son nom court (sinon son nom) et sa
+// ville ; sa ligne pas (encore) là : « Réseau ENSAM » et « Lauréats & étudiants », jamais Meknès. nomAr : le nom qui suit
+// « شبكة » en arabe (le nom court tel qu'il s'écrit, sinon le nom arabe de l'école).
+export function marqueDuMembre(data, me) {
+  const noms = nomsDuMembre(data, me);
+  const court = noms.meknes ? 'ENSAM' : motsDe((data?.ecoles || []).find(x => x?.slug === noms.slug)?.nom_court, 40);
+  return { titre: `Réseau ${court || noms.nom}`, sous: sousMarque(noms), nomAr: court || noms.nomAr };
+}
+// Les mots-dièse d'une réussite partagée sur LinkedIn : ceux d'avant pour l'ENSAM Meknès ; pour une autre école, son nom
+// en un mot (#ENSAFès, #FSTSettat), avec #ENSAM et #ArtsEtMétiers pour une autre ENSAM ; « #ENSAM » seul pour une école
+// qui n'y est pas nommée (pas encore ouverte, ou sa ligne pas là). Jamais #ENSAMMeknès pour une autre école.
+export function diesesEcole(noms = NOMS_MEKNES) {
+  if (noms.meknes) return '#ENSAM #ENSAMMeknès #ArtsEtMétiers';
+  const mot = (noms.nom || '').split(/[^\p{L}\p{N}]+/u).filter(Boolean).map(m => m[0].toUpperCase() + m.slice(1)).join('');
+  if (!mot || mot === 'ENSAM') return '#ENSAM';
+  return /^ENSAM\s/.test(noms.nom) ? `#ENSAM #${mot} #ArtsEtMétiers` : `#${mot}`;
+}
 // Au-dessus de la carte des lauréats (Réseau > Annuaire > Personnes, #reseau/annuaire/carte)
 export const legendeCarte = (noms = NOMS_MEKNES) => `Où travaillent les lauréats ${deLEcoleNommee(noms.nom)}. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.`;
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
