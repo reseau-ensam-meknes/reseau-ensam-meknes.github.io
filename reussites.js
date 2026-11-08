@@ -24,7 +24,10 @@ export function ReussitesRail({ ctx }) {
   const { data, me, saison, store } = ctx;
   const items = reussitesVisibles(data, me, saison);
   const [vues, setVues] = useState(() => lireVues(me.id));
-  const [ouvert, setOuvert] = useState(-1);
+  // L'histoire ouverte garde l'ordre du moment où on l'a ouverte. Avec l'ordre vivant de la rangée, la réussite affichée,
+  // aussitôt vue, passait après les autres : l'écran montrait la suivante, qui passait à son tour… Toutes défilaient en
+  // un éclair et toutes étaient marquées vues, alors qu'on n'en avait lu qu'une.
+  const [ouvert, setOuvert] = useState(null);
   if (!items.length) return null;
   // Celles qu'on n'a pas encore vues d'abord
   const liste = [...items.filter(p => !vues.has(p.id)), ...items.filter(p => vues.has(p.id))];
@@ -32,12 +35,12 @@ export function ReussitesRail({ ctx }) {
   return html`<section class="rs-rail" aria-label="Réussites">
     <ul class="rs-liste" role="list">${liste.map((p, i) => {
       const st = store.byId('profiles', p.student_id);
-      return html`<li key=${p.id}><button type="button" class=${'rs-visage' + (vues.has(p.id) ? ' vue' : '')} aria-haspopup="dialog" onClick=${() => setOuvert(i)}>
+      return html`<li key=${p.id}><button type="button" class=${'rs-visage' + (vues.has(p.id) ? ' vue' : '')} aria-haspopup="dialog" onClick=${() => setOuvert({ liste, debut: i })}>
         <span class="rs-anneau"><${Avatar} p=${st} size=${56}/></span>
         <span class="rs-nom" translate="no" dir="auto">${(st?.full_name || '').split(' ')[0]}</span>
       </button></li>`;
     })}</ul>
-    ${ouvert >= 0 ? html`<${Histoire} ctx=${ctx} liste=${liste} debut=${ouvert} onVu=${vu} onClose=${() => setOuvert(-1)}/>` : null}
+    ${ouvert ? html`<${Histoire} ctx=${ctx} liste=${ouvert.liste} debut=${ouvert.debut} onVu=${vu} onClose=${() => setOuvert(null)}/>` : null}
   </section>`;
 }
 

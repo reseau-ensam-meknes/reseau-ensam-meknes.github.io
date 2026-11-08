@@ -7499,14 +7499,30 @@ for (const [largeur, langue, theme] of [[390, 'fr', 'light'], [360, 'ar', 'dark'
 }
 
 // Rangée « Réussites » : des réussites vérifiées, ouvertes en plein écran, sans rien inventer
-test('accueil : la rangée Réussites s’ouvre en grand, on dit bravo, et une réussite vue éteint son anneau', async () => {
+test('accueil : la rangée Réussites s’ouvre en grand sur la réussite touchée et y reste, on lui dit bravo, et seule la réussite vue éteint son anneau et passe après les autres', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('accueil');
   await s.page.waitForSelector('.rs-visage');
   const n = await s.page.locator('.rs-visage').count();
-  assert.ok(n >= 1 && n <= 12, 'douze visages au plus');
+  assert.ok(n >= 2 && n <= 12, 'de deux à douze visages');
+  // Une réussite se reconnaît au prénom de l'étudiant et à ses initiales (deux étudiants peuvent avoir le même prénom)
+  const qui = await s.page.locator('.rs-visage').first().evaluate(b => `${b.querySelector('.rs-nom').textContent} ${b.querySelector('.av-ini').textContent}`);
+  // Chaque réussite que l'histoire montre, notée à chaque changement de la page
+  await s.page.evaluate(() => {
+    window.__montrees = [];
+    new MutationObserver(() => {
+      const h = document.querySelector('.rs-histoire'); if (!h) return;
+      const v = `${h.querySelector('.rs-titre span')?.textContent.split(' ')[0]} ${h.querySelector('.rs-photo .av-ini')?.textContent}`;
+      if (window.__montrees.at(-1) !== v) window.__montrees.push(v);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
   await s.page.locator('.rs-visage').first().click();
   await s.page.waitForSelector('.rs-histoire');
+  // Elle est notée vue dès l'ouverture (son anneau s'éteint derrière), et l'histoire ouverte reste sur elle. Avant, la
+  // rangée passait la réussite vue après les autres sous les yeux du lecteur : l'histoire sautait à la suivante, qui était
+  // vue à son tour… Toutes défilaient en un éclair et toutes étaient marquées vues ; un « Bravo » touché pendant ce
+  // défilé allait à une autre réussite (et l'essai échouait parfois, sur une machine lente).
+  await s.page.waitForSelector('.rs-visage.vue', { state: 'attached' });
   const t = await s.page.locator('.rs-histoire').innerText();
   assert.match(t, /a décroché/); assert.match(t, /Vérifié des deux côtés/);
   const avant = await s.page.locator('.rs-bravo.on').count();
@@ -7514,7 +7530,9 @@ test('accueil : la rangée Réussites s’ouvre en grand, on dit bravo, et une r
   await s.page.waitForFunction(a => document.querySelectorAll('.rs-bravo.on').length !== a, avant);
   await s.page.keyboard.press('Escape');
   await s.page.waitForSelector('.rs-histoire', { state: 'detached' });
-  assert.ok(await s.page.locator('.rs-visage.vue').count() >= 1, 'la réussite vue passe après les autres, anneau éteint');
+  assert.deepEqual(await s.page.evaluate(() => window.__montrees), [qui], 'l’histoire n’a montré que la réussite touchée');
+  assert.equal(await s.page.locator('.rs-visage.vue').count(), 1, 'seule la réussite vue a l’anneau éteint');
+  assert.equal(await s.page.locator('.rs-visage').last().evaluate(b => `${b.classList.contains('vue')} ${b.querySelector('.rs-nom').textContent} ${b.querySelector('.av-ini').textContent}`), `true ${qui}`, 'elle passe après les autres');
   await s.ctx.close();
 });
 
