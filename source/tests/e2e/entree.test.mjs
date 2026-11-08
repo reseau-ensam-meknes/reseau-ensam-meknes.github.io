@@ -968,14 +968,21 @@ test('session perdue en écrivant un message (Android au réveil, renouvellement
 test('message envoyé avec un jeton refusé et un renouvellement refusé : il reste, marqué « pas parti », et revient après la reconnexion', async () => {
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   site.tables.mentorships = EN_CONTACT();
-  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  // La base ne reconnaît plus ce jeton (révoqué, horloge…) au moment où le message lui arrive, pas avant : posé avant le
+  // toucher, une lecture de fond (le second temps du chargement, jusqu'à 1,5 s après l'affichage) pouvait perdre la
+  // session avant « Envoyer », et le bouton disparaissait sous le doigt. Les jetons émis à partir de cette seconde (la
+  // reconnexion) restent bons.
+  let perime = false;
+  const avant = ctx => ctx.route(/\/sb\/rest\/v1\/messages(\?|$)/, r => {
+    if (!perime && r.request().method() === 'POST') { perime = true; site.jetons.depuis = Math.floor(Date.now() / 1000); }
+    return r.continue();
+  });
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt', avant });
   await m.page.fill('#chat-txt', 'Je t’envoie mon CV ce soir.');
-  // La base ne reconnaît plus ce jeton (révoqué, horloge…) juste avant l'envoi : posé plus tôt (avec une attente d'une
-  // seconde), une requête de fond pouvait perdre la session avant le toucher sur « Envoyer ». Les jetons émis à partir de
-  // cette seconde (la reconnexion) restent bons.
-  site.jetons.depuis = Math.floor(Date.now() / 1000);
   await m.page.click('.composer .send-btn');
   await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.ok(perime, 'le message est arrivé à la base');
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/messages' && a.m === 'POST' && a.refuse), 'la base l’a refusé');
   assert.ok(!site.appels.some(a => a.u === '/sb/rest/v1/messages' && a.m === 'POST' && !a.refuse), 'rien n’est parti');
   await m.page.click('.entree-form button.btn.primary'); await m.page.waitForSelector('#au-code');
   await m.page.fill('#au-code', '123456');
