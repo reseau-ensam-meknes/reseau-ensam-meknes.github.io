@@ -59,6 +59,12 @@ injectCSS('fil-pick', `
 .fil-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; }
 .fil-groupe .chips { display: contents; }
 .chip.fil-parc { font-weight: 650; }
+/* Le formulaire d'une offre sur un téléphone : une puce au nom long (« Conception et Industrialisation des Systèmes
+   Mécaniques ») revient à la ligne dans sa puce, alignée comme les autres, au lieu de pousser le formulaire hors de
+   l'écran ; sur ordinateur, comme avant */
+@media (max-width: 600px) {
+  #of-form .chip { white-space: normal; max-width: 100%; text-align: start; }
+}
 `);
 
 // En-tête compact (EnTetePage du Socle) : un seul chiffre en sur-titre, le titre et son bouton sur une ligne, le segment

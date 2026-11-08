@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole, NOMS_MEKNES, nomsAPartagerDe } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole, NOMS_MEKNES, nomsAPartager, nomsAPartagerDe } from './logic.js';
 
 addAR({
   'École :': 'المدرسة:',
@@ -234,6 +234,17 @@ function nouveauFormulaire() {
   return f;
 }
 
+// L'exemple du champ « Lieu » : l'école de l'administration qui publie. L'ENSAM Meknès garde le sien ; une école pas encore
+// ouverte n'y est pas nommée (« ENSAM », nomsAPartager), jamais une autre. Son arabe s'ajoute une fois par école.
+const lieuxVus = new Set();
+function lieuExemple(ctx) {
+  const n = nomsAPartager(ctx.data?.ecoles, ctx.me?.ecole);
+  if (n.meknes) return 'Ex. ENSAM Meknès, grand hall';
+  const fr = `Ex. ${n.nom}, grand hall`;
+  if (!lieuxVus.has(fr)) { lieuxVus.add(fr); addAR({ [fr]: `مثال: ${n.nomAr}، البهو الكبير` }); }
+  return fr;
+}
+
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
@@ -259,7 +270,7 @@ function EventForm({ ctx, e, onClose }) {
       <div class="ev-types" role="radiogroup" aria-label="Type">${Object.entries(TYPES_EVENEMENT).map(([k, [l, i]]) => html`<button type="button" role="radio" aria-checked=${f.type === k} class=${'chip' + (f.type === k ? ' on' : '')} onClick=${() => set('type', k)}><${Icon} name=${i} size=${14}/> ${l}</button>`)}</div>
       <div class="grid2"><${Field} label="Début"><input id="ev-debut" type="datetime-local" required value=${f.debut} onInput=${x => set('debut', x.target.value)}/><//>
         <${Field} label="Fin (facultatif)" hint=${finOk ? '' : 'La fin doit être après le début.'}><input id="ev-fin" type="datetime-local" value=${f.fin} min=${f.debut} onInput=${x => set('fin', x.target.value)}/><//></div>
-      <${Field} label="Lieu"><input id="ev-lieu" maxlength="140" value=${f.lieu} onInput=${x => set('lieu', x.target.value)} placeholder="Ex. ENSAM Meknès, grand hall"/><//>
+      <${Field} label="Lieu"><input id="ev-lieu" maxlength="140" value=${f.lieu} onInput=${x => set('lieu', x.target.value)} placeholder=${lieuExemple(ctx)}/><//>
       <${Field} label="Lien (facultatif)" hint=${lienOk ? '' : 'Le lien doit commencer par https://'}><input id="ev-lien" dir="ltr" maxlength="300" value=${f.lien} onInput=${x => set('lien', x.target.value)} placeholder="Lien de la visio ou de l’inscription : https://…"/><//>
       <${Field} label="Description"><textarea id="ev-desc" rows="3" maxlength="2000" value=${f.description} onInput=${x => set('description', x.target.value)} placeholder="Le programme, ce qu’il faut apporter…"></textarea><//>
       <div class="field"><span class="field-label">Pour qui ?</span><div class="seg" role="radiogroup" aria-label="Pour qui ?">${PUBLICS.map(([k, l]) => html`<button type="button" role="radio" aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>

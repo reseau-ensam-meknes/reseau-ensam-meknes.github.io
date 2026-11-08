@@ -98,7 +98,7 @@ addAR({
   [/^(\d+) étudiants attendent un horaire depuis plus de 24 h$/, n => `${arCount(n, ['طالب واحد ينتظر', 'طالبان ينتظران', 'طلبة ينتظرون', 'طالبًا ينتظرون'])} توقيتًا منذ أكثر من 24 ساعة`],
   [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
   [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Chaque matin, la plateforme attribue aussi les parrains toute seule\.$/, (a, b, c) => `${arParrainage(a, b, c)} كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.`],
-  [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne\.$/, (a, b, c) => `${arParrainage(a, b, c)} يعيّن الزر، كما تفعل المنصة كل صباح، العرّابين في كل المدارس، كلٌّ في مدرسته.`],
+  [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin\.$/, (a, b, c) => `${arParrainage(a, b, c)} يعيّن الزر العرّابين في كل المدارس، كلٌّ في مدرسته؛ وتفعل المنصة ذلك أيضًا كل صباح.`],
   [/^(\d+) parrains? attribués? dans toutes les écoles\.$/, n => `عدد العرّابين المعيَّنين في كل المدارس: ${n}.`],
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
@@ -744,7 +744,7 @@ function ParrainsAdmin({ ctx }) {
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Parrainage des 3A</h2>
       <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(!k ? 'Aucun parrain disponible dans ces filières pour l’instant.' : sienne ? sienne.attribues(k) : plusieursEcoles(ctx) ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''} dans toutes les écoles.` : `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.`); })}>Attribuer les parrains</button></div>
-    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. ${sienne ? sienne.parrains : plusieursEcoles(ctx) ? 'Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.'}</p>
+    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. ${sienne ? sienne.parrains : plusieursEcoles(ctx) ? 'Le bouton attribue les parrains dans toutes les écoles, chacun dans la sienne ; la plateforme le fait aussi chaque matin.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.'}</p>
   </div>`;
 }
 

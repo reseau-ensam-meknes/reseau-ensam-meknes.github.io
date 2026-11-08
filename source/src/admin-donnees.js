@@ -75,7 +75,7 @@ export function useEcoles(ctx) {
 // nomDe(slug) : le nom d'une école (son identifiant si elle n'est pas dans la liste).
 export const CLE_ECOLE_ADMIN = id => 'ensam-admin-ecole:' + (id || '');
 // L'administration d'une école (pas celle du réseau) ne regarde que la sienne : la base ne lui donne qu'elle. Rien à
-// choisir ni à garder ; un choix tenté (le suivi en montre un) revient à son école.
+// choisir ni à garder (ni la console ni le suivi ne lui montrent de choix) ; un choix tenté revient à son école.
 export function useEcoleRegardee(ctx) {
   const t = useEcoles(ctx);
   const cle = CLE_ECOLE_ADMIN(ctx.me?.id);
