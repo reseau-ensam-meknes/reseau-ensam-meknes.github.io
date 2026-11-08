@@ -397,16 +397,23 @@ function Hausse({ n }) {
 
 // « Peut être montré sur la page d'entrée » : sous un recrutement confirmé, l'étudiant et le lauréat cochent chacun leur case
 // (store.montrerReussite, jamais celle de l'autre). La réussite n'y paraît qu'avec les deux, et s'en va dès qu'un des deux décoche.
+// En ligne, une base plus ancienne que le site (la réussite lue sans sa colonne public_…) : pas de case, elle ne mènerait qu'à une erreur.
+// Un choix refusé ou perdu en route (réseau, droits, base pas à jour) : la case revient à ce que la base a gardé, act() dit l'erreur
+// (la case du navigateur a déjà changé d'état, et rien ne redessine la page après un échec).
 export function ReussitePublique({ ctx, pl, cote }) {
   const { store, act } = ctx;
   if (pl?.status !== 'confirme' || !pl.laureat_id || !store.montrerReussite) return null;
-  const changer = e => act(async () => {
-    const oui = e.target.checked;
-    const x = await store.montrerReussite(pl.id, oui);
-    toast(!oui ? 'C’est noté : cette réussite n’est pas sur la page d’entrée.'
-      : x?.public_etudiant && x?.public_laureat ? 'C’est noté : cette réussite est maintenant sur la page d’entrée.'
-      : 'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.');
-  });
+  if (store.mode === 'live' && !(('public_' + cote) in pl)) return null;
+  const changer = e => {
+    const c = e.currentTarget, oui = c.checked;
+    return act(async () => {
+      let x;
+      try { x = await store.montrerReussite(pl.id, oui); } catch (err) { c.checked = (store.byId('placements', pl.id) || pl)['public_' + cote] === true; throw err; }
+      toast(!oui ? 'C’est noté : cette réussite n’est pas sur la page d’entrée.'
+        : x?.public_etudiant && x?.public_laureat ? 'C’est noté : cette réussite est maintenant sur la page d’entrée.'
+        : 'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.');
+    });
+  };
   return html`<div class="pl-public">
     <label class="check small consent"><input id=${'pl-public-' + pl.id} class="pl-public-case" type="checkbox" checked=${pl['public_' + cote] === true} onChange=${changer}/> Peut être montré sur la page d’entrée</label>
     <p class="small muted pl-public-sens">La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.</p>

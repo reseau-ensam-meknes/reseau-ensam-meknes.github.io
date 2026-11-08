@@ -8904,9 +8904,10 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
 // téléphone sans services de notifications), deja (cet appareil est déjà abonné)
 const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
   consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
-// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
-async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null } = {}) {
-  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
+// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent ;
+// tables : d'autres lignes que la base rend dès l'ouverture (réussites, mentorats…), comme site.tables
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null, tables = {} } = {}) {
+  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil }); Object.assign(site.tables, tables);
   const ctx = await navigateur.newContext({ viewport: { width: 360, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (vueWeb) await ctx.addInitScript(() => { delete window.Notification; delete window.PushManager; });
@@ -9739,6 +9740,41 @@ test('réussite sur la page d’entrée : chacun coche sa case, montrée seuleme
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// En ligne, la case suit ce que la base a gardé : un choix refusé (fonction absente, droits, réseau coupé) remet la case
+// où elle était, l'erreur dite ; une base plus ancienne que le site (la réussite sans ses colonnes public_*) : pas de case
+test('réussite sur la page d’entrée, en ligne : base pas encore à jour, pas de case ; un choix refusé ou perdu en route, la case revient où elle était', async () => {
+  const S = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1, now = new Date().toISOString();
+  const PL = { id: 'c0000000-0000-4000-8000-0000000000e1', student_id: UID, laureat_id: AUTEUR_OFFRE, offer_id: null, demande_id: null, source: 'plateforme', status: 'confirme', saison: S,
+    type: 'stage', entreprise: 'OCP', ville: 'Casablanca', pays: 'Maroc', merci: null, partage_ok: false, created_at: now, confirmed_at: now };
+  // Base plus ancienne que le site : la réussite est là (la case LinkedIn aussi), pas la case de la page d'entrée
+  let m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [PL] } });
+  await m.page.waitForSelector('#pl-partage', { timeout: 10000 });
+  assert.equal(await m.page.locator('.pl-public-case, .pl-public-sens').count(), 0, 'pas de case qui ne mènerait qu’à une erreur');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Base à jour, mais montrer_reussite refusée (ici, la fonction manque encore) : l'erreur dite, la case décochée comme avant
+  m = await membreEnLigne({ deja: true, chemin: '#parcours', tables: { placements: [{ ...PL, public_etudiant: false, public_laureat: false }] } });
+  const c = m.page.locator('#pl-public-' + PL.id);
+  await c.waitFor({ timeout: 10000 });
+  assert.equal(await c.isChecked(), false, 'jamais coché d’avance');
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("la base est en cours de mise à jour")');
+  assert.equal(await c.isChecked(), false, 'refusé : la case revient décochée');
+  assert.ok(m.site.appels.some(a => a.u === '/sb/rest/v1/rpc/montrer_reussite' && a.corps?.p_oui === true));
+  // Acceptée : cochée, et elle le reste
+  m.site.rpc.montrer_reussite = corps => ({ public_etudiant: corps?.p_oui === true, public_laureat: false });
+  await c.click();
+  await m.page.waitForSelector('.toast:has-text("quand l’autre personne aura coché aussi")');
+  assert.equal(await c.isChecked(), true);
+  // Décochée, réseau coupé en route : la base l'a toujours, la case revient cochée
+  await m.page.route('**/rest/v1/rpc/montrer_reussite', r => r.abort('internetdisconnected'));
+  await c.click();
+  await m.page.waitForSelector('.toast.err:has-text("Pas de réseau")');
+  assert.equal(await c.isChecked(), true, 'perdu en route : la case revient cochée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
 });
 
 for (const langue of ['fr', 'ar']) test(`invitation nommée en démo (${langue}) : le lien de la promo porte le code du membre ; les camarades arrivés grâce à lui`, async () => {
