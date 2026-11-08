@@ -104,9 +104,10 @@ test('lien d’une école : sa ligne lue une fois par visite (une lecture des é
   assert.equal(await E.ecoleDuLien(cfg), null);
   ecoleDuLien('ensa-tanger'); reponse = () => ({ status: 200, x: [FES] });
   assert.equal(await E.ecoleDuLien(cfg), null);
-  // Sans réseau (ou la base refuse) : rien, et relue la fois suivante
+  // Sans réseau (ou la base refuse) : on ne sait pas (undefined, jamais null : ce n'est pas une école pas encore ouverte),
+  // rien n'est gardé, et relue la fois suivante
   ecoleDuLien('fst-settat'); reponse = () => ({ status: 500, x: {} });
-  assert.equal(await E.ecoleDuLien(cfg), null);
+  assert.equal(await E.ecoleDuLien(cfg), undefined);
   reponse = () => ({ status: 200, x: [FST] });
   assert.equal((await E.ecoleDuLien(cfg)).marque, 'Réseau FST Settat');
   assert.equal(appels.length, 6);

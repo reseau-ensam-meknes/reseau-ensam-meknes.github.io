@@ -2756,3 +2756,151 @@ test('carte de l’ambassadeur : la base ne rend pas de chiffres (erreur, rien) 
     await m.ctx.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Le lien d'une autre école tant que sa ligne n'est pas là (elle arrive, ou sa lecture échoue : 8 s, 5xx, réseau) : ni la
+// marque, ni la porte dessinée, ni l'onglet ne disent l'ENSAM Meknès, pas même une image (« ENSAM », sans ville) ; ni ses
+// domaines ni sa règle d'email. Sa ligne relue (le magasin arrive, le réseau revient, « Recevoir mon code ») : ses noms à
+// elle. Une lecture qui échoue n'est pas une école pas encore ouverte (celle-là, la page d'avant).
+// ---------------------------------------------------------------------------
+// Chaque image (requestAnimationFrame), dès la première : la marque, la porte dessinée et l'onglet ; et les lectures de la
+// ligne de l'école finies dans la page (window.__lues : le fetch rendu, ce qui le suit déjà fait quand la page le voit)
+const imagesNotees = ctx => ctx.addInitScript(() => {
+  const vues = window.__vues = []; let avant = '';
+  const noter = () => {
+    const v = { marque: document.querySelector('.entree-marque')?.innerText.trim() || '', porte: document.querySelector('.entree-scene .g-txt')?.textContent || '', onglet: document.title };
+    const k = JSON.stringify(v);
+    if (k !== avant) { avant = k; vues.push(v); }
+    requestAnimationFrame(noter);
+  };
+  requestAnimationFrame(noter);
+  window.__lues = 0;
+  const f = window.fetch;
+  window.fetch = (...a) => { const p = f(...a); return /\/rest\/v1\/ecoles\?/.test(String(a[0]?.url || a[0])) ? p.finally(() => { window.__lues++; }) : p; };
+});
+const vuesMeknes = page => page.evaluate(() => window.__vues).then(v => v.filter(x => /Meknès|مكناس|MEKNÈS/.test(x.marque + x.porte + x.onglet)));
+const lues = (page, n) => page.waitForFunction(n => window.__lues >= n, n, { timeout: 15000 });
+const porte = page => page.locator('.entree-scene .g-txt').textContent();
+const quandPorteEntree = (page, t) => page.waitForFunction(t => document.querySelector('.entree-scene .g-txt')?.textContent === t, t, { timeout: 8000 });
+const neutre = async page => [await marque(page), await porte(page), await page.title()];
+const NEUTRE = { fr: 'Réseau ENSAM', ar: 'شبكة ENSAM' };
+// La ligne de l'école : la première lecture retenue jusqu'à lacher() (lâchée une fois la porte dessinée, la page d'entrée
+// attend cette lecture-là sans en faire une autre), puis une erreur 503 tant que panne() ; sinon la ligne du faux Supabase
+async function lectureEcole(ctx, panne = () => false) {
+  let n = 0, lacher; const retenue = new Promise(ok => { lacher = ok; });
+  const repondre = r => (panne() ? r.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"service unavailable"}' }) : r.continue());
+  await ctx.route(/\/sb\/rest\/v1\/ecoles(\?|$)/, r => (++n === 1 ? retenue.then(() => repondre(r)) : repondre(r)).catch(() => {}));
+  return { lacher, lectures: () => n };
+}
+const porteDessinee = page => page.waitForSelector('.entree-scene .scene .g-txt', { timeout: 8000 });
+
+for (const langue of ['fr', 'ar']) test(`lien d’une école ouverte (${langue}), sa ligne en retard : « ENSAM » en attendant (marque, porte, onglet), jamais l’ENSAM Meknès, pas même une image ; puis ses noms`, async () => {
+  const N = NOMS_FES[langue];
+  site.tables.ecoles = [FES];
+  let L;
+  const s = await visiteur({ largeur: 390, hauteur: 844, langue, query: '?ecole=ensa-fes', avant: async ctx => { await imagesNotees(ctx); L = await lectureEcole(ctx); } });
+  // La porte dessinée est là, la ligne pas encore
+  await porteDessinee(s.page);
+  assert.deepEqual(await neutre(s.page), [NEUTRE[langue], 'ENSAM', 'Réseau ENSAM']);
+  L.lacher();
+  await quandMarque(s.page, N.marque);
+  await quandPorteEntree(s.page, 'ENSA · FÈS');
+  assert.equal(await s.page.title(), 'Réseau ENSA Fès');
+  assert.deepEqual(await vuesMeknes(s.page), [], 'aucune image ne dit l’ENSAM Meknès');
+  const vues = await s.page.evaluate(() => window.__vues);
+  assert.ok(vues.some(v => v.porte === 'ENSAM' && v.onglet === 'Réseau ENSAM' && v.marque === NEUTRE[langue]), JSON.stringify(vues));
+  assert.equal(L.lectures(), 1, 'sa ligne, lue une fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'ENSAM Meknès (sans lien, son lien, le lien d'une promo) : son nom à chaque image, la porte telle quelle, comme avant
+  for (const query of ['', '?ecole=ensam-meknes', '?promo=2019']) {
+    site.vider(); site.tables.ecoles = [FES];
+    const m = await visiteur({ largeur: 390, hauteur: 844, langue, query, avant: imagesNotees });
+    await porteDessinee(m.page);
+    await m.app();
+    const v = await m.page.evaluate(() => window.__vues);
+    assert.deepEqual(v.filter(x => (x.onglet && x.onglet !== 'Réseau ENSAM Meknès') || (x.porte && x.porte !== 'ENSAM · MEKNÈS') || (x.marque && x.marque !== NOMS_MEKNES[langue].marque)), [], query);
+    assert.equal(await m.page.locator('.entree-scene .g-txt').evaluate(t => [...t.attributes].map(a => a.name).join(' ')), 'class x y text-anchor', `${query} : la porte telle quelle`);
+    assert.equal(await m.page.evaluate(() => window.__lues), 0, `${query} : pas une lecture de la table des écoles`);
+    assert.deepEqual(m.erreurs, [], query);
+    await m.ctx.close();
+  }
+});
+
+test('lien d’une école ouverte, sa ligne illisible (503) : « ENSAM » partout, ni les domaines ni la règle de l’ENSAM Meknès ; l’email de son école passe, la demande de code dit son école', async () => {
+  site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+  let L;
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: async ctx => { await imagesNotees(ctx); await reglagesObligatoire(ctx); L = await lectureEcole(ctx, () => true); } });
+  await porteDessinee(s.page);
+  L.lacher(); await lues(s.page, 1);
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  // Le magasin (et les réglages de l'ENSAM Meknès) arrivé : la ligne relue, toujours illisible ; rien ne change
+  await s.app(); await lues(s.page, 2);
+  await s.page.click('#au-je-etudiant');
+  await emailEtudiant(s.page, 'amine@ensa-fes.ma');
+  assert.equal(await indice(s.page), '', 'ni les domaines de l’ENSAM Meknès, ni sa règle');
+  assert.equal(await s.page.locator('#au-ecole').count(), 0);
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code', { timeout: 8000 });
+  const otp = site.appels.filter(a => a.u === '/sb/auth/v1/otp').pop()?.corps;
+  assert.deepEqual([otp?.email, otp?.data?.ecole], ['amine@ensa-fes.ma', 'ensa-fes']);
+  assert.equal(L.lectures(), 3, 'relue quand le magasin arrive, puis par « Recevoir mon code »');
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  assert.deepEqual(await vuesMeknes(s.page), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien d’une école ouverte, sa ligne illisible puis relue : ses noms quand le magasin arrive, quand le réseau revient, ou à « Recevoir mon code » (et sa règle)', async () => {
+  const ouvrir = async ({ magasin } = {}) => {
+    site.vider(); site.tables.ecoles = [{ ...FES_EMAIL, email_obligatoire: true }];
+    const x = { panne: true };
+    const s = await visiteur({ largeur: 390, hauteur: 844, query: '?ecole=ensa-fes', avant: async ctx => {
+      await imagesNotees(ctx); x.L = await lectureEcole(ctx, () => x.panne);
+      if (magasin) await ctx.route(/\/store\.js(\?|$)/, r => magasin.then(() => r.continue()).catch(() => {}));
+    } });
+    await porteDessinee(s.page);
+    x.L.lacher(); await lues(s.page, 1);
+    assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+    return Object.assign(x, s);
+  };
+  const fes = async (s, lectures) => {
+    await quandMarque(s.page, 'Réseau ENSA Fès');
+    await quandPorteEntree(s.page, 'ENSA · FÈS');
+    assert.equal(await s.page.title(), 'Réseau ENSA Fès');
+    assert.equal(s.L.lectures(), lectures);
+    assert.deepEqual(await vuesMeknes(s.page), []);
+    assert.deepEqual(s.erreurs, []);
+  };
+  // Le magasin arrive après l'échec : la ligne relue, ses noms
+  let lacherMagasin; const magasin = new Promise(ok => { lacherMagasin = ok; });
+  let s = await ouvrir({ magasin });
+  s.panne = false; lacherMagasin();
+  await s.app();
+  await fes(s, 2);
+  await s.ctx.close();
+  // Le réseau revient (le magasin déjà là, sa relecture échouée aussi)
+  s = await ouvrir();
+  await s.app(); await lues(s.page, 2);
+  assert.deepEqual(await neutre(s.page), ['Réseau ENSAM', 'ENSAM', 'Réseau ENSAM']);
+  s.panne = false;
+  await s.page.evaluate(() => dispatchEvent(new Event('online')));
+  await fes(s, 3);
+  await s.ctx.close();
+  // « Recevoir mon code » relit la ligne : ses noms, et sa règle (l'email de son école, obligatoire)
+  s = await ouvrir();
+  await s.app(); await lues(s.page, 2);
+  s.panne = false;
+  await s.page.click('#au-je-etudiant');
+  await emailEtudiant(s.page, 'amine@gmail.com');
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('.entree-form .auth-msg.err', { timeout: 8000 });
+  assert.equal(await s.page.locator('.entree-form .auth-msg.err').innerText(), 'Inscris-toi avec ton email de l’école.');
+  assert.equal(site.appels.filter(a => a.u === '/sb/auth/v1/otp').length, 0);
+  await fes(s, 3);
+  assert.match(await indice(s.page), /@ensa-fes\.ma/);
+  assert.doesNotMatch(await indice(s.page), /ensam-umi/);
+  await s.ctx.close();
+});

@@ -144,15 +144,20 @@ export function BrandLogo({ size = 38, draw = false }) {
 // l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
 let gateOpened = false, scene = null, sceneP = null;
 export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
-// bande : le nom écrit sur la porte (la page d'entrée du lien d'une autre école ouverte, l'accueil d'un de ses membres) ;
-// sans, celui de l'ENSAM Meknès. Posé sur le texte même : le dessin n'est pas refait (son animation continue). Posé avant
-// que l'image ne se peigne, et de nouveau quand le dessin est refait (l'autre sens, en arabe) : jamais un autre nom, même
-// un instant
+// bande : le nom écrit sur la porte (la page d'entrée du lien d'une autre école ouverte, « ENSAM » tant que sa ligne n'est
+// pas là ; l'accueil d'un de ses membres) ; sans, celui de l'ENSAM Meknès (remis s'il avait été changé). Posé sur le texte
+// même : le dessin n'est pas refait (son animation continue). Posé avant que l'image ne se peigne, et de nouveau quand le
+// dessin est refait (l'autre sens, en arabe) : jamais un autre nom, même un instant
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
-  useLayoutEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande, align, fit]);
+  useLayoutEffect(() => {
+    const t = ref.current?.querySelector('.g-txt');
+    if (!t || (!bande && t.__b == null)) return;
+    t.__b ??= t.textContent; const b = bande || t.__b; t.textContent = b; if (!bande) t.__b = null;
+    for (const [k, v] of [['textLength', 212], ['lengthAdjust', 'spacingAndGlyphs']]) if (b.length > 20) t.setAttribute(k, v); else t.removeAttribute(k);
+  }, [pret, bande, align, fit]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -332,13 +337,14 @@ export function nomsDeLigne(l) {
   nomsVus.set(l, n);
   return n;
 }
-// Sa ligne, lue une fois dès l'ouverture de la page (un visiteur ne lit que les écoles ouvertes) ; sans réseau, relue au besoin.
-// lus : ses noms une fois arrivés, par école (la page d'entrée montée de nouveau les a tout de suite)
+// Sa ligne, lue une fois dès l'ouverture de la page (un visiteur ne lit que les écoles ouvertes). Sa lecture a échoué (8 s,
+// erreur, réseau) : undefined, on ne sait pas (jamais null, la page d'avant d'une école pas encore ouverte), rien n'est gardé
+// et l'appel suivant la relit. lus : ses noms une fois arrivés, par école (la page d'entrée montée de nouveau les a tout de suite)
 const lignesP = new Map(), lus = new Map();
 export function ecoleDuLien(cfg = window.ENSAM_CONFIG || {}) {
   const e = argsEcole().p_ecole;
   if (!e || !enLigneCfg(cfg)) return Promise.resolve(null);
-  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) lignesP.delete(e); const n = r.ok && Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
+  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) return void lignesP.delete(e); const n = Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
   return lignesP.get(e);
 }
 // L'offre d'un lien partagé, sans compte : son type, son public et si elle est ouverte ; jamais son titre ni l'entreprise.
@@ -608,12 +614,19 @@ export function AuthScreen({ store }) {
   const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
-  // Le lien d'une autre école : ses noms et ses règles d'email (ecoleDuLien) ; undefined : sa ligne arrive (la marque attend sans
-  // nom de ville) ; null : l'ENSAM Meknès, ou une école pas encore ouverte (la page d'avant). Ouverte : son nom dans l'onglet aussi
+  // Le lien d'une autre école : ses noms et ses règles d'email (ecoleDuLien) ; undefined : sa ligne arrive, ou n'a pas pu être lue
+  // (la marque, la porte et l'onglet attendent sans nom de ville, « ENSAM ») ; null : l'ENSAM Meknès, ou une école pas encore
+  // ouverte (la page d'avant). Pas encore là : relue quand le magasin arrive et quand le réseau revient (et par « Recevoir mon code »)
   const autre = argsEcole().p_ecole;
   const [noms, setNoms] = useState(() => (!autre ? null : lus.has(autre) ? lus.get(autre) : undefined));
-  useEffect(() => { if (!autre) return; let vivant = true; ecoleDuLien().then(n => { if (vivant) setNoms(n); }); return () => { vivant = false; }; }, []);
-  useEffect(() => { if (noms) document.title = noms.marque; }, [noms]);
+  useEffect(() => {
+    if (!autre || noms !== undefined) return;
+    let vivant = true; const relire = () => ecoleDuLien().then(n => { if (vivant && n !== undefined) setNoms(n); });
+    relire(); addEventListener('online', relire);
+    return () => { vivant = false; removeEventListener('online', relire); };
+  }, [noms === undefined, !store]);
+  const marqueFr = noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès';
+  useLayoutEffect(() => { if (autre) document.title = marqueFr; }, [marqueFr]);
   // Le lien venait d'un membre : qui invite (un code inconnu de cette école est oublié)
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
@@ -643,8 +656,10 @@ export function AuthScreen({ store }) {
 
   // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
   const envoyer = (creer, renvoi = false) => run(async s => {
-    // L'email de l'école : la règle de l'école ouverte du lien (sa ligne, attendue si elle arrive encore), sinon celle de l'ENSAM Meknès
-    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : s.domainesEcole();
+    // L'email de l'école : la règle de l'école ouverte du lien (sa ligne, attendue si elle arrive encore, relue si elle n'a pas pu
+    // l'être), sinon celle de l'ENSAM Meknès. Toujours illisible : aucune règle ici, la base applique celle de l'école du compte
+    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : n === undefined ? [] : s.domainesEcole();
+    if (autre && n !== undefined) setNoms(n);
     if (creer && role === 'etudiant' && (n ? n.obligatoire : s.reglages?.email_ecole_obligatoire === true) && doms.length && !estEmailEcole(e, doms)) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e, role);
@@ -697,7 +712,7 @@ export function AuthScreen({ store }) {
 
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
-    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès'}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
+    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${marqueFr}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class=${'entree-promesse' + (serre ? ' serre' : '')}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
@@ -731,7 +746,7 @@ export function AuthScreen({ store }) {
       </div>
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
-    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms?.bande}/></div>
+    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms ? noms.bande : noms === undefined ? 'ENSAM' : undefined}/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }
