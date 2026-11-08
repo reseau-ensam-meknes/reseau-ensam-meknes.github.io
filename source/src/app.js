@@ -1005,6 +1005,17 @@ function OffresPourToi({ ctx, offres, jeunes }) {
     <${Icon} name="arrow" size=${18}/></button>`;
 }
 
+// Le nom écrit sur la porte de l'accueil d'un membre d'une autre école que l'ENSAM Meknès : celui de son école (sa ligne de
+// la table des écoles), par la même règle que la page d'entrée du lien d'une école ouverte (« ENSA · FÈS ») ; sans sa ligne,
+// « ENSAM », jamais l'ENSAM Meknès. L'ENSAM Meknès : rien (undefined), la porte d'avant
+const motCourt = v => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 40) : '');
+function bandeDuMembre(data, me) {
+  const n = nomsDuMembre(data, me);
+  if (n.meknes) return undefined;
+  const court = motCourt((data?.ecoles || []).find(e => e?.slug === n.slug)?.nom_court);
+  return (court && n.ville ? `${court} · ${n.ville}` : court || n.nom).toUpperCase();
+}
+
 function Home(ctx) {
   const { data, me, saison, scores, store, go, openProfile, openOffer, notifs = [], openNotif } = ctx;
   const n = niveauOf(me, saison);
@@ -1099,7 +1110,7 @@ function Home(ctx) {
           ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
           <p class="hello-sub">${isStudent ? 'Les lauréats de l’école sont là pour t’aider.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
         </div>
-        <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
+        <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000} bande=${bandeDuMembre(data, me)}/>
       </header>
 
       <${BandeauPush} ctx=${ctx}/>
