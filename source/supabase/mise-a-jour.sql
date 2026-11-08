@@ -7605,6 +7605,17 @@ end $$;
 drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
 create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
 
+-- La console d'une école demande si son école est au dossier CNDP (la case « ajoutée au dossier CNDP » de son suivi, que
+-- l'administration du réseau coche) sans lire le suivi lui-même. Oui seulement pour l'administration de cette école ;
+-- non pour tout autre compte. Pas pour un visiteur.
+create or replace function public.dossier_cndp_de_mon_ecole() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(public.is_admin() and exists (select 1 from public.admin_suivi s
+    where s.type = 'ecole' and s.ecole_slug = public.mon_ecole() and s.cndp_ok), false);
+$$;
+revoke all on function public.dossier_cndp_de_mon_ecole() from public, anon;
+grant execute on function public.dossier_cndp_de_mon_ecole() to authenticated;
+
 -- =====================================================================
 --  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
 --  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
