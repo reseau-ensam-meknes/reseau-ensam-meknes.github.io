@@ -412,6 +412,13 @@ create or replace function public.protect_placement() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
+  -- L'administration d'une école : la demande citée est celle de l'étudiant recruté (comme pour un lauréat, plus bas) ;
+  -- confirmé, le recrutement pourvoirait sinon la demande d'un autre membre (demande_reussie). Celle du réseau : comme avant.
+  if auth.uid() is not null and new.demande_id is not null and public.is_admin() and not public.super_admin()
+     and (tg_op = 'INSERT' or new.demande_id is distinct from old.demande_id or new.student_id is distinct from old.student_id)
+     and not exists (select 1 from public.demandes d where d.id = new.demande_id and d.auteur_id = new.student_id) then
+    raise exception 'Cette demande n’est pas celle de cet étudiant.';
+  end if;
   if tg_op = 'INSERT' then
     if auth.uid() is null then return new; end if;
     if public.is_admin() then
@@ -2175,8 +2182,10 @@ begin
   if p_owner = auth.uid() or a = 'tous' then return true; end if;
   if public.is_admin() then return true; end if;
   if a = 'laureats' and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
-  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
-  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
+  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande, ceux de l'école de la
+  -- demande (ceux qui la lisent) ; une demande d'une autre école n'ouvre pas le CV à un lauréat d'ici
+  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match')
+       and d.ecole = (select public.mon_ecole()))
      and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
   -- CV de l'étudiant : le lauréat qui a un match avec lui le lit (page Match, section « Match » en fin de fichier ;
   -- peut_voir_cv, pour le stockage « cv », passe aussi par ici)
@@ -4176,6 +4185,13 @@ begin
   -- Le lauréat du match n'existe plus (son compte supprimé) : la demande reste à son auteur, qui la rouvre ou la ferme
   if tg_op = 'UPDATE' and public.liens_disparus(tg_relid, to_jsonb(old), to_jsonb(new)) then return new; end if;
   if auth.uid() is null or public.is_admin() then
+    -- L'administration d'une école : l'aide retenue est une aide de cette demande. Une aide d'une autre demande (d'une
+    -- autre école) serait close à la fin de celle-ci (suite_demande). Celle du réseau : comme avant.
+    if auth.uid() is not null and new.proposition_id is not null and not public.super_admin()
+       and (tg_op = 'INSERT' or new.proposition_id is distinct from old.proposition_id)
+       and not exists (select 1 from public.propositions x where x.id = new.proposition_id and x.demande_id = new.id) then
+      raise exception 'Cette aide n’est pas une aide de cette demande.';
+    end if;
     if tg_op = 'UPDATE' then new.updated_at := now(); end if;
     return new;
   end if;
@@ -6580,12 +6596,15 @@ begin
 end $$;
 revoke all on function public.garde_ecole() from public, anon, authenticated;
 
+-- La demande d'un recrutement aussi : confirmé, il la pourvoit (demande_reussie) ; une demande d'une autre école était
+-- pourvue (et ses aides closes) par un recrutement de celle-ci. Un lauréat ne cite que la demande en match avec lui,
+-- déjà de son école (protect_placement).
 do $$
 declare r record;
 begin
   for r in select * from (values
     ('mentorships', array['student_id:profiles','mentor_id:profiles']), ('relectures_cv', array['student_id:profiles','reviewer_id:profiles']),
-    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers']),
+    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers','demande_id:demandes']),
     ('demandes_contact', array['cible_id:profiles']), ('match_choix', array['cible_profil:profiles','cible_offre:offers']),
     ('propositions', array['demande_id:demandes']), ('reponses_demandes', array['demande_id:demandes']),
     ('applications', array['offer_id:offers']), ('messages', array['dest_id:profiles']), ('comments', array['offer_id:offers']),
@@ -7581,6 +7600,17 @@ end $$;
 drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
 create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
 
+-- La console d'une école demande si son école est au dossier CNDP (la case « ajoutée au dossier CNDP » de son suivi, que
+-- l'administration du réseau coche) sans lire le suivi lui-même. Oui seulement pour l'administration de cette école ;
+-- non pour tout autre compte. Pas pour un visiteur.
+create or replace function public.dossier_cndp_de_mon_ecole() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(public.is_admin() and exists (select 1 from public.admin_suivi s
+    where s.type = 'ecole' and s.ecole_slug = public.mon_ecole() and s.cndp_ok), false);
+$$;
+revoke all on function public.dossier_cndp_de_mon_ecole() from public, anon;
+grant execute on function public.dossier_cndp_de_mon_ecole() to authenticated;
+
 -- =====================================================================
 --  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
 --  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
@@ -7880,16 +7910,27 @@ end $$;
 -- ne met personne d'une autre école à la place d'un auteur, d'un organisateur, d'un participant… : les règles le lui
 -- permettent (« ou l'administration »), et garde_ecole ne vérifie que les liens vers une autre ligne. Une personne
 -- déjà là (un événement de son école publié par l'administration du réseau) reste. Pour un membre (ces colonnes sont
--- les siennes) et pour l'administration du réseau, rien à vérifier. Argument : les colonnes, des ids de profiles.
+-- les siennes) et pour l'administration du réseau, rien à vérifier. Arguments : les colonnes, des ids de profiles, ou
+-- « colonne:table » pour une ligne d'une table qui a une école (l'offre d'un entretien, le recrutement d'un avis).
+-- Le lauréat d'une aide proposée : sans cette garde, l'administration de Casablanca mettait un lauréat de Meknès dans une
+-- aide acceptée, et l'étudiant de Casablanca et lui lisaient leurs coordonnées (en_relation). L'auteur d'un entretien ou
+-- d'un avis de stage : il le lirait, et son propre avis sur cette entreprise et cette saison serait refusé. « Invité par »,
+-- « traité par » : personne d'une autre école non plus.
 create or replace function public.garde_admin_ecole() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare i int; v text;
+declare i int; c text; t text; v text; ok boolean;
 begin
   if auth.uid() is null or not public.is_admin() or public.super_admin() then return new; end if;
   for i in 0 .. tg_nargs - 1 loop
-    v := to_jsonb(new) ->> tg_argv[i];
-    continue when v is null or (tg_op = 'UPDATE' and v is not distinct from to_jsonb(old) ->> tg_argv[i]);
-    if not public.de_mon_ecole(v::uuid) then
+    c := split_part(tg_argv[i], ':', 1); t := nullif(split_part(tg_argv[i], ':', 2), '');
+    v := to_jsonb(new) ->> c;
+    continue when v is null or (tg_op = 'UPDATE' and v is not distinct from to_jsonb(old) ->> c);
+    if t is null then
+      ok := public.de_mon_ecole(v::uuid);
+    else
+      execute format('select exists (select 1 from public.%I x where x.id = $1 and x.ecole = public.mon_ecole())', t) into ok using v::uuid;
+    end if;
+    if not ok then
       raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501';
     end if;
   end loop;
@@ -7904,7 +7945,9 @@ begin
     ('offers', array['author_id']), ('questions', array['author_id']), ('demandes', array['auteur_id','laureat_id']),
     ('startups', array['fondateur_id']), ('annonces', array['author_id']), ('evenements', array['author_id']),
     ('cafes', array['organisateur_id']), ('cafe_participants', array['user_id']), ('evenement_participants', array['user_id']),
-    ('verifications_pairs', array['verificateur_id'])
+    ('verifications_pairs', array['verificateur_id']), ('propositions', array['laureat_id']),
+    ('entretiens', array['author_id','offer_id:offers']), ('avis_stage', array['author_id','placement_id:placements']),
+    ('profiles', array['invite_par']), ('signalements', array['traite_par'])
   ) as x(t, a) loop
     -- Après a0_ecole_du_parent et aa_garde_ecole (ordre alphabétique), avant les autres déclencheurs
     execute format('drop trigger if exists ab_garde_admin_ecole on public.%I', r.t);
@@ -7920,23 +7963,31 @@ end $$;
 --  sponsorisée d'un admin supprimé gardait son auteur disparu. Ces liens sont vidés ici, comme la clé étrangère le prévoit
 --  (« on delete set null ») : la ligne reste, rien d'autre n'y change. Une base saine n'a rien à vider ; relançable.
 --  Une table n'est touchée que s'il y a un lien à vider (une mise à jour, même vide, préviendrait les pages ouvertes :
---  maj_tables).
+--  maj_tables). Une ligne peut avoir plusieurs liens disparus (un recrutement dont la demande, le lauréat et l'offre
+--  n'existent plus) : elle est mise à jour une seule fois, tous ses liens disparus vidés ensemble. Vidés un par un, le
+--  deuxième échouait : une ligne déjà changée dans la transaction voit toutes ses clés étrangères vérifiées à nouveau, et
+--  celle d'un lien encore à vider vise une ligne disparue.
 -- =====================================================================
 do $$
 declare r record; v boolean;
 begin
-  for r in select k.conrelid::regclass as t, a.attname as col, k.confrelid::regclass as ref, b.attname as rcol
+  for r in select k.conrelid::regclass as t,
+      array_agg(a.attname::text order by a.attname) as cols,
+      array_agg(format('(x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))', a.attname, k.confrelid::regclass, b.attname, a.attname)
+        order by a.attname) as vides
     from pg_constraint k
     join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
     join pg_attribute b on b.attrelid = k.confrelid and b.attnum = k.confkey[1]
     where k.contype = 'f' and k.confdeltype = 'n' and cardinality(k.conkey) = 1 and k.connamespace = 'public'::regnamespace
-    order by 1, 2
+    group by k.conrelid
+    order by 1
   loop
-    execute format('select exists (select 1 from %s x where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I))',
-      r.t, r.col, r.ref, r.rcol, r.col) into v;
+    execute format('select exists (select 1 from %s x where %s)', r.t, array_to_string(r.vides, ' or ')) into v;
     continue when not v;
-    execute format('update %s x set %I = null where x.%I is not null and not exists (select 1 from %s y where y.%I = x.%I)',
-      r.t, r.col, r.col, r.ref, r.rcol, r.col);
+    -- Chaque lien vidé seulement là où il vise une ligne disparue ; les autres gardent leur valeur
+    execute format('update %s x set %s where %s', r.t,
+      (select string_agg(format('%I = case when %s then null else x.%I end', c, d, c), ', ') from unnest(r.cols, r.vides) as u(c, d)),
+      array_to_string(r.vides, ' or '));
   end loop;
 end $$;
 
