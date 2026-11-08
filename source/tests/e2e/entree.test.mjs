@@ -1182,9 +1182,12 @@ const siteCss = () => fs.readFileSync(path.join(SITE, 'site.css'), 'utf8');
 
 // Un visiteur dont les polices (ou autre chose) restent en route : la page n'est jamais « chargée », ni calme
 // (cssVu : l'appareil a déjà appliqué le CSS complet de cette version, comme après une déconnexion)
-async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false } = {}) {
+// sansImages : requestAnimationFrame ne répond jamais, comme dans un onglet ouvert en arrière-plan ; Preact passe alors
+// ses effets 100 ms après l'affichage
+async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false, sansImages = false } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (sansImages) await ctx.addInitScript(() => { window.requestAnimationFrame = () => 0; window.cancelAnimationFrame = () => {}; });
   const js = [], css = [], tenus = []; let tenir = true;
   ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); else if (u.pathname === '/site.css') css.push(q.url()); });
   if (retenir) await ctx.route(retenir, r => (tenir ? tenus.push(r) : r.continue()));
@@ -1249,6 +1252,15 @@ test('page d’entrée plus légère : sans geste, le magasin part une fois la p
   await n.lacher();
   assert.deepEqual(n.erreurs, []);
   await n.ctx.close();
+});
+
+test('page d’entrée ouverte en arrière-plan : le dessin de l’école se pose quand même', async () => {
+  // Sans images (onglet en arrière-plan, appareil très chargé), le dessin (scene.js) arrive avant l'effet qui l'attend.
+  // L'illustration le croyait encore en route et ne se posait jamais : seul le ciel restait (vu sur la CI : 30 s sans dessin).
+  const v = await visiteLegere({ sansImages: true });
+  await v.page.waitForSelector('#entree .entree-scene .scene svg', { timeout: 5000 });
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
 });
 
 // Le CSS de l'entrée (dans la page) face au CSS complet (site.css) : chaque élément, chaque propriété calculée, pseudo-éléments

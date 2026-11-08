@@ -124,7 +124,7 @@ export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (sce
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
-  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;

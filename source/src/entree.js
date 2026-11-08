@@ -147,7 +147,9 @@ export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (sce
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
-  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  // Le dessin est attendu d'après pret, pas d'après scene : arrivé entre l'affichage et cet effet (sans images, l'effet passe
+  // 100 ms après), il ne se posait jamais.
+  useEffect(() => { if (!pret) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
