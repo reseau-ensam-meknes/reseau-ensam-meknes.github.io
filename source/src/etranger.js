@@ -1,8 +1,9 @@
 // Guide de l'étranger par pays, tenu par les lauréats qui y vivent : visa, convention, logement, budget…
-// Seuls les lauréats dont le profil indique ce pays (et l'administration) écrivent, comme protect_guide() dans la base.
+// Seuls les lauréats dont le profil indique ce pays (et l'administration du réseau) écrivent, comme protect_guide() dans la
+// base ; seule l'administration du réseau supprime une rubrique. L'administration d'une école le lit comme un membre.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS, Anneau } from './ui.js';
-import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey, deMonEcole } from './logic.js';
+import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey, deMonEcole, adminDuReseau, RIEN_GUIDE } from './logic.js';
 import { canonPays, codePays, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { getLang, addAR } from './i18n.js';
 import { arCount } from './i18n.js';
@@ -45,12 +46,13 @@ function indexPays(data, me, saison) {
 const rubrique = (e, section) => e.rows.filter(r => r.section === section).sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))[0] || null;
 const ecrites = e => GUIDE_SECTIONS.filter(([k]) => rubrique(e, k)).length;
 
-// Qui peut écrire : l'administration, ou un lauréat dont le pays du profil est exactement celui de la rubrique
+// Qui peut écrire : l'administration du réseau, ou un lauréat dont le pays du profil est exactement celui de la rubrique
+// (le guide est commun à toutes les écoles : l'administration d'une école l'écrit comme un membre, protect_guide())
 const habite = (me, pays) => me.role === 'laureat' && !!me.pays && cleLieu(me.pays) !== 'maroc' && cleLieu(me.pays) === cleLieu(pays);
-const peutModifier = (me, row) => me.role === 'admin' || habite(me, row.pays);
+const peutModifier = (me, row) => adminDuReseau(me) || habite(me, row.pays);
 // Orthographe du pays pour une nouvelle rubrique (la clé unique de la base est pays + rubrique)
 function paysPourEcrire(me, e) {
-  if (me.role === 'admin') return e.rows[0]?.pays || e.nom;
+  if (adminDuReseau(me)) return e.rows[0]?.pays || e.nom;
   if (me.role !== 'laureat' || !me.pays || paysKey(me.pays) !== e.key) return null;
   if (!e.rows.length) return me.pays.trim();
   return e.rows.find(r => habite(me, r.pays))?.pays || null;
@@ -142,7 +144,7 @@ function PaysView({ ctx, cle }) {
         <p class="muted small">${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</p></div>
     </div>
 
-    ${ecrire ? html`<p class="hint-box small"><${Icon} name="heart" size=${15}/><span>${me.role === 'admin' ? 'En tant qu’administration, tu peux écrire, corriger ou supprimer chaque rubrique.' : 'Tu vis ici : complète ou corrige le guide. +10 points par rubrique, et toutes les versions restent dans l’historique.'}</span></p>`
+    ${ecrire ? html`<p class="hint-box small"><${Icon} name="heart" size=${15}/><span>${adminDuReseau(me) ? 'En tant qu’administration, tu peux écrire, corriger ou supprimer chaque rubrique.' : 'Tu vis ici : complète ou corrige le guide. +10 points par rubrique, et toutes les versions restent dans l’historique.'}</span></p>`
       : ici ? html`<p class="hint-box small gp-mine"><${Icon} name="user" size=${15}/><span class="grow">Pour écrire ce guide, indique « <b translate="no">${e.rows[0]?.pays}</b> » comme pays sur ton profil.</span><button class="btn tiny" onClick=${() => go('profil')}>Mon profil</button></p>`
       : html`<p class="small muted gp-who"><${Icon} name="lock" size=${14}/><span>Seuls les lauréats qui vivent dans ce pays peuvent écrire ce guide. Vérifie toujours les règles officielles : elles changent.</span></p>`}
 
@@ -191,7 +193,7 @@ function Rubrique({ ctx, sec, label, ico, row, ecrire, editing, onEdit, onDone }
   return html`<article class=${'panel gp-rub' + (row ? '' : ' vide')} id=${'gp-' + sec}>
     <div class="gp-rub-head"><span class="gp-ico"><${Icon} name=${ico} size=${18}/></span><h3>${label}</h3><span class="spacer"></span>
       ${row && !editing && peut ? html`<button class="btn tiny ghost" onClick=${onEdit}><${Icon} name="edit" size=${14}/> Modifier</button>` : null}
-      ${row && me.role === 'admin' && !editing ? html`<button class="icon-btn small" aria-label="Supprimer la rubrique" onClick=${() => ctx.confirm('Supprimer cette rubrique ? Son historique part avec elle.', () => ctx.act(async () => { await store.remove('guide_pays', row.id); toast('Rubrique supprimée.'); }))}><${Icon} name="trash" size=${14}/></button>` : null}
+      ${row && adminDuReseau(me) && !editing ? html`<button class="icon-btn small" aria-label="Supprimer la rubrique" onClick=${() => ctx.confirm('Supprimer cette rubrique ? Son historique part avec elle.', () => ctx.act(async () => { await store.remove('guide_pays', row.id, { exiger: RIEN_GUIDE }); toast('Rubrique supprimée.'); }))}><${Icon} name="trash" size=${14}/></button>` : null}
     </div>
     ${editing ? html`<${Editeur} ctx=${ctx} sec=${sec} row=${row} pays=${row ? row.pays : ecrire} onDone=${onDone}/>`
       : row ? html`<${Texte} t=${row.contenu}/>
@@ -387,6 +389,7 @@ addAR({
   'Supprimer la rubrique': 'حذف القسم',
   'Supprimer cette rubrique ? Son historique part avec elle.': 'حذف هذا القسم؟ سيُحذف سجلّه معه.',
   'Rubrique supprimée.': 'تم حذف القسم.',
+  [RIEN_GUIDE]: 'لم يُحذف شيء: هذا القسم لم يعد موجودًا، أو لا يمكن لحسابك حذفه.',
   'Mis à jour par': 'آخر تحديث من',
   'un lauréat': 'خريج',
   'Historique': 'السجل',

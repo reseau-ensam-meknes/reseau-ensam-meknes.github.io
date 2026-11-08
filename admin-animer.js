@@ -14,7 +14,7 @@ import { MessageBtn } from './messages.js';
 import { OfferComposer } from './offers.js';
 import { publierEvenement } from './agenda.js';
 import { lienInvitation } from './invitation.js';
-import { NIVEAUX, classementFondateurs, lignePlaces, ecoleDe, ecoleDesTextes } from './logic.js';
+import { NIVEAUX, classementFondateurs, lignePlaces, ecoleDe, ecoleDesTextes, adminDuReseau } from './logic.js';
 import { resumeSemaine, aidantsSemaine, texteMerci, messageAccordMerci, texteFondateurs, textePromoDemande, laureatsSansOffre, messageOffreBoite,
   OBJECTIF_OFFRES, rendezVousDuMois, semaineISO, ligneGestes, vueEcole } from './admin-textes.js';
 
@@ -225,10 +225,11 @@ function useAccordsFondateurs(store, liste) {
 }
 
 // c) Les membres fondateurs : le classement du site (useFondateurs, déjà dans ctx), sinon le calcul sur les données ;
-// pour une autre école que celle de l'administration, le calcul sur ses membres
+// pour une autre école que celle de l'administration, et dans la console d'une école (ses données seulement), le calcul
+// sur ses membres
 function Fondateurs({ ctx, ecoleTextes: { slug: ecole, noms, autre } }) {
   const { data, fondateurs, store } = ctx;
-  const liste = autre ? classementFondateurs(vueEcole(data, ecole)) : fondateurs?.liste || classementFondateurs(data);
+  const liste = autre || !adminDuReseau(ctx.me) ? classementFondateurs(vueEcole(data, ecole)) : fondateurs?.liste || classementFondateurs(data);
   const accords = useAccordsFondateurs(store, liste);
   const textes = l => texteFondateurs(data, { liste, lien: lienSite(l, ecole), accords, noms });
   return html`<${CarteMessage} id="adm-fondateurs" titre="Membres fondateurs" icone="star" textes=${l => ({ [l]: textes(l)[l] })}
