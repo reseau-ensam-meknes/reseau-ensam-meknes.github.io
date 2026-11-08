@@ -978,6 +978,15 @@ export function deLEcoleNommee(nom, apo = '’') {
 // Sous la marque de la barre latérale : la ville de l'école du membre (« Meknès · Lauréats & étudiants ») ; sans ville connue,
 // « Lauréats & étudiants » seulement
 export const sousMarque = noms => (noms?.ville ? `${noms.ville} · Lauréats & étudiants` : 'Lauréats & étudiants');
+// La marque de la barre latérale et du haut de l'écran du téléphone (son lien « Accueil ») : pour l'ENSAM Meknès, « Réseau
+// ENSAM » et « Meknès · Lauréats & étudiants », comme avant ; pour une autre école, son nom court (sinon son nom) et sa
+// ville ; sa ligne pas (encore) là : « Réseau ENSAM » et « Lauréats & étudiants », jamais Meknès. nomAr : le nom qui suit
+// « شبكة » en arabe (le nom court tel qu'il s'écrit, sinon le nom arabe de l'école).
+export function marqueDuMembre(data, me) {
+  const noms = nomsDuMembre(data, me);
+  const court = noms.meknes ? 'ENSAM' : motsDe((data?.ecoles || []).find(x => x?.slug === noms.slug)?.nom_court, 40);
+  return { titre: `Réseau ${court || noms.nom}`, sous: sousMarque(noms), nomAr: court || noms.nomAr };
+}
 // Au-dessus de la carte des lauréats (Réseau > Annuaire > Personnes, #reseau/annuaire/carte)
 export const legendeCarte = (noms = NOMS_MEKNES) => `Où travaillent les lauréats ${deLEcoleNommee(noms.nom)}. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.`;
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false

@@ -10686,3 +10686,59 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
     await s.ctx.close();
   });
 }
+
+// La marque de la barre latérale et du haut de l'écran du téléphone (son lien « Accueil ») : celle de l'école du membre.
+// L'ENSAM Meknès garde « Réseau ENSAM » et « Meknès · Lauréats & étudiants », à l'octet près ; l'ENSA Fès : « Réseau ENSA » et
+// « Fès · Lauréats & étudiants » ; une école connue par son seul nom : « Réseau » et son nom (en arabe, son nom arabe) ; sa
+// ligne pas (encore) là : « Réseau ENSAM », sans ville, jamais Meknès. En arabe par la table de l'application.
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`marque de la barre latérale et du téléphone : celle de l’école du membre (ENSA Fès, son seul nom, sa ligne pas là) ; l’ENSAM Meknès comme avant (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const FES = { slug: 'ensa-fes', nom: 'ENSA Fès', nom_court: 'ENSA', ville: 'Fès', nom_ar: 'ENSA فاس', couleur: '#225588', ouverte: true, created_at: '2026-10-01T00:00:00Z' };
+    const INSTITUT = { slug: 'institut-exemple', nom: 'Institut exemple', nom_ar: 'معهد مثال', ouverte: true, created_at: '2026-10-02T00:00:00Z' };
+    const A = ar ? {
+      meknes: ['شبكة ENSAM', 'مكناس · الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+      fes: ['شبكة ENSA', 'فاس · الخريجون والطلبة', 'شبكة ENSA', 'شبكة ENSA · الرئيسية'],
+      institut: ['شبكة معهد مثال', 'الخريجون والطلبة', 'شبكة معهد مثال', 'شبكة معهد مثال · الرئيسية'],
+      sans: ['شبكة ENSAM', 'الخريجون والطلبة', 'شبكة ENSAM', 'شبكة ENSAM · الرئيسية'],
+    } : {
+      meknes: ['Réseau ENSAM', 'Meknès · Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+      fes: ['Réseau ENSA', 'Fès · Lauréats & étudiants', 'Réseau ENSA', 'Réseau ENSA · Accueil'],
+      institut: ['Réseau Institut exemple', 'Lauréats & étudiants', 'Réseau Institut exemple', 'Réseau Institut exemple · Accueil'],
+      sans: ['Réseau ENSAM', 'Lauréats & étudiants', 'Réseau ENSAM', 'Réseau ENSAM · Accueil'],
+    };
+    const s = await ouvrir({ largeur, langue });
+    // La marque de la barre latérale (son nom, sa ligne) et celle du téléphone (son nom, le nom de son lien), et celle qu'on voit
+    const lire = () => s.page.evaluate(() => {
+      const side = document.querySelector('.side .brand-txt'), tel = document.querySelector('.top .brand.mobile-only');
+      const vue = [side.closest('.brand'), tel].filter(e => e.offsetParent !== null).map(e => e.querySelector('strong').innerText);
+      return { marque: [side.querySelector('strong').textContent, side.querySelector(':scope > span').textContent, tel.querySelector('strong').textContent, tel.getAttribute('aria-label')], vue };
+    });
+    const ecoleDuMembre = async (ecoles, ecole) => {
+      await s.page.evaluate(([ecoles, ecole]) => {
+        const d = window.__demo, moi = { ...d.me, ecole };
+        d.data.ecoles = ecoles; d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+      }, [ecoles, ecole]);
+      await s.page.waitForTimeout(250);
+    };
+    const verifier = async (attendu, ou) => {
+      const { marque, vue } = await lire();
+      assert.deepEqual(marque, attendu, ou);
+      assert.deepEqual(vue, [attendu[0]], `${ou} : la marque qu’on voit`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+      if (ar) assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Réseau|Lauréats|Accueil/.test(x))), [], `${ou} : tout traduit`);
+    };
+    await s.comme('Salma'); await s.aller('accueil');
+    await verifier(A.meknes, 'ENSAM Meknès');
+    await ecoleDuMembre([FES, INSTITUT], 'ensa-fes');
+    await verifier(A.fes, 'ENSA Fès');
+    await ecoleDuMembre([FES, INSTITUT], 'institut-exemple');
+    await verifier(A.institut, 'son seul nom');
+    await ecoleDuMembre([], 'ensa-fes');
+    await verifier(A.sans, 'sa ligne pas là');
+    await ecoleDuMembre([FES, INSTITUT], 'ensam-meknes');
+    await verifier(A.meknes, 'de nouveau l’ENSAM Meknès');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
