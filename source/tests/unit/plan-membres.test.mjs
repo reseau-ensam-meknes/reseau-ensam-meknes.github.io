@@ -9,7 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   pionniersOf, NB_PIONNIERS, badgesOf, PIONNIER_MOI, haussesDepuisVisite, codeInvitationValide, lienAvecCode, ligneInvites, invitesDe,
-  nomCourt, visagesPublics, reussitesPubliques, laureatsPourMesDemandes, laureatsPourDemande, BESOIN_DE_DEMANDE,
+  nomCourt, visagesPublics, reussitesPubliques, laureatsPourMesDemandes, laureatsPourDemande, BESOIN_DE_DEMANDE, seasonOf,
 } from '../../src/logic.js';
 import { buildSeed } from '../../src/seed.js';
 import { SupabaseStore } from '../../src/store.js';
@@ -202,8 +202,9 @@ test('démo · page d’entrée : oui du lauréat lui-même seulement ; une réu
   await assert.rejects(s.montrerReussite(attente.id, true), /confirmée/);
   s.switchTo(salma.id);
   await assert.rejects(s.montrerReussite(pl.id, true), /revient à l’étudiant et au lauréat/);
-  // Une réussite créée naît sans case cochée
-  const r = await s.insert('placements', { student_id: salma.id, laureat_id: youssef.id, entreprise: 'OCP', type: 'stage', saison: 2026, status: 'en_attente', public_etudiant: true, public_laureat: true });
+  // Une réussite créée naît sans case cochée (cette saison : les graines datent tout d'elle, et Salma a déjà une réussite
+  // la saison d'avant, qu'une saison écrite en dur finit par rejoindre)
+  const r = await s.insert('placements', { student_id: salma.id, laureat_id: youssef.id, entreprise: 'OCP', type: 'stage', saison: seasonOf(), status: 'en_attente', public_etudiant: true, public_laureat: true });
   assert.deepEqual([r.public_etudiant, r.public_laureat], [false, false]);
   assert.equal((await s.reussitesPubliques()).length, 3, 'les trois réussites de démonstration');
 });

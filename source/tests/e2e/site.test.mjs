@@ -625,8 +625,10 @@ test('nouvelle version publiée pendant qu’un membre tape : pas de rechargemen
   const s = await ouvrir({ sw: true });
   let liberer = () => {};
   try {
-    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
-    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    // Le site gardé sur l'appareil : le service worker est installé, et la page rechargée ensuite est à lui. Attendre
+    // qu'il prenne la page ouverte ne suffit pas : ouvrir() la recharge juste après la première visite, et s'il s'active
+    // pendant ce rechargement, clients.claim() ne prend pas une page encore en route : elle reste sans lui jusqu'à la suivante.
+    await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
     await s.aller('reseau/annuaire');
     await s.page.reload(); await s.page.waitForSelector('#d-q');
     assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
