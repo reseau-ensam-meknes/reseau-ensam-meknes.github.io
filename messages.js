@@ -5,7 +5,7 @@
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte, Modal, lienDirect } from './ui.js';
 import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
-import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA, attendReponse } from './logic.js';
+import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA, attendReponse, NOMS_MEKNES, nomsAPartagerDe } from './logic.js';
 import { addAR, getLang, t as tr } from './i18n.js';
 import { VOCAL_MAX, REACTIONS, jitsiLink } from './store.js';
 import { SignalerBtn } from './confiance.js';
@@ -455,6 +455,16 @@ function EntretienSheet({ ctx, p, onClose }) {
   <//>`;
 }
 
+// Ce que l'agenda reçoit pour un entretien (autre : la personne qu'on retrouve), dans la langue de l'écran. noms : ceux
+// de l'école du membre (nomsAPartager) ; l'ENSAM Meknès par défaut, avec ses textes d'avant (« Entretien Réseau ENSAM »,
+// son nom entier pour une autre école).
+export function texteEntretien(m, autre, noms = NOMS_MEKNES) {
+  const ar = getLang() === 'ar';
+  return { m, lien: m.rdv_lien, lieu: m.rdv_lieu,
+    title: ar ? `مقابلة · شبكة ${noms.nomAr}: ${autre?.full_name || ''}` : `Entretien Réseau ${noms.meknes ? 'ENSAM' : noms.nom} : ${autre?.full_name || ''}`,
+    details: [ar ? `${m.rdv_duree} دقيقة` : `${m.rdv_duree} min`, m.rdv_lien ? (ar ? `الاتصال المرئي: ${m.rdv_lien}` : `Visio : ${m.rdv_lien}`) : null, m.rdv_lieu ? (ar ? `المكان: ${m.rdv_lieu}` : `Lieu : ${m.rdv_lieu}`) : null, m.body, ar ? `شبكة ${noms.nomAr}` : `Réseau ${noms.nom}`].filter(Boolean).join('\n') };
+}
+
 // Un entretien proposé, dans la discussion : la date en grand, la durée, la visio ou le lieu ; le destinataire répond
 // (« Je serai là » / « Autre horaire »), chacun l'ajoute à son agenda ; « Rejoindre » paraît 10 minutes avant.
 function CarteRdv({ ctx, m, mine, onAutre }) {
@@ -471,10 +481,7 @@ function CarteRdv({ ctx, m, mine, onAutre }) {
     if (r === 'oui') toast(`C’est noté : ${nom} sait que tu seras là.`);
     else { toast('Propose un autre horaire qui te convient.', 'info'); onAutre?.(); }
   });
-  const ar = getLang() === 'ar';
-  const txt = { m, lien: m.rdv_lien, lieu: m.rdv_lieu,
-    title: ar ? `مقابلة · شبكة ENSAM مكناس: ${autre?.full_name || ''}` : `Entretien Réseau ENSAM : ${autre?.full_name || ''}`,
-    details: [ar ? `${m.rdv_duree} دقيقة` : `${m.rdv_duree} min`, m.rdv_lien ? (ar ? `الاتصال المرئي: ${m.rdv_lien}` : `Visio : ${m.rdv_lien}`) : null, m.rdv_lieu ? (ar ? `المكان: ${m.rdv_lieu}` : `Lieu : ${m.rdv_lieu}`) : null, m.body, ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès'].filter(Boolean).join('\n') };
+  const txt = texteEntretien(m, autre, nomsAPartagerDe(ctx.data, me));
   const r = m.rdv_reponse;
   return html`<div class=${'rdv-carte' + (passe ? ' passe' : '') + (direct ? ' direct' : '')}>
     <p class="rdv-c-oeil"><${Icon} name="calendar" size=${14}/> <span>${mine ? 'Tu proposes un entretien' : 'Entretien proposé'}</span></p>

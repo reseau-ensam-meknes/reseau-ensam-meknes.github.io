@@ -2,7 +2,8 @@
 // relance douce des offres, bilan de cooptation à montrer à sa RH.
 import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, BrandLogo, toast } from './ui.js';
-import { TYPES, bilanCooptation, needsRelance, seasonLabel } from './logic.js';
+import { TYPES, bilanCooptation, needsRelance, seasonLabel, NOMS_MEKNES, nomsAPartagerDe, deLEcoleNommee } from './logic.js';
+import { addAR, arCount } from './i18n.js';
 // La lecture d'une annonce (parse-offre.js) n'arrive qu'à l'ouverture de « Offre en 30 secondes »
 const lecteurOffre = () => import('./parse-offre.js');
 
@@ -75,12 +76,35 @@ export function BilanCard({ ctx }) {
   </div>`;
 }
 
+// Le bilan d'un lauréat d'une autre école, en arabe : le nom de son école, donné une fois par école. Celui de l'ENSAM
+// Meknès et « Réseau ENSAM » (une école qui n'est pas nommée) restent ceux du dictionnaire.
+const LAU_AR = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
+const echapper = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const bilansAR = new Set();
+function bilanEnArabe(noms) {
+  const cle = `${noms.nom}\n${noms.nomAr}`;
+  if (noms.meknes || bilansAR.has(cle)) return;
+  bilansAR.add(cle);
+  addAR(noms.nom === 'ENSAM' ? {} : { [`Réseau ${noms.nom}`]: `شبكة ${noms.nomAr}` },
+    [[new RegExp(`^(.+) · (\\d+) lauréats? ${echapper(deLEcoleNommee(noms.nom))}$`), (e, n) => `${e} · ${arCount(n, LAU_AR)} من ${noms.nomAr}`]]);
+}
+// L'en-tête du bilan : le réseau de l'école du lauréat, puis son nom ou, pour tous les lauréats de son entreprise, leur
+// nombre. noms : ceux de l'école du lauréat (nomsAPartager) ; l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function enTeteBilan(me, b, equipe, noms = NOMS_MEKNES) {
+  bilanEnArabe(noms);
+  return {
+    org: `Réseau ${noms.nom}`,
+    titre: equipe && me.entreprise ? `${me.entreprise} · ${b.laureats} lauréat${b.laureats > 1 ? 's' : ''} ${deLEcoleNommee(noms.nom)}` : `${me.full_name}${me.entreprise ? ' · ' + me.entreprise : ''}`,
+  };
+}
+
 function BilanModal({ ctx, onClose }) {
   const { data, me, saison, store } = ctx;
   const [per, setPer] = useState('saison');
   const [equipe, setEquipe] = useState(false);
   const since = per === 'saison' ? new Date(saison, 8, 1) : per === 'an' ? new Date(Date.now() - 365 * 864e5) : null;
   const b = useMemo(() => bilanCooptation(data, me, { since, equipe }), [data, me, per, equipe]);
+  const tete = enTeteBilan(me, b, equipe, nomsAPartagerDe(data, me));
   const periode = per === 'saison' ? `Année ${seasonLabel(saison)}` : per === 'an' ? '12 derniers mois' : 'Depuis l’inscription';
   const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   return html`<${Modal} title="Bilan de cooptation" onClose=${onClose} wide>
@@ -89,8 +113,8 @@ function BilanModal({ ctx, onClose }) {
       ${me.entreprise ? html`<label class="check small"><input id="bl-eq" type="checkbox" checked=${equipe} onChange=${e => setEquipe(e.target.checked)}/> Tous les lauréats de ${me.entreprise}</label>` : null}
     </div>
     <div class="bilan-sheet">
-      <div class="cert-top"><${BrandLogo} size=${44}/><span class="cert-org"><strong>Réseau ENSAM Meknès</strong><span>Bilan de cooptation · ${periode}</span></span></div>
-      <h2 class="bilan-title">${equipe && me.entreprise ? `${me.entreprise} · ${b.laureats} lauréat${b.laureats > 1 ? 's' : ''} de l’ENSAM Meknès` : `${me.full_name}${me.entreprise ? ' · ' + me.entreprise : ''}`}</h2>
+      <div class="cert-top"><${BrandLogo} size=${44}/><span class="cert-org"><strong>${tete.org}</strong><span>Bilan de cooptation · ${periode}</span></span></div>
+      <h2 class="bilan-title">${tete.titre}</h2>
       <div class="bilan-kpis">
         ${[[b.offres, 'offre publiée', 'offres publiées'], [b.candidatures, 'candidature reçue', 'candidatures reçues'], [b.entretiens, 'entretien', 'entretiens'], [b.recrues.length, 'recrue confirmée', 'recrues confirmées']].map(([n, a, z]) => html`<div><b class="mono">${n}</b><span>${n > 1 ? z : a}</span></div>`)}
       </div>

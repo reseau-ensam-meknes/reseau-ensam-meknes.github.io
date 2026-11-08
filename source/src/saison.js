@@ -3,7 +3,7 @@ import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, Num, toast, useLocal } from './ui.js';
 import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
-import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere, filiereCourte, pourLEcoleVue, deMonEcole } from './logic.js';
+import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere, filiereCourte, pourLEcoleVue, deMonEcole, NOMS_MEKNES, nomsAPartagerDe } from './logic.js';
 
 const NIV_OPTS = [['', 'Toutes les années'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -158,12 +158,19 @@ export function TonAnneeStrip({ ctx, onOpen }) {
     <button class="btn small tonal" onClick=${() => onOpen(s)}>Voir mon année</button><button class="icon-btn small" aria-label="Masquer" onClick=${() => setOff(true)}><${Icon} name="x" size=${15}/></button></div>`;
 }
 
-// Le résumé à copier, dans la langue de l'interface
-function resumeAr(t, saison, shown) {
-  const faits = shown.map(([, n, a, b]) => `${n} ${tr(n > 1 ? b : a)}`).join('، ') || 'بداية جيدة';
+// Le résumé à copier, dans la langue de l'interface (langue). noms : ceux de l'école du membre (nomsAPartager) ;
+// l'ENSAM Meknès par défaut, avec ses textes d'avant.
+export function resumeAnnee(t, saison, shown, langue, noms = NOMS_MEKNES) {
+  if (langue === 'ar') {
+    const faits = shown.map(([, n, a, b]) => `${n} ${tr(n > 1 ? b : a)}`).join('، ') || 'بداية جيدة';
+    return t.role === 'etudiant'
+      ? `سنتي ${seasonLabel(saison)} في شبكة ${noms.nomAr}: ${faits}${t.reussite ? `، ونجاح لدى ${t.reussite.entreprise}` : ''}. شكرًا لخريجي المدرسة!`
+      : `سنتي ${seasonLabel(saison)} في شبكة ${noms.nomAr}: ${faits}. فخور بمساعدة طلبة المدرسة.`;
+  }
+  const faits = shown.map(([, n, a, b]) => `${n} ${n > 1 ? b : a}`).join(', ') || 'un bon début';
   return t.role === 'etudiant'
-    ? `سنتي ${seasonLabel(saison)} في شبكة ENSAM مكناس: ${faits}${t.reussite ? `، ونجاح لدى ${t.reussite.entreprise}` : ''}. شكرًا لخريجي المدرسة!`
-    : `سنتي ${seasonLabel(saison)} في شبكة ENSAM مكناس: ${faits}. فخور بمساعدة طلبة المدرسة.`;
+    ? `Mon année ${seasonLabel(saison)} sur le Réseau ${noms.nom} : ${faits}${t.reussite ? `, et une réussite chez ${t.reussite.entreprise}` : ''}. Merci aux lauréats de l’école !`
+    : `Mon année ${seasonLabel(saison)} sur le Réseau ${noms.nom} : ${faits}. Fier d’aider les étudiants de l’école.`;
 }
 
 export function TonAnnee({ ctx, saison, onClose }) {
@@ -182,9 +189,7 @@ export function TonAnnee({ ctx, saison, onClose }) {
     ['heart', t.filleuls, 'filleul', 'filleuls'], ['clap', t.mercis.length, 'merci reçu', 'mercis reçus'],
   ];
   const shown = facts.filter(f => f[1] > 0);
-  const resume = getLang() === 'ar' ? resumeAr(t, saison, shown) : t.role === 'etudiant'
-    ? `Mon année ${seasonLabel(saison)} sur le Réseau ENSAM Meknès : ${shown.map(([, n, a, b]) => `${n} ${n > 1 ? b : a}`).join(', ') || 'un bon début'}${t.reussite ? `, et une réussite chez ${t.reussite.entreprise}` : ''}. Merci aux lauréats de l’école !`
-    : `Mon année ${seasonLabel(saison)} sur le Réseau ENSAM Meknès : ${shown.map(([, n, a, b]) => `${n} ${n > 1 ? b : a}`).join(', ') || 'un bon début'}. Fier d’aider les étudiants de l’école.`;
+  const resume = resumeAnnee(t, saison, shown, getLang(), nomsAPartagerDe(data, me));
   const copy = () => { try { navigator.clipboard.writeText(resume).then(() => toast('Texte copié : colle-le où tu veux.'), () => toast('Copie impossible ici.', 'err')); } catch { toast('Copie impossible ici.', 'err'); } };
   return html`<${Modal} title="Ton année dans le réseau" onClose=${onClose} wide>
     <div class="annee">
