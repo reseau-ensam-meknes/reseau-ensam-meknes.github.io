@@ -225,7 +225,13 @@ end $$;
 drop trigger if exists trg_protect_profile on public.profiles;
 create trigger trg_protect_profile before insert or update on public.profiles
   for each row execute function public.protect_profile();
-update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
+-- La table n'est touchée que s'il y a un compte à corriger : une mise à jour, même sans ligne, avancerait maj_tables et
+-- chaque page ouverte rechargerait la liste des membres à chaque passage de la mise à jour
+do $$ begin
+  if exists (select 1 from public.profiles where role = 'admin' and not admin_ok) then
+    update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Offres publiées (surtout par les lauréats)
@@ -2118,7 +2124,12 @@ create trigger trg_protect_demande_contact before insert or update on public.dem
 insert into public.coordonnees (id, contact)
   select id, left(trim(contact), 200) from public.profiles where coalesce(trim(contact), '') <> ''
   on conflict (id) do nothing;
-update public.profiles set contact = null where contact is not null;
+-- Seulement s'il reste un contact à vider (comme plus haut pour admin_ok : maj_tables n'avance pas pour rien)
+do $$ begin
+  if exists (select 1 from public.profiles where contact is not null) then
+    update public.profiles set contact = null where contact is not null;
+  end if;
+end $$;
 
 create or replace function public.contact_vers_coordonnees() returns trigger
 language plpgsql security definer set search_path = public as $$
