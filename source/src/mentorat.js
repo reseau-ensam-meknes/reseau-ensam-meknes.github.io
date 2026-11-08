@@ -99,7 +99,7 @@ export function gcalUrl({ m, title, details, lien, lieu }, guest) {
 export function icsHref({ m, title, details, lien, lieu }) {
   const esc = t => String(t).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, x => '\\' + x);
   const start = new Date(m.rdv_at); const end = new Date(start.getTime() + (m.rdv_duree || RDV_MIN) * 6e4);
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Reseau ENSAM Meknes//Mentorat//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//AlloLauréat//Mentorat//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${m.id}@reseau-ensam`, `DTSTAMP:${icsDate(new Date())}`, `DTSTART:${icsDate(start)}`, `DTEND:${icsDate(end)}`,
     `SUMMARY:${esc(title)}`, `DESCRIPTION:${esc(details)}`, lien || lieu ? `LOCATION:${esc(lien || lieu)}` : null, lien ? `URL:${lien}` : null,
     'BEGIN:VALARM', 'TRIGGER:-PT15M', 'ACTION:DISPLAY', `DESCRIPTION:${esc(title)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean);

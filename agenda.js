@@ -70,7 +70,7 @@ function gcalUrl(e, noms) {
 function icsHref(e, noms) {
   const t = textesAgenda(e, noms);
   const esc = s => String(s).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, x => '\\' + x);
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Reseau ENSAM Meknes//Agenda//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//AlloLauréat//Agenda//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${e.id}@reseau-ensam`, `DTSTAMP:${icsDate(new Date())}`, `DTSTART:${icsDate(e.debut)}`, `DTEND:${icsDate(finDe(e))}`,
     `SUMMARY:${esc(t.title)}`, `DESCRIPTION:${esc(t.details)}`, t.location ? `LOCATION:${esc(t.location)}` : null, e.lien ? `URL:${e.lien}` : null,
     e.annule ? 'STATUS:CANCELLED' : null, 'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', `DESCRIPTION:${esc(t.title)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean);

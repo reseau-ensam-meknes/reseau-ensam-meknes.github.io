@@ -1,6 +1,6 @@
 // =====================================================================
 //  Fonction Supabase « notifier » : notifications sur le téléphone (Web Push)
-//  et résumé hebdomadaire par email (Gmail, sinon Brevo), pour le Réseau ENSAM Meknès.
+//  et résumé hebdomadaire par email (Gmail, sinon Brevo), pour AlloLauréat : le Réseau ENSAM Meknès et les réseaux des autres écoles.
 //  À coller tel quel : Supabase > Edge Functions > Deploy a new function >
 //  Via editor, nom « notifier ». Aucun import : fetch, WebCrypto et Deno (TLS).
 //
@@ -1138,7 +1138,7 @@ export type Marque = { nom: string; nom_ar?: string | null };
 export function marquer<T extends { sujet: string; html: string; texte: string }>(c: T, m?: Marque | null): T {
   if (!m?.nom) return c;
   const r = (x: string) => x.replaceAll('Réseau ENSAM Meknès', `Réseau ${m.nom}`).replaceAll('شبكة ENSAM مكناس', `شبكة ${m.nom_ar || m.nom}`);
-  return { ...c, sujet: r(c.sujet), html: r(c.html), texte: r(c.texte) };
+  return { ...c, nom: `Réseau ${m.nom}`, sujet: r(c.sujet), html: r(c.html), texte: r(c.texte) };
 }
 async function marques(env: Env): Promise<Map<string, Marque>> {
   try { return new Map((await tout<{ slug: string; nom: string; nom_ar: string | null }>(env, 'ecoles', 'select=slug,nom,nom_ar&slug=neq.ensam-meknes')).map(e => [e.slug, e])); }
@@ -1818,7 +1818,8 @@ ${esc(t.phrase)}<br><a href="${esc(lienNotifs(site))}" style="color:#1670A8;font
 const ligneTelephone = (site: string, langue: Langue, phrase = TELEPHONE[langue].phrase) => `${phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
 
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
-export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
+// nom : l'expéditeur affiché, celui de l'école du membre (marquer) ; sans lui, SENDER_NAME ou « Réseau ENSAM Meknès »
+export type Courriel = { sujet: string; html: string; texte: string; desabo: string; nom?: string };
 
 export function rendreResume(r: Resume, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
@@ -2828,7 +2829,7 @@ async function envoyerBrevo(env: Env, a: string, m: Courriel): Promise<boolean> 
       method: 'POST',
       headers: { 'api-key': env.brevo, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
-        sender: { name: env.nomExpediteur, email: env.expediteur }, to: [{ email: a }],
+        sender: { name: m.nom || env.nomExpediteur, email: env.expediteur }, to: [{ email: a }],
         subject: m.sujet, htmlContent: m.html, textContent: m.texte,
         ...(m.desabo ? { headers: { 'List-Unsubscribe': `<${m.desabo}>` } } : {}),
       }),
@@ -2852,7 +2853,7 @@ function facteur(env: Env) {
     paralleles: poste ? 3 : 5,
     async envoyer(a: string, m: Courriel): Promise<boolean> {
       if (poste && !poste.casse) {
-        const ok = await poste.envoyer({ nom: env.nomExpediteur, email: env.gmail }, a, m);
+        const ok = await poste.envoyer({ nom: m.nom || env.nomExpediteur, email: env.gmail }, a, m);
         if (ok || !poste.casse || !brevo) return ok;
       }
       return brevo ? envoyerBrevo(env, a, m) : false;

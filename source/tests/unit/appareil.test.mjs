@@ -282,7 +282,7 @@ test('service worker : application fermée, la notification sonne, garde l’heu
   assert.equal(t.barre[1].renotify, false, 'sans tag, rien à renouveler');
   // Un contenu illisible : le texte brut, sous le nom du Réseau
   await t.lancer('push', { data: { json: () => { throw new SyntaxError('x'); }, text: () => 'Bonjour' } });
-  assert.equal(t.barre[2].titre, 'Réseau ENSAM Meknès'); assert.equal(t.barre[2].body, 'Bonjour');
+  assert.equal(t.barre[2].titre, 'AlloLauréat'); assert.equal(t.barre[2].body, 'Bonjour');
 });
 
 test('service worker : application regardée, la notification se range sans bruit ; une page visible garde son chiffre', async () => {

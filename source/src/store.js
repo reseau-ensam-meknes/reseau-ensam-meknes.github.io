@@ -200,7 +200,7 @@ export function pdfUnePage(flux, { titre = null } = {}) {
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     `<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
-    ...(titre ? [`<< /Title ${utf16(titre)} /Producer ${utf16('Réseau ENSAM Meknès (démonstration)')} >>`] : [])];
+    ...(titre ? [`<< /Title ${utf16(titre)} /Producer ${utf16('AlloLauréat (démonstration)')} >>`] : [])];
   let out = '%PDF-1.4\n'; const pos = [];
   objets.forEach((o, i) => { pos.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
   const xref = out.length;

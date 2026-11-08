@@ -318,21 +318,21 @@ export function messageEcole(c, { ecole = '', a = 'etudiants', signature = '', l
   const nomAr = String(ecole || '').trim() || 'مدرستكم';
   const appel = { etudiants: `Bonjour à l’équipe de l’association des étudiants ${deLEcoleNom(nom)},`, laureats: `Bonjour à l’équipe de l’association des lauréats ${deLEcoleNom(nom)},`, direction: 'Madame, Monsieur,' }[a] || 'Bonjour,';
   const appelAr = { etudiants: `السلام عليكم فريق جمعية طلبة ${nomAr}،`, laureats: `السلام عليكم فريق جمعية خريجي ${nomAr}،`, direction: `إلى إدارة ${nomAr} المحترمة،` }[a] || 'السلام عليكم،';
-  const sign = [signature, `Réseau ENSAM Meknès · ${lien}`].filter(Boolean).join('\n');
-  const signAr = [signature, `شبكة ENSAM مكناس · ${lien}`].filter(Boolean).join('\n');
+  const sign = [signature, `AlloLauréat · ${lien}`].filter(Boolean).join('\n');
+  const signAr = [signature, `ألو خريج · ${lien}`].filter(Boolean).join('\n');
   const fr = [
     appel, '',
-    'Nous sommes des lauréats de l’ENSAM Meknès. Nous avons créé le Réseau ENSAM Meknès, une plateforme gratuite où les étudiants trouvent stages, PFE et conseils auprès des lauréats de leur école. C’est une initiative de lauréats, indépendante de l’administration de l’école.', '',
-    `Aujourd’hui : ${pl(c.membres, 'membre', 'membres')}, dont ${pl(c.laureats, 'lauréat', 'lauréats')} dans ${pl(c.entreprises, 'entreprise', 'entreprises')}, et ${pl(c.aides30, 'aide donnée', 'aides données')} aux étudiants ces 30 derniers jours.`, '',
-    'Notre proposition : ouvrir un réseau fermé pour votre école, sur la même plateforme. C’est gratuit, pour les étudiants comme pour les lauréats. Le nom de l’école n’est utilisé qu’avec votre accord écrit, et les données de chaque école restent séparées.', '',
+    'Nous sommes des lauréats de l’ENSAM Meknès. Nous avons créé AlloLauréat, une plateforme gratuite où les étudiants d’une école trouvent stages, PFE et conseils auprès des lauréats de leur école. C’est une initiative de lauréats, indépendante de l’administration de l’école.', '',
+    `Notre école y a déjà son réseau, le Réseau ENSAM Meknès : ${pl(c.membres, 'membre', 'membres')}, dont ${pl(c.laureats, 'lauréat', 'lauréats')} dans ${pl(c.entreprises, 'entreprise', 'entreprises')}, et ${pl(c.aides30, 'aide donnée', 'aides données')} aux étudiants ces 30 derniers jours.`, '',
+    `Notre proposition : ouvrir sur AlloLauréat le réseau fermé de votre école, le Réseau ${nom === 'votre école' ? 'de votre école' : nom}. C’est gratuit, pour les étudiants comme pour les lauréats. Le nom de l’école n’est utilisé qu’avec votre accord écrit, et les données de chaque école restent séparées.`, '',
     'Avez-vous 20 minutes pour un appel, cette semaine ou la suivante ?', '',
     'Bien cordialement,', sign,
   ].join('\n');
   const arTxt = [
     appelAr, '',
-    'نحن خريجون من ENSAM مكناس. أنشأنا «شبكة ENSAM مكناس»، منصة مجانية يجد فيها الطلبة تداريب ومشاريع نهاية الدراسة ونصائح لدى خريجي مدرستهم. إنها مبادرة من الخريجين، مستقلة عن إدارة المدرسة.', '',
-    `اليوم: ${ar(c.membres, 'membre')}، منهم ${ar(c.laureats, 'laureat')} في ${ar(c.entreprises, 'entreprise')}، و${ar(c.aides30, 'aide')} قُدّمت للطلبة خلال الثلاثين يومًا الماضية.`, '',
-    'اقتراحنا: فتح شبكة مغلقة خاصة بمدرستكم على المنصة نفسها، مجانًا للطلبة والخريجين. لا يُستعمل اسم المدرسة إلا بموافقتكم المكتوبة، وتبقى معطيات كل مدرسة منفصلة.', '',
+    'نحن خريجون من ENSAM مكناس. أنشأنا «ألو خريج» (AlloLauréat)، منصة مجانية يجد فيها طلبة كل مدرسة تداريب ومشاريع نهاية الدراسة ونصائح لدى خريجي مدرستهم. إنها مبادرة من الخريجين، مستقلة عن إدارة المدرسة.', '',
+    `لمدرستنا شبكتها على المنصة، «شبكة ENSAM مكناس»: ${ar(c.membres, 'membre')}، منهم ${ar(c.laureats, 'laureat')} في ${ar(c.entreprises, 'entreprise')}، و${ar(c.aides30, 'aide')} قُدّمت للطلبة خلال الثلاثين يومًا الماضية.`, '',
+    `اقتراحنا: فتح شبكة مغلقة خاصة بمدرستكم على ألو خريج، «شبكة ${nomAr}»، مجانًا للطلبة والخريجين. لا يُستعمل اسم المدرسة إلا بموافقتكم المكتوبة، وتبقى معطيات كل مدرسة منفصلة.`, '',
     'هل لديكم 20 دقيقة لمكالمة هذا الأسبوع أو الأسبوع المقبل؟', '',
     'مع خالص التحيات،', signAr,
   ].join('\n');
@@ -343,14 +343,14 @@ export function messageEcole(c, { ecole = '', a = 'etudiants', signature = '', l
 // l'argent vient des entreprises seulement) et les trois formules
 export function messageEntreprise(c, { contact = '', signature = '', lien = '' } = {}) {
   const [v, p, s] = ['visibilite', 'partenaire', 'saison_pfe'].map(k => FORMULES.find(f => f.k === k));
-  const sign = [signature, `Réseau ENSAM Meknès · ${lien}`].filter(Boolean).join('\n');
-  const signAr = [signature, `شبكة ENSAM مكناس · ${lien}`].filter(Boolean).join('\n');
+  const sign = [signature, `Réseau ENSAM Meknès sur AlloLauréat · ${lien}`].filter(Boolean).join('\n');
+  const signAr = [signature, `شبكة ENSAM مكناس على ألو خريج · ${lien}`].filter(Boolean).join('\n');
   const qui = String(contact || '').trim();
   // Les étudiants année par année (3A, 4A, 5A), dès qu'il y en a
   const parAn = c.etudiants345 && c.parAnnee ? c.parAnnee : null;
   const fr = [
     qui ? `Bonjour ${qui},` : 'Bonjour,', '',
-    'Je vous écris pour le Réseau ENSAM Meknès, la plateforme gratuite qui relie les étudiants et les lauréats de l’ENSAM Meknès. C’est une initiative de lauréats, indépendante de l’administration de l’école.', '',
+    'Je vous écris pour le Réseau ENSAM Meknès, sur AlloLauréat, la plateforme gratuite qui relie les étudiants et les lauréats de chaque école. C’est une initiative de lauréats, indépendante de l’administration de l’école.', '',
     `Aujourd’hui : ${pl(c.laureats, 'lauréat', 'lauréats')} et ${pl(c.etudiants345, 'étudiant', 'étudiants')} de 3e, 4e et 5e année${parAn ? ` (${parAn[3]} en 3A, ${parAn[4]} en 4A, ${parAn[5]} en 5A)` : ''}, qui cherchent stages, PFE et premier emploi ; des lauréats dans ${pl(c.entreprises, 'entreprise', 'entreprises')} ; ${pl(c.aides30, 'aide donnée', 'aides données')} ces 30 derniers jours.`, '',
     'Nous proposons aux entreprises de se faire connaître de ces étudiants, avec des règles claires :',
     '• tout ce qui est payé porte le label « Sponsorisé » ;',
@@ -366,7 +366,7 @@ export function messageEntreprise(c, { contact = '', signature = '', lien = '' }
   ].join('\n');
   const arTxt = [
     qui ? `السلام عليكم ${qui}،` : 'السلام عليكم،', '',
-    'أكتب إليكم باسم «شبكة ENSAM مكناس»، المنصة المجانية التي تربط طلبة وخريجي ENSAM مكناس. إنها مبادرة من الخريجين، مستقلة عن إدارة المدرسة.', '',
+    'أكتب إليكم باسم «شبكة ENSAM مكناس» على ألو خريج، المنصة المجانية التي تربط طلبة وخريجي كل مدرسة. إنها مبادرة من الخريجين، مستقلة عن إدارة المدرسة.', '',
     `اليوم: ${ar(c.laureats, 'laureat')} و${ar(c.etudiants345, 'etudiant')} من السنوات الثالثة والرابعة والخامسة${parAn ? ` (${parAn[3]} في السنة الثالثة، ${parAn[4]} في الرابعة، ${parAn[5]} في الخامسة)` : ''} يبحثون عن تداريب ومشاريع نهاية الدراسة وأول عمل؛ وخريجون في ${ar(c.entreprises, 'entreprise')}؛ و${ar(c.aides30, 'aide')} خلال الثلاثين يومًا الماضية.`, '',
     'نقترح على المقاولات أن تعرّف بنفسها لدى هؤلاء الطلبة، بقواعد واضحة:',
     '• كل ما هو مدفوع يحمل علامة «مُموَّل»؛',

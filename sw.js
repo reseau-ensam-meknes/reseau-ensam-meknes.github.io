@@ -1,7 +1,7 @@
-// Service worker du Réseau ENSAM : l'application s'ouvre depuis le téléphone, même sans réseau
+// Service worker d’AlloLauréat (Réseau ENSAM Meknès et les autres écoles) : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
-const VERSION = '1abebc5ed982';
+const VERSION = 'f1cbfa328a7d';
 const FICHIERS = ["./","admin-animer.js","admin-console-cibles.js","admin-console-contenus.js","admin-console-membres.js","admin-console-regles.js","admin-console-traiter.js","admin-console.js","admin-donnees.js","admin-ecoles.js","admin-notifs.js","admin-outils.js","admin-partenaires.js","admin-tableau.js","admin-textes.js","admin.js","agenda.js","ambassadeurs.js","apercu-cv.js","app.js","appareil.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree-vitrine.js","entree.js","entreprises.js","etranger.js","fondateurs-public.js","fondateurs.js","geo.js","groupes.js","growth.js","i18n.js","installer.js","invitation.js","lignes.js","lire-cv.js","logic.js","logo.js","match.js","me.js","mentorat.js","messages.js","moi.js","offers.js","origine.js","parse-linkedin.js","parse-offre.js","partages.js","pdf-compat.js","pdf-worker.js","photo.js","polices/texte.woff2","polices/titres.woff2","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","qr.js","rappels.js","reactions.js","recrutement.js","regles-entree.js","reseau-vivant.js","reussites.js","saison.js","sante-notifs.js","scene.js","site.css","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js","vitrine-regles.js","vitrine.js"];
 // L'arabe (dictionnaire, police) : gardé d'avance seulement pour qui l'avait déjà, sinon au premier usage
 const FACULTATIFS = ["i18n-ar.js","polices/arabe-400.woff2","polices/arabe-500.woff2","polices/arabe-600.woff2","polices/arabe-700.woff2","polices/arabe-titres-600.woff2","polices/arabe-titres-700.woff2"];
@@ -109,7 +109,7 @@ self.addEventListener('push', e => {
   e.waitUntil((async () => {
     const vues = (await fenetres().catch(() => [])).filter(w => w.visibilityState === 'visible');
     const calme = !!d.calme || vues.some(w => w.focused);
-    await Promise.all([self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
+    await Promise.all([self.registration.showNotification(d.title || 'AlloLauréat', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !calme, silent: calme,
       vibrate: calme ? undefined : [120, 60, 120], timestamp: Date.parse(d.at) || Date.now(),
       icon: 'pwa/icon-192.png', badge: 'pwa/badge-96.png', data: { url: d.url || './' },

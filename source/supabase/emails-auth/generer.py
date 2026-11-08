@@ -29,8 +29,8 @@ def page(fr, ar, apercu='', code=False):
     <tr><td style="background:#1F3354;padding:16px 24px;border-bottom:4px solid #F39200;border-radius:13px 13px 0 0">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
         <td style="vertical-align:middle">
-          <div style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:17px;line-height:22px;font-weight:700;color:#FFFFFF">Réseau ENSAM Meknès</div>
-          <div dir="rtl" lang="ar" style="font-family:Tahoma,'Segoe UI',Arial,sans-serif;font-size:13px;line-height:19px;color:#C8D3E3;text-align:left">شبكة ENSAM مكناس</div>
+          <div style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:17px;line-height:22px;font-weight:700;color:#FFFFFF">AlloLauréat</div>
+          <div dir="rtl" lang="ar" style="font-family:Tahoma,'Segoe UI',Arial,sans-serif;font-size:13px;line-height:19px;color:#C8D3E3;text-align:left">ألو خريج · الخريجون والطلبة</div>
         </td>
       </tr></table>
     </td></tr>{ligne}
@@ -38,7 +38,7 @@ def page(fr, ar, apercu='', code=False):
     <tr><td style="padding:0 26px"><hr style="border:none;border-top:1px solid #E9EEF4;margin:18px 0"></td></tr>
     <tr><td style="padding:8px 26px 26px">{ar}</td></tr>
   </table>
-  <p style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#66748A;margin:14px 0 0">Réseau ENSAM Meknès · <a href="{{{{ .SiteURL }}}}" style="color:#1670A8">{{{{ .SiteURL }}}}</a></p>
+  <p style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#66748A;margin:14px 0 0">AlloLauréat · Lauréats &amp; étudiants · <a href="{{{{ .SiteURL }}}}" style="color:#1670A8">{{{{ .SiteURL }}}}</a></p>
 </td></tr></table>
 </body></html>
 '''
@@ -65,9 +65,9 @@ mails = [
   bloc('fr', 'Nouvelle adresse email', 'Confirme le passage de {{ .Email }} à {{ .NewEmail }} en cliquant sur le bouton.', 'Confirmer la nouvelle adresse', 'Ce n’est pas toi ? Ignore cet email, rien ne change.', U),
   bloc('ar', 'بريد إلكتروني جديد', 'أكّد تغيير بريدك من <span dir="ltr">{{ .Email }}</span> إلى <span dir="ltr">{{ .NewEmail }}</span> بالضغط على الزر.', 'تأكيد البريد الجديد', 'لست أنت؟ تجاهل هذه الرسالة، ولن يتغير شيء.', U)),
  ('invite', 'Invite user',
-  'Tu es invité(e) sur Réseau ENSAM Meknès · دعوة إلى شبكة ENSAM مكناس',
-  bloc('fr', 'Tu es invité(e)', 'On t’invite à rejoindre Réseau ENSAM Meknès, le réseau des lauréats et des étudiants. Clique pour créer ton compte.', 'Rejoindre le réseau', 'Tu ne connais pas ce réseau ? Ignore cet email.', U),
-  bloc('ar', 'أنت مدعو', 'ندعوك للانضمام إلى شبكة ENSAM مكناس، شبكة الخريجين والطلبة. اضغط لإنشاء حسابك.', 'الانضمام إلى الشبكة', 'لا تعرف هذه الشبكة؟ تجاهل هذه الرسالة.', U)),
+  'Tu es invité(e) sur AlloLauréat · دعوة إلى ألو خريج',
+  bloc('fr', 'Tu es invité(e)', 'On t’invite à rejoindre AlloLauréat, le réseau des lauréats et des étudiants de ton école. Clique pour créer ton compte.', 'Rejoindre le réseau', 'Tu ne connais pas ce réseau ? Ignore cet email.', U),
+  bloc('ar', 'أنت مدعو', 'ندعوك للانضمام إلى ألو خريج، شبكة الخريجين والطلبة في مدرستك. اضغط لإنشاء حسابك.', 'الانضمام إلى الشبكة', 'لا تعرف هذه الشبكة؟ تجاهل هذه الرسالة.', U)),
  ('reauthentication', 'Reauthentication',
   'Ton code de confirmation · رمز التأكيد',
   bloc('fr', 'Ton code de confirmation', f'Saisis ce code pour confirmer : <strong style="font-size:20px;letter-spacing:3px;color:#1F3354">{T}</strong>', None, 'Ce n’est pas toi ? Ignore cet email.', U),
@@ -81,6 +81,6 @@ idx += ['', '## Inscription et connexion par code à 6 chiffres', '',
         'Les emails « Magic Link » et « Confirm signup » contiennent le code, sans aucun lien (un antivirus de messagerie qui ouvre les liens rendrait le code inutilisable). Les coller avant de publier le site.', '',
         '- Authentication > Sign In / Providers > Email : Confirm email OFF (inchangé), Email OTP Length = 6, Email OTP Expiration = 3600 (les emails disent « 1 heure »).',
         '- Authentication > Rate Limits : emails envoyés 100 par heure ; vérifications de code et connexions au moins 150 par 5 minutes et par IP (toute une classe sur le Wi-Fi de l’école a la même IP).',
-        '- Authentication > SMTP Settings : expéditeur « Réseau ENSAM Meknès », intervalle minimum par adresse 60 secondes.']
+        '- Authentication > SMTP Settings : expéditeur « AlloLauréat », intervalle minimum par adresse 60 secondes.']
 open(os.path.join(OUT, 'LISEZMOI.md'), 'w').write('\n'.join(idx) + '\n')
 print('\n'.join(idx))
